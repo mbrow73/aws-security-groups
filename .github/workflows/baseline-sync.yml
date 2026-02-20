@@ -1,4 +1,4 @@
-name: "Sync Baseline to All Accounts"
+name: "Sync Baseline to Opted-In Accounts"
 
 on:
   push:
@@ -20,6 +20,10 @@ on:
         description: 'Comma-separated list of account IDs to sync (leave empty for all)'
         required: false
         type: string
+      target_profiles:
+        description: 'Comma-separated list of profiles to sync (leave empty for all changed profiles)'
+        required: false
+        type: string
 
 permissions:
   id-token: write   # For OIDC AWS authentication
@@ -33,16 +37,19 @@ env:
   PYTHON_VERSION: '3.11'
 
 jobs:
-  discover-accounts:
-    name: "Discover Target Accounts"
+  detect-changed-profiles:
+    name: "Detect Changed Baseline Profiles"
     runs-on: ubuntu-latest
     outputs:
-      accounts: ${{ steps.discover.outputs.accounts }}
+      changed_profiles: ${{ steps.detect.outputs.changed_profiles }}
+      affected_accounts: ${{ steps.detect.outputs.affected_accounts }}
       
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        
+        with:
+          fetch-depth: 2  # Need previous commit to detect changes
+          
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -52,24 +59,92 @@ jobs:
         run: |
           pip install -r requirements.txt
           
-      - name: Discover accounts
-        id: discover
+      - name: Detect changed baseline profiles
+        id: detect
         run: |
-          if [ "${{ github.event.inputs.target_accounts }}" != "" ]; then
-            # Use provided account list
-            ACCOUNTS="${{ github.event.inputs.target_accounts }}"
+          if [ "${{ github.event.inputs.target_profiles }}" != "" ]; then
+            # Manual trigger with specific profiles
+            CHANGED_PROFILES="${{ github.event.inputs.target_profiles }}"
+            echo "Manual trigger - using specified profiles: $CHANGED_PROFILES"
           else
-            # Discover all accounts from the repository
-            ACCOUNTS=$(python scripts/discover-accounts.py --format=comma)
+            # Auto-detect based on changed files
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep -E '^baseline/profiles/|^baseline/prefix-lists\.tf$|^prefix-lists\.yaml$' || true)
+            echo "Changed files: $CHANGED_FILES"
+            
+            CHANGED_PROFILES=""
+            if echo "$CHANGED_FILES" | grep -q "baseline/profiles/vpc-endpoints/"; then
+              CHANGED_PROFILES="${CHANGED_PROFILES},vpc-endpoints"
+            fi
+            if echo "$CHANGED_FILES" | grep -q "baseline/profiles/internet-ingress/"; then
+              CHANGED_PROFILES="${CHANGED_PROFILES},internet-ingress"
+            fi
+            if echo "$CHANGED_FILES" | grep -q "baseline/profiles/eks-standard/"; then
+              CHANGED_PROFILES="${CHANGED_PROFILES},eks-standard"
+            fi
+            
+            # If prefix lists or main baseline files changed, sync all profiles
+            if echo "$CHANGED_FILES" | grep -qE "prefix-lists\.yaml$|baseline/main\.tf$|baseline/variables\.tf$|baseline/outputs\.tf$"; then
+              CHANGED_PROFILES="vpc-endpoints,internet-ingress,eks-standard"
+              echo "Global baseline files changed - syncing all profiles"
+            fi
+            
+            # Remove leading comma
+            CHANGED_PROFILES=$(echo "$CHANGED_PROFILES" | sed 's/^,//')
           fi
           
-          echo "accounts=$ACCOUNTS" >> $GITHUB_OUTPUT
-          echo "Target accounts: $ACCOUNTS"
+          if [ -z "$CHANGED_PROFILES" ]; then
+            echo "No baseline profile changes detected"
+            CHANGED_PROFILES=""
+            AFFECTED_ACCOUNTS="[]"
+          else
+            echo "Changed profiles: $CHANGED_PROFILES"
+            
+            # Find accounts that use any of the changed profiles
+            AFFECTED_ACCOUNTS=$(python3 << 'EOF'
+import os
+import yaml
+import json
+from pathlib import Path
+
+changed_profiles = os.environ.get('CHANGED_PROFILES', '').split(',')
+changed_profiles = [p.strip() for p in changed_profiles if p.strip()]
+
+affected_accounts = []
+accounts_dir = Path('accounts')
+
+if accounts_dir.exists():
+    for account_dir in accounts_dir.iterdir():
+        if account_dir.is_dir() and account_dir.name != '_example':
+            sg_file = account_dir / 'security-groups.yaml'
+            if sg_file.exists():
+                try:
+                    with open(sg_file, 'r') as f:
+                        config = yaml.safe_load(f)
+                    
+                    if config and 'baseline_profiles' in config:
+                        account_profiles = config['baseline_profiles']
+                        if any(profile in account_profiles for profile in changed_profiles):
+                            account_id = config.get('account_id', account_dir.name)
+                            affected_accounts.append(str(account_id))
+                            print(f"Account {account_id} uses changed profiles: {[p for p in changed_profiles if p in account_profiles]}")
+                
+                except Exception as e:
+                    print(f"Warning: Could not parse {sg_file}: {e}")
+
+print(f"Affected accounts: {affected_accounts}")
+print(json.dumps(affected_accounts))
+EOF
+            )
+          fi
+          
+          echo "changed_profiles=$CHANGED_PROFILES" >> $GITHUB_OUTPUT
+          echo "affected_accounts=$AFFECTED_ACCOUNTS" >> $GITHUB_OUTPUT
 
   validate-baseline:
     name: "Validate Baseline Configuration"
     runs-on: ubuntu-latest
-    needs: discover-accounts
+    needs: detect-changed-profiles
+    if: needs.detect-changed-profiles.outputs.changed_profiles != ''
     
     steps:
       - name: Checkout
@@ -101,6 +176,25 @@ jobs:
         run: |
           pip install -r requirements.txt
           
+      - name: Validate baseline profiles
+        run: |
+          # Validate that all profile directories have proper structure
+          for profile in vpc-endpoints internet-ingress eks-standard; do
+            if [ ! -d "baseline/profiles/$profile" ]; then
+              echo "❌ Missing profile directory: baseline/profiles/$profile"
+              exit 1
+            fi
+            
+            for file in main.tf variables.tf outputs.tf; do
+              if [ ! -f "baseline/profiles/$profile/$file" ]; then
+                echo "❌ Missing file: baseline/profiles/$profile/$file"
+                exit 1
+              fi
+            done
+            
+            echo "✅ Profile $profile has valid structure"
+          done
+          
       - name: Validate prefix lists configuration
         run: |
           python scripts/validate.py --prefix-lists-only
@@ -108,10 +202,11 @@ jobs:
   sync-baseline:
     name: "Sync Baseline to Account"
     runs-on: ubuntu-latest
-    needs: [discover-accounts, validate-baseline]
+    needs: [detect-changed-profiles, validate-baseline]
+    if: needs.detect-changed-profiles.outputs.affected_accounts != '[]'
     strategy:
       matrix:
-        account: ${{ fromJson(needs.discover-accounts.outputs.accounts) }}
+        account: ${{ fromJson(needs.detect-changed-profiles.outputs.affected_accounts) }}
       max-parallel: 5  # Sync to max 5 accounts in parallel
       fail-fast: false  # Continue syncing to other accounts if one fails
       
@@ -145,50 +240,102 @@ jobs:
         id: account-access
         run: |
           aws sts get-caller-identity
-          echo "Account: $(aws sts get-caller-identity --query Account --output text)"
+          CURRENT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          echo "Account: $CURRENT_ACCOUNT"
           
           # Verify we can access the target account
-          CURRENT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
           if [ "$CURRENT_ACCOUNT" != "${{ matrix.account }}" ]; then
             echo "❌ Cannot access target account ${{ matrix.account }}"
             echo "Currently authenticated to account: $CURRENT_ACCOUNT"
             exit 1
           fi
           
-      - name: Discover VPC information
-        id: vpc-discovery
+      - name: Load account configuration
+        id: config
         run: |
-          # Get VPC information for the account
-          python scripts/discover-vpc.py --account-id "${{ matrix.account }}" > vpc-info.json
-          cat vpc-info.json
+          ACCOUNT_DIR=""
           
-          VPC_ID=$(python -c "import json; print(json.load(open('vpc-info.json'))['vpc_id'])")
-          VPC_CIDR=$(python -c "import json; print(json.load(open('vpc-info.json'))['vpc_cidr'])")
+          # Look for account directory by account ID or name
+          if [ -d "accounts/${{ matrix.account }}" ]; then
+            ACCOUNT_DIR="accounts/${{ matrix.account }}"
+          else
+            # Search for directory containing this account ID in its YAML
+            for dir in accounts/*/; do
+              if [ -f "${dir}security-groups.yaml" ]; then
+                ACCOUNT_ID=$(python3 -c "
+import yaml
+try:
+    with open('${dir}security-groups.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    if config and config.get('account_id') == '${{ matrix.account }}':
+        print('found')
+except:
+    pass
+")
+                if [ "$ACCOUNT_ID" = "found" ]; then
+                  ACCOUNT_DIR="$dir"
+                  break
+                fi
+              fi
+            done
+          fi
           
-          echo "vpc-id=$VPC_ID" >> $GITHUB_OUTPUT
-          echo "vpc-cidr=$VPC_CIDR" >> $GITHUB_OUTPUT
+          if [ -z "$ACCOUNT_DIR" ]; then
+            echo "❌ Could not find configuration for account ${{ matrix.account }}"
+            exit 1
+          fi
+          
+          echo "account_dir=$ACCOUNT_DIR" >> $GITHUB_OUTPUT
+          echo "Found configuration in: $ACCOUNT_DIR"
+          
+          # Extract baseline profiles from account configuration
+          BASELINE_PROFILES=$(python3 -c "
+import yaml
+with open('${ACCOUNT_DIR}security-groups.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+profiles = config.get('baseline_profiles', [])
+print(','.join(profiles) if profiles else '')
+")
+          
+          echo "baseline_profiles=$BASELINE_PROFILES" >> $GITHUB_OUTPUT
+          echo "Account baseline profiles: $BASELINE_PROFILES"
+          
+      - name: Generate Terraform for baseline
+        run: |
+          # Generate baseline Terraform configuration
+          mkdir -p baseline-deployment
+          cd baseline-deployment
+          
+          # Create terraform variables file
+          cat > terraform.tfvars << EOF
+account_id = "${{ matrix.account }}"
+region = "${{ env.AWS_REGION }}"
+baseline_profiles = [$(echo "${{ steps.config.outputs.baseline_profiles }}" | sed 's/,/","/g' | sed 's/^/"/' | sed 's/$/"/' | sed 's/""//')]
+EOF
+          
+          # Copy baseline module
+          cp -r ../baseline/* .
+          
+          echo "Generated terraform.tfvars:"
+          cat terraform.tfvars
           
       - name: Terraform Init
         run: |
-          cd baseline
+          cd baseline-deployment
           terraform init -backend-config="key=security-groups/baseline/${{ matrix.account }}/terraform.tfstate"
           
       - name: Terraform Plan
         id: plan
         run: |
-          cd baseline
-          terraform plan \
-            -var="account_id=${{ matrix.account }}" \
-            -var="vpc_id=${{ steps.vpc-discovery.outputs.vpc-id }}" \
-            -var="vpc_cidr=${{ steps.vpc-discovery.outputs.vpc-cidr }}" \
-            -out=baseline-sync-plan
+          cd baseline-deployment
+          terraform plan -var-file=terraform.tfvars -out=baseline-sync-plan
         continue-on-error: true
         
       - name: Terraform Apply
         id: apply
         if: steps.plan.outcome == 'success'
         run: |
-          cd baseline
+          cd baseline-deployment
           terraform apply -auto-approve baseline-sync-plan
         continue-on-error: true
         
@@ -196,28 +343,38 @@ jobs:
         id: outputs
         if: steps.apply.outcome == 'success'
         run: |
-          cd baseline
+          cd baseline-deployment
           terraform output -json > ../baseline-outputs-${{ matrix.account }}.json
           
           # Create summary of what was deployed
           echo "## Baseline Sync Results for Account ${{ matrix.account }}" > ../sync-summary-${{ matrix.account }}.md
           echo "" >> ../sync-summary-${{ matrix.account }}.md
-          echo "**VPC ID**: ${{ steps.vpc-discovery.outputs.vpc-id }}" >> ../sync-summary-${{ matrix.account }}.md
-          echo "**VPC CIDR**: ${{ steps.vpc-discovery.outputs.vpc-cidr }}" >> ../sync-summary-${{ matrix.account }}.md
+          echo "**Changed Profiles**: ${{ needs.detect-changed-profiles.outputs.changed_profiles }}" >> ../sync-summary-${{ matrix.account }}.md
+          echo "**Account Profiles**: ${{ steps.config.outputs.baseline_profiles }}" >> ../sync-summary-${{ matrix.account }}.md
           echo "**Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> ../sync-summary-${{ matrix.account }}.md
           echo "" >> ../sync-summary-${{ matrix.account }}.md
           echo "### Deployed Resources" >> ../sync-summary-${{ matrix.account }}.md
           
-          # Extract security group names from outputs
+          # Extract security group information from outputs
           if [ -f ../baseline-outputs-${{ matrix.account }}.json ]; then
-            python -c "
+            python3 -c "
 import json
-with open('../baseline-outputs-${{ matrix.account }}.json', 'r') as f:
-    outputs = json.load(f)
+import sys
+try:
+    with open('../baseline-outputs-${{ matrix.account }}.json', 'r') as f:
+        outputs = json.load(f)
     
-for key, value in outputs.items():
-    if 'security_group' in key.lower():
-        print(f'- **{key}**: {value.get(\"value\", \"N/A\")}')
+    enabled_profiles = outputs.get('enabled_baseline_profiles', {}).get('value', [])
+    print(f'**Enabled Profiles**: {', '.join(enabled_profiles) if enabled_profiles else 'None'}')
+    
+    for key, value in outputs.items():
+        if 'security_group_id' in key and value.get('value'):
+            sg_id = value['value']
+            sg_name = key.replace('_security_group_id', '').replace('_', '-')
+            print(f'- **{sg_name}**: {sg_id}')
+            
+except Exception as e:
+    print(f'Error parsing outputs: {e}', file=sys.stderr)
 " >> ../sync-summary-${{ matrix.account }}.md
           fi
           
@@ -249,8 +406,8 @@ for key, value in outputs.items():
   post-sync-summary:
     name: "Post-Sync Summary"
     runs-on: ubuntu-latest
-    needs: [discover-accounts, sync-baseline]
-    if: always()
+    needs: [detect-changed-profiles, sync-baseline]
+    if: always() && needs.detect-changed-profiles.outputs.changed_profiles != ''
     
     steps:
       - name: Checkout
@@ -264,45 +421,59 @@ for key, value in outputs.items():
           
       - name: Create comprehensive summary
         run: |
-          echo "# Baseline Security Groups Sync Summary" > comprehensive-summary.md
+          echo "# Baseline Security Groups Sync Summary (Opt-In)" > comprehensive-summary.md
           echo "" >> comprehensive-summary.md
           echo "**Trigger**: ${{ github.event_name }}" >> comprehensive-summary.md
           echo "**Commit**: ${{ github.sha }}" >> comprehensive-summary.md
           echo "**Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> comprehensive-summary.md
-          echo "**Target Accounts**: ${{ needs.discover-accounts.outputs.accounts }}" >> comprehensive-summary.md
+          echo "**Changed Profiles**: ${{ needs.detect-changed-profiles.outputs.changed_profiles }}" >> comprehensive-summary.md
+          echo "**Target Accounts**: ${{ needs.detect-changed-profiles.outputs.affected_accounts }}" >> comprehensive-summary.md
           echo "" >> comprehensive-summary.md
           
-          # Count successes and failures
-          SUCCESS_COUNT=0
-          FAILURE_COUNT=0
-          
-          echo "## Per-Account Results" >> comprehensive-summary.md
-          echo "" >> comprehensive-summary.md
-          
-          IFS=',' read -ra ACCOUNTS <<< "${{ needs.discover-accounts.outputs.accounts }}"
-          for account in "${ACCOUNTS[@]}"; do
-            if [ -f "sync-summary-${account}.md" ]; then
-              echo "### ✅ Account $account (Success)" >> comprehensive-summary.md
-              cat "sync-summary-${account}.md" | tail -n +2 >> comprehensive-summary.md
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-            else
-              echo "### ❌ Account $account (Failed)" >> comprehensive-summary.md
-              echo "Baseline sync failed for this account. Check workflow logs for details." >> comprehensive-summary.md
-              FAILURE_COUNT=$((FAILURE_COUNT + 1))
+          # Check if any accounts were affected
+          if [ "${{ needs.detect-changed-profiles.outputs.affected_accounts }}" = "[]" ]; then
+            echo "## No Accounts Affected" >> comprehensive-summary.md
+            echo "" >> comprehensive-summary.md
+            echo "No accounts have opted into the changed baseline profiles:" >> comprehensive-summary.md
+            echo "- **Changed Profiles**: ${{ needs.detect-changed-profiles.outputs.changed_profiles }}" >> comprehensive-summary.md
+            echo "" >> comprehensive-summary.md
+            echo "ℹ️ **This is expected behavior** - baseline profiles are now opt-in per account." >> comprehensive-summary.md
+            echo "To deploy these profiles to an account, add them to the \`baseline_profiles\` section" >> comprehensive-summary.md
+            echo "in the account's \`security-groups.yaml\` file." >> comprehensive-summary.md
+          else
+            # Count successes and failures
+            SUCCESS_COUNT=0
+            FAILURE_COUNT=0
+            
+            echo "## Per-Account Results" >> comprehensive-summary.md
+            echo "" >> comprehensive-summary.md
+            
+            IFS=',' read -ra ACCOUNTS <<< "${{ needs.detect-changed-profiles.outputs.affected_accounts }}"
+            for account in "${ACCOUNTS[@]}"; do
+              account=$(echo "$account" | tr -d '[]" ')
+              if [ -f "sync-summary-${account}.md" ]; then
+                echo "### ✅ Account $account (Success)" >> comprehensive-summary.md
+                cat "sync-summary-${account}.md" | tail -n +2 >> comprehensive-summary.md
+                SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              else
+                echo "### ❌ Account $account (Failed)" >> comprehensive-summary.md
+                echo "Baseline sync failed for this account. Check workflow logs for details." >> comprehensive-summary.md
+                FAILURE_COUNT=$((FAILURE_COUNT + 1))
+              fi
+              echo "" >> comprehensive-summary.md
+            done
+            
+            # Add summary statistics
+            echo "## Summary Statistics" >> comprehensive-summary.md
+            echo "" >> comprehensive-summary.md
+            echo "- **Successful**: $SUCCESS_COUNT accounts" >> comprehensive-summary.md
+            echo "- **Failed**: $FAILURE_COUNT accounts" >> comprehensive-summary.md
+            echo "- **Total**: $(($SUCCESS_COUNT + $FAILURE_COUNT)) accounts" >> comprehensive-summary.md
+            
+            if [ $FAILURE_COUNT -gt 0 ]; then
+              echo "" >> comprehensive-summary.md
+              echo "⚠️ **Action Required**: Some accounts failed to sync. Review the logs and consider manual intervention." >> comprehensive-summary.md
             fi
-            echo "" >> comprehensive-summary.md
-          done
-          
-          # Add summary statistics
-          echo "## Summary Statistics" >> comprehensive-summary.md
-          echo "" >> comprehensive-summary.md
-          echo "- **Successful**: $SUCCESS_COUNT accounts" >> comprehensive-summary.md
-          echo "- **Failed**: $FAILURE_COUNT accounts" >> comprehensive-summary.md
-          echo "- **Total**: $(($SUCCESS_COUNT + $FAILURE_COUNT)) accounts" >> comprehensive-summary.md
-          
-          if [ $FAILURE_COUNT -gt 0 ]; then
-            echo "" >> comprehensive-summary.md
-            echo "⚠️ **Action Required**: Some accounts failed to sync. Review the logs and consider manual intervention." >> comprehensive-summary.md
           fi
           
       - name: Post comprehensive summary
@@ -328,7 +499,7 @@ for key, value in outputs.items():
   handle-sync-failures:
     name: "Handle Sync Failures"
     runs-on: ubuntu-latest
-    needs: [discover-accounts, sync-baseline]
+    needs: [detect-changed-profiles, sync-baseline]
     if: always() && needs.sync-baseline.result == 'failure'
     
     steps:
@@ -336,29 +507,29 @@ for key, value in outputs.items():
         uses: actions/github-script@v7
         with:
           script: |
-            const title = `🚨 Baseline Sync Failed - ${new Date().toISOString().split('T')[0]}`;
+            const title = `🚨 Baseline Sync Failed (Opt-In) - ${new Date().toISOString().split('T')[0]}`;
             const body = `
-            ## Baseline Sync Failure Report
+            ## Baseline Sync Failure Report (Opt-In Model)
             
             **Trigger**: ${{ github.event_name }}
             **Commit**: \`${{ github.sha }}\`
             **Workflow Run**: [View Details](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            **Target Accounts**: \`${{ needs.discover-accounts.outputs.accounts }}\`
+            **Changed Profiles**: \`${{ needs.detect-changed-profiles.outputs.changed_profiles }}\`
+            **Affected Accounts**: \`${{ needs.detect-changed-profiles.outputs.affected_accounts }}\`
             
             ### What This Means
             
-            The baseline security groups (common to all accounts) failed to sync to one or more accounts.
+            The baseline security groups failed to sync to one or more accounts that have opted into the changed profiles.
             This could affect:
-            - VPC endpoint access
-            - Inter-service communication
-            - WAF → NLB traffic flow
-            - EKS cluster baseline security
+            - VPC endpoint access (vpc-endpoints profile)
+            - Inter-service communication (eks-standard profile) 
+            - WAF → NLB traffic flow (internet-ingress profile)
             
             ### Immediate Actions Needed
             
             1. **Review workflow logs** for specific error messages
             2. **Check AWS permissions** for the deployment role
-            3. **Verify VPC discovery** is working correctly
+            3. **Verify account configuration** in \`accounts/<account_id>/security-groups.yaml\`
             4. **Check Terraform state** consistency
             5. **Consider manual baseline deployment** if critical
             
@@ -368,15 +539,14 @@ for key, value in outputs.items():
             # Manual baseline deployment to failed account(s)
             cd baseline
             terraform init -backend-config="key=security-groups/baseline/ACCOUNT_ID/terraform.tfstate"
-            terraform plan -var="account_id=ACCOUNT_ID"
+            terraform plan -var="account_id=ACCOUNT_ID" -var="baseline_profiles=[\"profile1\",\"profile2\"]"
             terraform apply
             \`\`\`
             
-            ### Prevention
+            ### About Opt-In Model
             
-            - Monitor AWS service quotas
-            - Ensure IAM roles have necessary permissions
-            - Test baseline changes in dev accounts first
+            ℹ️ **Note**: Baseline profiles are now opt-in per account. Only accounts that have explicitly
+            requested the changed profiles in their \`baseline_profiles\` configuration are affected.
             
             **Assigned to**: @security-team @platform-team
             `;
@@ -386,18 +556,20 @@ for key, value in outputs.items():
               repo: context.repo.repo,
               title: title,
               body: body,
-              labels: ['baseline-sync-failure', 'urgent', 'security-groups', 'infrastructure'],
+              labels: ['baseline-sync-failure', 'urgent', 'security-groups', 'infrastructure', 'opt-in-model'],
               assignees: ['security-team', 'platform-team']
             });
 
   cleanup:
     name: "Cleanup"
     runs-on: ubuntu-latest
-    needs: [discover-accounts, sync-baseline, post-sync-summary]
+    needs: [detect-changed-profiles, sync-baseline, post-sync-summary]
     if: always()
     
     steps:
       - name: Clean up
         run: |
           echo "Baseline sync workflow completed."
+          echo "Changed profiles: ${{ needs.detect-changed-profiles.outputs.changed_profiles }}"
+          echo "Affected accounts: ${{ needs.detect-changed-profiles.outputs.affected_accounts }}"
           echo "Temporary artifacts will be cleaned up automatically by retention policies."

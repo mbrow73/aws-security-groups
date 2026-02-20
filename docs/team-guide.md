@@ -77,6 +77,11 @@ tags:                              # Optional: Global tags
   Team: "backend"
   Project: "microservices"
 
+baseline_profiles:                 # Optional: Opt-in to baseline security groups
+  - vpc-endpoints                  # Enables VPC endpoint access
+  - internet-ingress               # Enables WAF/CDN → NLB traffic
+  - eks-standard                   # Enables EKS cluster communication
+
 security_groups:
   group-name:                      # Your security group name
     description: "Purpose of this security group"  # Required
@@ -198,6 +203,128 @@ The platform applies different rules based on environment:
 - No approval required
 - Basic monitoring
 - Additional allowed ports for dev tools
+
+## 🛡️ Baseline Security Group Profiles
+
+The platform provides optional **baseline security group profiles** that contain common security patterns used across the organization. These are opt-in per account, allowing teams to choose which baseline patterns they need.
+
+### Available Baseline Profiles
+
+#### `vpc-endpoints` - VPC Endpoint Access
+Enables secure access to AWS VPC endpoints (S3, ECR, EKS API, etc.)
+
+**What it provides:**
+- HTTPS (443) access from VPC CIDR to VPC endpoints
+- HTTP (80) access from VPC CIDR to VPC endpoints (for S3)
+- Configurable additional ports for custom VPC endpoints
+
+**When to use:**
+- Applications need to access AWS services privately through VPC endpoints
+- Required for EKS clusters using ECR for container images
+- Applications using S3, SSM, CloudWatch, or other AWS services
+
+#### `internet-ingress` - WAF/CDN to NLB Traffic  
+Enables WAF and CDN providers (Cloudflare, Fastly, etc.) to reach Network Load Balancers
+
+**What it provides:**
+- HTTP (80) and HTTPS (443) access from WAF/CDN provider IPs
+- Configurable custom ports for specific applications
+- Uses managed prefix lists for WAF provider IP ranges
+
+**When to use:**
+- Public-facing applications behind Network Load Balancers
+- Using WAF services like Cloudflare, Fastly, or AWS WAF
+- Need to restrict ingress to known CDN/WAF provider IPs
+
+#### `eks-standard` - EKS Cluster Communication
+Provides baseline security for EKS cluster API and node communication
+
+**What it provides:**
+- EKS API (443) access from private subnets (for worker nodes)
+- EKS API (443) access from corporate networks (for kubectl)
+- Standard EKS control plane communication patterns
+
+**When to use:**
+- Running EKS clusters in the account
+- Need standard EKS security group patterns
+- kubectl access from corporate networks required
+
+### How to Enable Baseline Profiles
+
+Add the `baseline_profiles` section to your `security-groups.yaml`:
+
+```yaml
+account_id: "123456789012"
+environment: "production"
+
+# Opt into baseline security group profiles
+baseline_profiles:
+  - vpc-endpoints      # Enable VPC endpoint access patterns
+  - internet-ingress   # Enable WAF/CDN → NLB patterns  
+  - eks-standard       # Enable EKS cluster patterns
+
+security_groups:
+  # Your custom security groups...
+```
+
+### Using Baseline Security Groups in Rules
+
+Once enabled, you can reference baseline security groups in your custom security group rules:
+
+```yaml
+security_groups:
+  my-app-servers:
+    description: "Application servers with baseline access"
+    ingress:
+      # Allow access from baseline internet-ingress SG
+      - protocol: tcp
+        from_port: 8080
+        to_port: 8080
+        security_groups: ["baseline-waf-to-nlb"]
+        description: "App access from WAF/CDN"
+      
+      # Custom rules...
+    
+    # Inherit VPC endpoint access
+    egress:
+      - protocol: tcp
+        from_port: 443
+        to_port: 443
+        security_groups: ["baseline-vpc-endpoints"]
+        description: "HTTPS to AWS services via VPC endpoints"
+```
+
+### Baseline Profile Configuration
+
+You can customize baseline profile behavior using additional variables:
+
+```yaml
+baseline_profiles:
+  - vpc-endpoints
+  - internet-ingress
+  - eks-standard
+
+# Optional: Customize baseline profile settings
+baseline_config:
+  vpc_endpoints:
+    additional_ports:
+      - port: 8080
+        service: "custom-api"
+  
+  internet_ingress:
+    custom_ports: [8080, 8443, 9000]
+  
+  eks_standard:
+    cluster_name: "production-cluster"
+```
+
+### Important Notes
+
+- **Opt-in Only**: Baseline profiles are never deployed automatically
+- **Account-specific**: Each account chooses which profiles to enable
+- **Managed by Platform**: Baseline security groups are managed by the security team
+- **Automatic Updates**: When baseline profiles change, only opted-in accounts are updated
+- **No Conflicts**: Baseline security groups use reserved names starting with `baseline-`
 
 ## 🔄 Submitting Changes
 

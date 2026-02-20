@@ -18,8 +18,9 @@ A self-service platform for managing AWS Security Groups across multiple account
         │                        │                        │
         ▼                        ▼                        ▼
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
-│  Baseline SGs   │    │  Terraform       │    │  VPC Discovery      │
-│  (All Accounts) │    │  Generation      │    │  (Runtime)          │
+│  Baseline       │    │  Terraform       │    │  VPC Discovery      │
+│  Profiles       │    │  Generation      │    │  (Runtime)          │
+│  (Opt-In)       │    │                  │    │                     │
 └─────────────────┘    └──────────────────┘    └─────────────────────┘
 ```
 
@@ -29,7 +30,7 @@ A self-service platform for managing AWS Security Groups across multiple account
 - **🔒 Secure by Default**: Built-in guardrails and validation
 - **📊 GitOps Driven**: All changes via Pull Requests with approval workflows
 - **🏠 Multi-Account**: Isolated Terraform state per AWS account
-- **⚡ Baseline + Custom**: Common security groups applied everywhere, plus team-specific ones
+- **⚡ Baseline + Custom**: Opt-in baseline security group profiles, plus team-specific ones
 - **🔍 Dynamic Discovery**: VPC information discovered at runtime, no manual registry
 - **📋 Prefix Lists**: Reusable CIDR blocks for common services
 - **🎛️ EKS-Optimized**: Predefined patterns for Kubernetes workloads
@@ -45,7 +46,11 @@ aws-security-groups/
 │   ├── validate-pr.yml           # PR validation workflow
 │   ├── apply.yml                 # Deployment on merge
 │   └── baseline-sync.yml         # Baseline synchronization
-├── baseline/                     # Common SGs applied to all accounts
+├── baseline/                     # Baseline security group profiles (opt-in)
+│   ├── profiles/                 # Modular baseline profiles
+│   │   ├── vpc-endpoints/        # VPC endpoint access profile
+│   │   ├── internet-ingress/     # WAF/CDN → NLB traffic profile
+│   │   └── eks-standard/         # EKS cluster communication profile
 │   ├── main.tf
 │   ├── prefix-lists.tf
 │   ├── variables.tf
@@ -161,11 +166,12 @@ All changes require:
 - **Reduces** configuration errors
 - **Simpler** for teams (just provide account ID)
 
-### Why Baseline + Per-Account?
-- **Common patterns** applied consistently
-- **Team autonomy** for specific needs
+### Why Baseline Profiles?
+- **Common patterns** available on opt-in basis
+- **Team autonomy** to choose needed patterns
 - **Reduced duplication** of standard rules
-- **Easier compliance** - baseline ensures standards
+- **Modular approach** - select only what you need
+- **Easier compliance** - standard patterns maintained centrally
 
 ### Why Terraform State per Account?
 - **Blast radius isolation** - changes in one account don't affect others
@@ -177,7 +183,7 @@ All changes require:
 ### Adding a New Account
 
 1. Create `accounts/NEW-ACCOUNT-ID/security-groups.yaml`
-2. Baseline security groups are applied automatically
+2. Specify desired baseline profiles in `baseline_profiles` section
 3. Account-specific groups deployed on first PR
 
 ### Updating Guardrails
@@ -189,7 +195,7 @@ All changes require:
 ### Managing Prefix Lists
 
 1. Update `prefix-lists.yaml` in the root
-2. Baseline sync workflow updates all accounts
+2. Baseline sync workflow updates accounts using affected profiles
 3. Teams can reference in their YAML immediately
 
 ### Emergency Changes
@@ -227,7 +233,7 @@ All changes require:
 
 1. **Guardrails** - update security rules in `guardrails.yaml`
 2. **Prefix Lists** - maintain service IP ranges
-3. **Baseline** - evolve common security patterns
+3. **Baseline Profiles** - evolve opt-in security patterns
 4. **Review Process** - participate in PR approvals
 
 ### For Teams

@@ -147,6 +147,11 @@ terraform {{
         # VPC Discovery Module
         content.append(self._generate_vpc_discovery_module())
         
+        # Baseline Security Group Modules (if baseline profiles are specified)
+        baseline_profiles = self.config.get('baseline_profiles', [])
+        if baseline_profiles:
+            content.append(self._generate_baseline_module(baseline_profiles))
+        
         # Security Group Modules
         security_groups = self.config.get('security_groups', {})
         for sg_name, sg_config in security_groups.items():
@@ -189,6 +194,40 @@ terraform {{
         min_azs = vpc_config.get('min_availability_zones')
         if min_azs and min_azs > 1:
             module_content.append(f"  min_availability_zones = {min_azs}")
+        
+        module_content.append("}")
+        
+        return "\n".join(module_content)
+    
+    def _generate_baseline_module(self, baseline_profiles: List[str]) -> str:
+        """Generate baseline security group module call"""
+        if not baseline_profiles:
+            return ""
+        
+        module_content = [
+            "# Baseline Security Groups Module",
+            "module \"baseline\" {",
+            f"  source = \"../../baseline\"",
+            "",
+            f"  account_id = \"{self.account_id}\"",
+            f"  vpc_id     = module.vpc_discovery.vpc_id",
+            f"  region     = var.aws_region",
+        ]
+        
+        # Add baseline profiles
+        profiles_json = json.dumps(baseline_profiles)
+        module_content.append(f"  baseline_profiles = {profiles_json}")
+        
+        # Add environment if specified
+        environment = self.config.get('environment')
+        if environment:
+            module_content.append(f"  environment = \"{environment}\"")
+        
+        # Add global tags
+        global_tags = self.config.get('tags', {})
+        if global_tags:
+            tags_hcl = self._dict_to_hcl(global_tags, indent=2)
+            module_content.append(f"  tags = {tags_hcl}")
         
         module_content.append("}")
         

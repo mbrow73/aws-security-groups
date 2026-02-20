@@ -31,6 +31,21 @@ tags:
   CostCenter: "engineering"
   Project: "aws-migration"
 
+# Optional: Baseline security group profiles to deploy
+# These are common security groups that provide standard patterns across the organization
+baseline_profiles:
+  - vpc-endpoints      # Enables secure access to VPC endpoints (S3, ECR, EKS API, etc.)
+  - internet-ingress   # Enables WAF/CDN providers to reach Network Load Balancers
+  - eks-standard       # Provides baseline security for EKS cluster communication
+  
+# Available baseline profiles:
+# - vpc-endpoints: Security group for VPC endpoint access (HTTPS/HTTP to AWS services)
+# - internet-ingress: Security group for WAF/CDN → NLB traffic (Cloudflare, Fastly, etc.)
+# - eks-standard: Security group for EKS cluster API and node communication
+#
+# Note: Teams can reference these baseline security groups in their custom rules
+# Example: security_groups: ["baseline-vpc-endpoints", "my-custom-sg"]
+
 # Security Groups Configuration
 security_groups:
 

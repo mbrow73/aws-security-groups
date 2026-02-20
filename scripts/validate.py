@@ -162,6 +162,7 @@ class SecurityGroupValidator:
         # Perform all validation checks
         self._validate_schema(data, summary)
         self._validate_account_id(data, summary)
+        self._validate_baseline_profiles(data, summary)
         self._validate_security_groups(data, summary)
         self._validate_guardrails(data, summary)
         self._validate_naming_conventions(data, summary)
@@ -210,6 +211,66 @@ class SecurityGroupValidator:
                 level='warning',
                 message=f"account_id '{account_id}' doesn't match directory name '{self.account_dir.name}'",
                 rule='account_id_consistency'
+            ))
+    
+    def _validate_baseline_profiles(self, data: Dict[str, Any], summary: ValidationSummary):
+        """Validate baseline_profiles configuration"""
+        if 'baseline_profiles' not in data:
+            return  # baseline_profiles is optional
+        
+        baseline_profiles = data['baseline_profiles']
+        
+        # Must be a list
+        if not isinstance(baseline_profiles, list):
+            summary.add_result(ValidationResult(
+                level='error',
+                message="'baseline_profiles' must be a list",
+                rule='baseline_profiles_type'
+            ))
+            return
+        
+        # Valid profile names (these should match the directories in baseline/profiles/)
+        valid_profiles = ['vpc-endpoints', 'internet-ingress', 'eks-standard']
+        
+        # Auto-discover available profiles from the repository structure
+        baseline_profiles_dir = self.repo_root / "baseline" / "profiles"
+        if baseline_profiles_dir.exists():
+            discovered_profiles = [d.name for d in baseline_profiles_dir.iterdir() if d.is_dir()]
+            if discovered_profiles:
+                valid_profiles = discovered_profiles
+        
+        # Validate each profile name
+        for i, profile in enumerate(baseline_profiles):
+            if not isinstance(profile, str):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"baseline_profiles[{i}] must be a string, got {type(profile).__name__}",
+                    rule='baseline_profile_type'
+                ))
+                continue
+            
+            if profile not in valid_profiles:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Invalid baseline profile '{profile}'. Valid profiles: {', '.join(valid_profiles)}",
+                    rule='baseline_profile_name'
+                ))
+        
+        # Check for duplicates
+        if len(baseline_profiles) != len(set(baseline_profiles)):
+            duplicates = [p for p in baseline_profiles if baseline_profiles.count(p) > 1]
+            summary.add_result(ValidationResult(
+                level='warning',
+                message=f"Duplicate baseline profiles found: {', '.join(set(duplicates))}",
+                rule='baseline_profile_duplicates'
+            ))
+        
+        # Informational message about what's being deployed
+        if baseline_profiles:
+            summary.add_result(ValidationResult(
+                level='info',
+                message=f"Will deploy baseline profiles: {', '.join(baseline_profiles)}",
+                rule='baseline_profiles_info'
             ))
     
     def _validate_security_groups(self, data: Dict[str, Any], summary: ValidationSummary):
