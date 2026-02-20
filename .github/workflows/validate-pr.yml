@@ -1,0 +1,349 @@
+name: "Validate Security Groups PR"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'accounts/**'
+      - 'guardrails.yaml'
+      - 'prefix-lists.yaml'
+      - 'baseline/**'
+      - 'modules/**'
+      - 'scripts/**'
+
+permissions:
+  id-token: write   # For OIDC AWS authentication
+  contents: read    # For checking out repository
+  pull-requests: write  # For posting plan comments
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: 1.6.0
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  detect-changes:
+    name: "Detect Changed Accounts"
+    runs-on: ubuntu-latest
+    outputs:
+      changed-accounts: ${{ steps.detect.outputs.accounts }}
+      baseline-changed: ${{ steps.detect.outputs.baseline_changed }}
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          
+      - name: Detect changed accounts
+        id: detect
+        run: |
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Extract account IDs from changed files
+          ACCOUNTS=$(echo "$CHANGED_FILES" | grep -E '^accounts/[0-9]+/' | cut -d'/' -f2 | sort | uniq | tr '\n' ',' | sed 's/,$//')
+          
+          # Check if baseline changed
+          BASELINE_CHANGED="false"
+          if echo "$CHANGED_FILES" | grep -E '^(baseline/|guardrails\.yaml|prefix-lists\.yaml)'; then
+            BASELINE_CHANGED="true"
+          fi
+          
+          echo "accounts=$ACCOUNTS" >> $GITHUB_OUTPUT
+          echo "baseline_changed=$BASELINE_CHANGED" >> $GITHUB_OUTPUT
+          echo "Changed accounts: $ACCOUNTS"
+          echo "Baseline changed: $BASELINE_CHANGED"
+
+  validate-yaml:
+    name: "Validate YAML Schema"
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.changed-accounts != ''
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Validate YAML schemas
+        run: |
+          python scripts/validate.py --accounts "${{ needs.detect-changes.outputs.changed-accounts }}"
+
+  check-quotas:
+    name: "Check AWS Quotas"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-yaml]
+    if: needs.detect-changes.outputs.changed-accounts != ''
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: sg-platform-quota-check
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Check quotas for changed accounts
+        run: |
+          IFS=',' read -ra ACCOUNTS <<< "${{ needs.detect-changes.outputs.changed-accounts }}"
+          for account in "${ACCOUNTS[@]}"; do
+            echo "Checking quotas for account: $account"
+            python scripts/check-quotas.py --account-id "$account"
+          done
+
+  terraform-plan:
+    name: "Terraform Plan"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-yaml, check-quotas]
+    if: needs.detect-changes.outputs.changed-accounts != ''
+    strategy:
+      matrix:
+        account: ${{ fromJson(needs.detect-changes.outputs.changed-accounts) }}
+      max-parallel: 5
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: sg-platform-plan-${{ matrix.account }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+          
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Generate Terraform configuration
+        run: |
+          python scripts/generate-terraform.py --account-id "${{ matrix.account }}"
+          
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+        
+      - name: Terraform Init - Baseline
+        run: |
+          cd baseline
+          terraform init -backend-config="key=security-groups/baseline/${{ matrix.account }}/terraform.tfstate"
+          
+      - name: Terraform Plan - Baseline
+        id: plan-baseline
+        run: |
+          cd baseline
+          terraform plan -var="account_id=${{ matrix.account }}" -out=baseline-plan
+          terraform show -no-color baseline-plan > ../baseline-plan.txt
+          
+      - name: Terraform Init - Account Specific
+        run: |
+          cd generated/${{ matrix.account }}
+          terraform init -backend-config="key=security-groups/accounts/${{ matrix.account }}/terraform.tfstate"
+          
+      - name: Terraform Plan - Account Specific
+        id: plan-account
+        run: |
+          cd generated/${{ matrix.account }}
+          terraform plan -out=account-plan
+          terraform show -no-color account-plan > ../../account-${{ matrix.account }}-plan.txt
+        continue-on-error: true
+        
+      - name: Post Plan Comment
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN_BASELINE: "baseline-plan.txt"
+          PLAN_ACCOUNT: "account-${{ matrix.account }}-plan.txt"
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let comment = `## Terraform Plan Results for Account \`${{ matrix.account }}\`\n\n`;
+            
+            // Format check result
+            if ('${{ steps.fmt.outcome }}' === 'failure') {
+              comment += '❌ **Terraform Format Check Failed**\n\n';
+            } else {
+              comment += '✅ **Terraform Format Check Passed**\n\n';
+            }
+            
+            // Baseline plan
+            try {
+              const baselinePlan = fs.readFileSync('baseline-plan.txt', 'utf8');
+              comment += '<details>\n';
+              comment += '<summary><strong>Baseline Plan (Common Security Groups)</strong></summary>\n\n';
+              comment += '```terraform\n';
+              comment += baselinePlan.substring(0, 30000); // Truncate if too long
+              comment += '\n```\n';
+              comment += '</details>\n\n';
+            } catch (err) {
+              comment += '❌ **Baseline Plan Failed**\n\n';
+            }
+            
+            // Account-specific plan
+            try {
+              const accountPlan = fs.readFileSync(`account-${{ matrix.account }}-plan.txt`, 'utf8');
+              comment += '<details>\n';
+              comment += '<summary><strong>Account-Specific Plan (Team Security Groups)</strong></summary>\n\n';
+              comment += '```terraform\n';
+              comment += accountPlan.substring(0, 30000); // Truncate if too long
+              comment += '\n```\n';
+              comment += '</details>\n\n';
+            } catch (err) {
+              comment += '❌ **Account-Specific Plan Failed**\n\n';
+              comment += `Error: ${{ steps.plan-account.outputs.stderr }}\n\n`;
+            }
+            
+            // Post comment
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  validate-guardrails:
+    name: "Validate Against Guardrails"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, terraform-plan]
+    if: needs.detect-changes.outputs.changed-accounts != ''
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Run guardrails validation
+        run: |
+          python scripts/validate.py --guardrails-only --accounts "${{ needs.detect-changes.outputs.changed-accounts }}"
+
+  security-review-required:
+    name: "Security Review Required"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, terraform-plan, validate-guardrails]
+    if: always() && needs.detect-changes.outputs.changed-accounts != ''
+    
+    steps:
+      - name: Check if security review is required
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if this PR has been approved by security team
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            
+            const securityTeamMembers = ['security-team']; // GitHub team slug
+            const hasSecurityApproval = reviews.some(review => 
+              review.state === 'APPROVED' && 
+              securityTeamMembers.includes(review.user.login)
+            );
+            
+            if (!hasSecurityApproval) {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 🛡️ Security Review Required
+                
+This PR modifies security group configurations and requires approval from the security team.
+
+**What happens next:**
+1. Security team will review the changes
+2. Once approved, you can merge this PR
+3. Security groups will be deployed automatically
+
+**Need help?** Contact the security team in #aws-security-groups`
+              });
+            }
+
+  validation-summary:
+    name: "Validation Summary"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate-yaml, check-quotas, terraform-plan, validate-guardrails]
+    if: always() && needs.detect-changes.outputs.changed-accounts != ''
+    
+    steps:
+      - name: Post validation summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const results = {
+              'YAML Schema': '${{ needs.validate-yaml.result }}',
+              'Quota Check': '${{ needs.check-quotas.result }}', 
+              'Terraform Plan': '${{ needs.terraform-plan.result }}',
+              'Guardrails': '${{ needs.validate-guardrails.result }}'
+            };
+            
+            let summary = '## 🔍 Validation Summary\n\n';
+            let allPassed = true;
+            
+            for (const [check, result] of Object.entries(results)) {
+              if (result === 'success') {
+                summary += `✅ **${check}**: Passed\n`;
+              } else if (result === 'failure') {
+                summary += `❌ **${check}**: Failed\n`;
+                allPassed = false;
+              } else {
+                summary += `⏭️ **${check}**: Skipped\n`;
+              }
+            }
+            
+            if (allPassed) {
+              summary += '\n🎉 **All validations passed!** This PR is ready for security team review.\n';
+            } else {
+              summary += '\n❌ **Some validations failed.** Please fix the issues above before requesting review.\n';
+            }
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

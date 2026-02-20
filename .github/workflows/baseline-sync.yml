@@ -1,0 +1,403 @@
+name: "Sync Baseline to All Accounts"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'baseline/**'
+      - 'prefix-lists.yaml'
+      - 'modules/security-group/**'
+      - 'modules/vpc-discovery/**'
+  
+  workflow_dispatch:
+    inputs:
+      force_sync:
+        description: 'Force sync baseline to all accounts'
+        required: false
+        default: 'false'
+        type: boolean
+      target_accounts:
+        description: 'Comma-separated list of account IDs to sync (leave empty for all)'
+        required: false
+        type: string
+
+permissions:
+  id-token: write   # For OIDC AWS authentication
+  contents: read    # For checking out repository
+  actions: write    # For workflow dispatch
+  issues: write     # For creating issues on failures
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: 1.6.0
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  discover-accounts:
+    name: "Discover Target Accounts"
+    runs-on: ubuntu-latest
+    outputs:
+      accounts: ${{ steps.discover.outputs.accounts }}
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Discover accounts
+        id: discover
+        run: |
+          if [ "${{ github.event.inputs.target_accounts }}" != "" ]; then
+            # Use provided account list
+            ACCOUNTS="${{ github.event.inputs.target_accounts }}"
+          else
+            # Discover all accounts from the repository
+            ACCOUNTS=$(python scripts/discover-accounts.py --format=comma)
+          fi
+          
+          echo "accounts=$ACCOUNTS" >> $GITHUB_OUTPUT
+          echo "Target accounts: $ACCOUNTS"
+
+  validate-baseline:
+    name: "Validate Baseline Configuration"
+    runs-on: ubuntu-latest
+    needs: discover-accounts
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+          
+      - name: Terraform Format Check
+        run: |
+          cd baseline
+          terraform fmt -check -recursive
+          
+      - name: Terraform Validate
+        run: |
+          cd baseline
+          terraform init -backend=false
+          terraform validate
+          
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Validate prefix lists configuration
+        run: |
+          python scripts/validate.py --prefix-lists-only
+
+  sync-baseline:
+    name: "Sync Baseline to Account"
+    runs-on: ubuntu-latest
+    needs: [discover-accounts, validate-baseline]
+    strategy:
+      matrix:
+        account: ${{ fromJson(needs.discover-accounts.outputs.accounts) }}
+      max-parallel: 5  # Sync to max 5 accounts in parallel
+      fail-fast: false  # Continue syncing to other accounts if one fails
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: sg-baseline-sync-${{ matrix.account }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+          
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Verify account access
+        id: account-access
+        run: |
+          aws sts get-caller-identity
+          echo "Account: $(aws sts get-caller-identity --query Account --output text)"
+          
+          # Verify we can access the target account
+          CURRENT_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          if [ "$CURRENT_ACCOUNT" != "${{ matrix.account }}" ]; then
+            echo "❌ Cannot access target account ${{ matrix.account }}"
+            echo "Currently authenticated to account: $CURRENT_ACCOUNT"
+            exit 1
+          fi
+          
+      - name: Discover VPC information
+        id: vpc-discovery
+        run: |
+          # Get VPC information for the account
+          python scripts/discover-vpc.py --account-id "${{ matrix.account }}" > vpc-info.json
+          cat vpc-info.json
+          
+          VPC_ID=$(python -c "import json; print(json.load(open('vpc-info.json'))['vpc_id'])")
+          VPC_CIDR=$(python -c "import json; print(json.load(open('vpc-info.json'))['vpc_cidr'])")
+          
+          echo "vpc-id=$VPC_ID" >> $GITHUB_OUTPUT
+          echo "vpc-cidr=$VPC_CIDR" >> $GITHUB_OUTPUT
+          
+      - name: Terraform Init
+        run: |
+          cd baseline
+          terraform init -backend-config="key=security-groups/baseline/${{ matrix.account }}/terraform.tfstate"
+          
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd baseline
+          terraform plan \
+            -var="account_id=${{ matrix.account }}" \
+            -var="vpc_id=${{ steps.vpc-discovery.outputs.vpc-id }}" \
+            -var="vpc_cidr=${{ steps.vpc-discovery.outputs.vpc-cidr }}" \
+            -out=baseline-sync-plan
+        continue-on-error: true
+        
+      - name: Terraform Apply
+        id: apply
+        if: steps.plan.outcome == 'success'
+        run: |
+          cd baseline
+          terraform apply -auto-approve baseline-sync-plan
+        continue-on-error: true
+        
+      - name: Capture outputs
+        id: outputs
+        if: steps.apply.outcome == 'success'
+        run: |
+          cd baseline
+          terraform output -json > ../baseline-outputs-${{ matrix.account }}.json
+          
+          # Create summary of what was deployed
+          echo "## Baseline Sync Results for Account ${{ matrix.account }}" > ../sync-summary-${{ matrix.account }}.md
+          echo "" >> ../sync-summary-${{ matrix.account }}.md
+          echo "**VPC ID**: ${{ steps.vpc-discovery.outputs.vpc-id }}" >> ../sync-summary-${{ matrix.account }}.md
+          echo "**VPC CIDR**: ${{ steps.vpc-discovery.outputs.vpc-cidr }}" >> ../sync-summary-${{ matrix.account }}.md
+          echo "**Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> ../sync-summary-${{ matrix.account }}.md
+          echo "" >> ../sync-summary-${{ matrix.account }}.md
+          echo "### Deployed Resources" >> ../sync-summary-${{ matrix.account }}.md
+          
+          # Extract security group names from outputs
+          if [ -f ../baseline-outputs-${{ matrix.account }}.json ]; then
+            python -c "
+import json
+with open('../baseline-outputs-${{ matrix.account }}.json', 'r') as f:
+    outputs = json.load(f)
+    
+for key, value in outputs.items():
+    if 'security_group' in key.lower():
+        print(f'- **{key}**: {value.get(\"value\", \"N/A\")}')
+" >> ../sync-summary-${{ matrix.account }}.md
+          fi
+          
+      - name: Upload sync results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-results-${{ matrix.account }}
+          path: |
+            baseline-outputs-${{ matrix.account }}.json
+            sync-summary-${{ matrix.account }}.md
+          retention-days: 7
+          
+      - name: Report sync status
+        if: always()
+        run: |
+          if [ "${{ steps.apply.outcome }}" = "success" ]; then
+            echo "✅ Baseline sync successful for account ${{ matrix.account }}"
+          else
+            echo "❌ Baseline sync failed for account ${{ matrix.account }}"
+            if [ "${{ steps.plan.outcome }}" = "failure" ]; then
+              echo "Failed at planning stage"
+            elif [ "${{ steps.apply.outcome }}" = "failure" ]; then
+              echo "Failed at apply stage"
+            fi
+            exit 1
+          fi
+
+  post-sync-summary:
+    name: "Post-Sync Summary"
+    runs-on: ubuntu-latest
+    needs: [discover-accounts, sync-baseline]
+    if: always()
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Download all sync results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sync-results-*
+          merge-multiple: true
+          
+      - name: Create comprehensive summary
+        run: |
+          echo "# Baseline Security Groups Sync Summary" > comprehensive-summary.md
+          echo "" >> comprehensive-summary.md
+          echo "**Trigger**: ${{ github.event_name }}" >> comprehensive-summary.md
+          echo "**Commit**: ${{ github.sha }}" >> comprehensive-summary.md
+          echo "**Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> comprehensive-summary.md
+          echo "**Target Accounts**: ${{ needs.discover-accounts.outputs.accounts }}" >> comprehensive-summary.md
+          echo "" >> comprehensive-summary.md
+          
+          # Count successes and failures
+          SUCCESS_COUNT=0
+          FAILURE_COUNT=0
+          
+          echo "## Per-Account Results" >> comprehensive-summary.md
+          echo "" >> comprehensive-summary.md
+          
+          IFS=',' read -ra ACCOUNTS <<< "${{ needs.discover-accounts.outputs.accounts }}"
+          for account in "${ACCOUNTS[@]}"; do
+            if [ -f "sync-summary-${account}.md" ]; then
+              echo "### ✅ Account $account (Success)" >> comprehensive-summary.md
+              cat "sync-summary-${account}.md" | tail -n +2 >> comprehensive-summary.md
+              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+            else
+              echo "### ❌ Account $account (Failed)" >> comprehensive-summary.md
+              echo "Baseline sync failed for this account. Check workflow logs for details." >> comprehensive-summary.md
+              FAILURE_COUNT=$((FAILURE_COUNT + 1))
+            fi
+            echo "" >> comprehensive-summary.md
+          done
+          
+          # Add summary statistics
+          echo "## Summary Statistics" >> comprehensive-summary.md
+          echo "" >> comprehensive-summary.md
+          echo "- **Successful**: $SUCCESS_COUNT accounts" >> comprehensive-summary.md
+          echo "- **Failed**: $FAILURE_COUNT accounts" >> comprehensive-summary.md
+          echo "- **Total**: $(($SUCCESS_COUNT + $FAILURE_COUNT)) accounts" >> comprehensive-summary.md
+          
+          if [ $FAILURE_COUNT -gt 0 ]; then
+            echo "" >> comprehensive-summary.md
+            echo "⚠️ **Action Required**: Some accounts failed to sync. Review the logs and consider manual intervention." >> comprehensive-summary.md
+          fi
+          
+      - name: Post comprehensive summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('comprehensive-summary.md', 'utf8');
+            
+            if (context.eventName === 'push') {
+              // Post as commit comment for push events
+              await github.rest.repos.createCommitComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+                body: summary
+              });
+            } else {
+              // For manual triggers, just log the summary
+              console.log(summary);
+            }
+
+  handle-sync-failures:
+    name: "Handle Sync Failures"
+    runs-on: ubuntu-latest
+    needs: [discover-accounts, sync-baseline]
+    if: always() && needs.sync-baseline.result == 'failure'
+    
+    steps:
+      - name: Create failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Baseline Sync Failed - ${new Date().toISOString().split('T')[0]}`;
+            const body = `
+            ## Baseline Sync Failure Report
+            
+            **Trigger**: ${{ github.event_name }}
+            **Commit**: \`${{ github.sha }}\`
+            **Workflow Run**: [View Details](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            **Target Accounts**: \`${{ needs.discover-accounts.outputs.accounts }}\`
+            
+            ### What This Means
+            
+            The baseline security groups (common to all accounts) failed to sync to one or more accounts.
+            This could affect:
+            - VPC endpoint access
+            - Inter-service communication
+            - WAF → NLB traffic flow
+            - EKS cluster baseline security
+            
+            ### Immediate Actions Needed
+            
+            1. **Review workflow logs** for specific error messages
+            2. **Check AWS permissions** for the deployment role
+            3. **Verify VPC discovery** is working correctly
+            4. **Check Terraform state** consistency
+            5. **Consider manual baseline deployment** if critical
+            
+            ### Recovery Steps
+            
+            \`\`\`bash
+            # Manual baseline deployment to failed account(s)
+            cd baseline
+            terraform init -backend-config="key=security-groups/baseline/ACCOUNT_ID/terraform.tfstate"
+            terraform plan -var="account_id=ACCOUNT_ID"
+            terraform apply
+            \`\`\`
+            
+            ### Prevention
+            
+            - Monitor AWS service quotas
+            - Ensure IAM roles have necessary permissions
+            - Test baseline changes in dev accounts first
+            
+            **Assigned to**: @security-team @platform-team
+            `;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['baseline-sync-failure', 'urgent', 'security-groups', 'infrastructure'],
+              assignees: ['security-team', 'platform-team']
+            });
+
+  cleanup:
+    name: "Cleanup"
+    runs-on: ubuntu-latest
+    needs: [discover-accounts, sync-baseline, post-sync-summary]
+    if: always()
+    
+    steps:
+      - name: Clean up
+        run: |
+          echo "Baseline sync workflow completed."
+          echo "Temporary artifacts will be cleaned up automatically by retention policies."

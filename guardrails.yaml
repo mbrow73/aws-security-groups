@@ -1,0 +1,117 @@
+# AWS Security Group Platform - Guardrails Configuration
+# This file defines validation rules that are enforced during PR validation
+# Update these rules as security policies evolve - no code changes required
+
+validation:
+  # CIDR blocks that are explicitly blocked
+  blocked_cidrs:
+    - "0.0.0.0/0"  # Full internet access - requires explicit override
+    - "169.254.169.254/32"  # AWS metadata service
+    - "169.254.0.0/16"  # Link-local addresses
+  
+  # Port ranges that require special attention
+  warn_on_ports:
+    - 22    # SSH - should use bastion/Session Manager
+    - 3389  # RDP - should use bastion/Session Manager
+    - 1433  # SQL Server - should be internal only
+    - 3306  # MySQL - should be internal only
+    - 5432  # PostgreSQL - should be internal only
+    - 6379  # Redis - should be internal only
+    - 27017 # MongoDB - should be internal only
+  
+  # Ports that are completely blocked
+  blocked_ports:
+    - 23    # Telnet - insecure
+    - 135   # RPC - security risk
+    - 139   # NetBIOS - security risk
+    - 445   # SMB - should be internal VPC only
+  
+  # Port range limits
+  port_ranges:
+    max_range_size: 1000  # Maximum port range span
+    
+  # Rule limits per security group
+  rules:
+    max_ingress_rules: 60
+    max_egress_rules: 60
+    
+  # Naming conventions
+  naming:
+    security_group_pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+    max_name_length: 63
+    required_tags:
+      - ManagedBy
+      - Team
+      - Environment
+      - Application
+    
+# Security group type-specific overrides
+type_overrides:
+  eks-nodes:
+    # EKS nodes need specific ports for cluster communication
+    allowed_protocols:
+      - tcp
+      - udp
+      - icmp
+    allowed_from_self: true  # Allow communication between nodes
+    required_egress:
+      - protocol: tcp
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "HTTPS to internet for pulling images"
+      - protocol: tcp
+        from_port: 53
+        to_port: 53
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "DNS resolution"
+      - protocol: udp
+        from_port: 53
+        to_port: 53
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "DNS resolution"
+  
+  nlb:
+    # Network Load Balancer security groups have different requirements
+    allowed_protocols:
+      - tcp
+      - udp
+    max_rules: 200  # NLBs may need more rules for multiple services
+    
+  web:
+    # Web tier security groups
+    allowed_protocols:
+      - tcp
+    common_ports:
+      - 80
+      - 443
+      - 8080
+      - 8443
+
+# Environment-specific rules
+environments:
+  production:
+    # Production has stricter rules
+    require_description: true
+    max_cidr_size: 24  # No larger than /24 CIDR blocks
+    require_approval: true
+    
+  staging:
+    max_cidr_size: 16
+    require_approval: true
+    
+  development:
+    # Dev can be more permissive but still secure
+    max_cidr_size: 8
+    require_approval: false
+    allowed_test_ports:
+      - 3000  # React dev server
+      - 8000  # Django dev server
+      - 9000  # Various dev tools
+
+# Quota limits (used by check-quotas.py)
+quotas:
+  security_groups_per_vpc: 2500
+  rules_per_security_group: 120
+  # Note: AWS default is 2500 SGs per VPC, 60 rules per SG
+  # We set slightly higher limits to accommodate bursts

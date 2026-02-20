@@ -1,0 +1,343 @@
+name: "Deploy Security Groups"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'accounts/**'
+      - 'baseline/**'
+      - 'modules/**'
+
+permissions:
+  id-token: write   # For OIDC AWS authentication
+  contents: read    # For checking out repository
+  actions: write    # For workflow dispatch
+  issues: write     # For creating issues on failures
+
+env:
+  AWS_REGION: us-east-1
+  TERRAFORM_VERSION: 1.6.0
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  detect-changes:
+    name: "Detect Changed Accounts"
+    runs-on: ubuntu-latest
+    outputs:
+      changed-accounts: ${{ steps.detect.outputs.accounts }}
+      baseline-changed: ${{ steps.detect.outputs.baseline_changed }}
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          
+      - name: Detect changed accounts and baseline
+        id: detect
+        run: |
+          # Get list of changed files in this push
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Extract account IDs from changed files
+          ACCOUNTS=$(echo "$CHANGED_FILES" | grep -E '^accounts/[0-9]+/' | cut -d'/' -f2 | sort | uniq | tr '\n' ',' | sed 's/,$//')
+          
+          # Check if baseline changed
+          BASELINE_CHANGED="false"
+          if echo "$CHANGED_FILES" | grep -E '^(baseline/|modules/)'; then
+            BASELINE_CHANGED="true"
+          fi
+          
+          echo "accounts=$ACCOUNTS" >> $GITHUB_OUTPUT
+          echo "baseline_changed=$BASELINE_CHANGED" >> $GITHUB_OUTPUT
+          echo "Changed accounts: $ACCOUNTS"
+          echo "Baseline changed: $BASELINE_CHANGED"
+
+  deploy-baseline:
+    name: "Deploy Baseline Security Groups"
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.baseline-changed == 'true' || needs.detect-changes.outputs.changed-accounts != ''
+    strategy:
+      matrix:
+        account: ${{ fromJson(needs.detect-changes.outputs.changed-accounts) }}
+      max-parallel: 3  # Deploy to max 3 accounts in parallel
+      fail-fast: false  # Continue deploying to other accounts if one fails
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: sg-platform-baseline-${{ matrix.account }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+          
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Discover VPC information for account
+        id: vpc-discovery
+        run: |
+          # Use the VPC discovery script to get VPC information
+          VPC_INFO=$(python scripts/discover-vpc.py --account-id "${{ matrix.account }}")
+          echo "vpc-info=$VPC_INFO" >> $GITHUB_OUTPUT
+          
+      - name: Terraform Init - Baseline
+        run: |
+          cd baseline
+          terraform init -backend-config="key=security-groups/baseline/${{ matrix.account }}/terraform.tfstate"
+          
+      - name: Terraform Apply - Baseline
+        id: baseline-apply
+        run: |
+          cd baseline
+          terraform apply -auto-approve -var="account_id=${{ matrix.account }}"
+        continue-on-error: true
+        
+      - name: Capture Baseline Outputs
+        id: baseline-outputs
+        if: steps.baseline-apply.outcome == 'success'
+        run: |
+          cd baseline
+          terraform output -json > ../baseline-outputs-${{ matrix.account }}.json
+          
+      - name: Upload Baseline Outputs Artifact
+        if: steps.baseline-apply.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: baseline-outputs-${{ matrix.account }}
+          path: baseline-outputs-${{ matrix.account }}.json
+          retention-days: 1
+          
+      - name: Report Baseline Deployment Status
+        if: always()
+        run: |
+          if [ "${{ steps.baseline-apply.outcome }}" = "success" ]; then
+            echo "✅ Baseline deployment successful for account ${{ matrix.account }}"
+          else
+            echo "❌ Baseline deployment failed for account ${{ matrix.account }}"
+            echo "Error details:"
+            echo "${{ steps.baseline-apply.outputs.stderr }}"
+            exit 1
+          fi
+
+  deploy-account-specific:
+    name: "Deploy Account-Specific Security Groups"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy-baseline]
+    if: always() && needs.detect-changes.outputs.changed-accounts != ''
+    strategy:
+      matrix:
+        account: ${{ fromJson(needs.detect-changes.outputs.changed-accounts) }}
+      max-parallel: 3  # Deploy to max 3 accounts in parallel
+      fail-fast: false  # Continue deploying to other accounts if one fails
+      
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-session-name: sg-platform-account-${{ matrix.account }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+          
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+          
+      - name: Download Baseline Outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: baseline-outputs-${{ matrix.account }}
+        continue-on-error: true
+        
+      - name: Generate Terraform configuration
+        run: |
+          python scripts/generate-terraform.py --account-id "${{ matrix.account }}"
+          
+      - name: Terraform Init - Account Specific
+        run: |
+          cd generated/${{ matrix.account }}
+          terraform init -backend-config="key=security-groups/accounts/${{ matrix.account }}/terraform.tfstate"
+          
+      - name: Terraform Apply - Account Specific
+        id: account-apply
+        run: |
+          cd generated/${{ matrix.account }}
+          terraform apply -auto-approve
+        continue-on-error: true
+        
+      - name: Capture Apply Outputs
+        if: steps.account-apply.outcome == 'success'
+        run: |
+          cd generated/${{ matrix.account }}
+          terraform output -json > ../../account-outputs-${{ matrix.account }}.json
+          
+      - name: Report Account Deployment Status
+        if: always()
+        run: |
+          if [ "${{ steps.account-apply.outcome }}" = "success" ]; then
+            echo "✅ Account-specific deployment successful for account ${{ matrix.account }}"
+          else
+            echo "❌ Account-specific deployment failed for account ${{ matrix.account }}"
+            echo "Error details:"
+            echo "${{ steps.account-apply.outputs.stderr }}"
+            exit 1
+          fi
+
+  post-deployment:
+    name: "Post-Deployment Summary"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy-baseline, deploy-account-specific]
+    if: always() && needs.detect-changes.outputs.changed-accounts != ''
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Create deployment summary
+        run: |
+          echo "# Security Groups Deployment Summary" > deployment-summary.md
+          echo "" >> deployment-summary.md
+          echo "**Commit**: ${{ github.sha }}" >> deployment-summary.md
+          echo "**Timestamp**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> deployment-summary.md
+          echo "**Changed Accounts**: ${{ needs.detect-changes.outputs.changed-accounts }}" >> deployment-summary.md
+          echo "**Baseline Changed**: ${{ needs.detect-changes.outputs.baseline-changed }}" >> deployment-summary.md
+          echo "" >> deployment-summary.md
+          echo "## Results" >> deployment-summary.md
+          echo "" >> deployment-summary.md
+          echo "- **Baseline Deployment**: ${{ needs.deploy-baseline.result }}" >> deployment-summary.md
+          echo "- **Account-Specific Deployment**: ${{ needs.deploy-account-specific.result }}" >> deployment-summary.md
+          echo "" >> deployment-summary.md
+          
+          # Add account-specific results
+          IFS=',' read -ra ACCOUNTS <<< "${{ needs.detect-changes.outputs.changed-accounts }}"
+          for account in "${ACCOUNTS[@]}"; do
+            echo "### Account $account" >> deployment-summary.md
+            if [ "${{ needs.deploy-baseline.result }}" = "success" ]; then
+              echo "- ✅ Baseline security groups deployed" >> deployment-summary.md
+            else
+              echo "- ❌ Baseline security groups failed" >> deployment-summary.md
+            fi
+            if [ "${{ needs.deploy-account-specific.result }}" = "success" ]; then
+              echo "- ✅ Account-specific security groups deployed" >> deployment-summary.md
+            else
+              echo "- ❌ Account-specific security groups failed" >> deployment-summary.md
+            fi
+            echo "" >> deployment-summary.md
+          done
+          
+      - name: Post summary as commit comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('deployment-summary.md', 'utf8');
+            
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: summary
+            });
+
+  handle-failures:
+    name: "Handle Deployment Failures"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy-baseline, deploy-account-specific]
+    if: always() && (needs.deploy-baseline.result == 'failure' || needs.deploy-account-specific.result == 'failure')
+    
+    steps:
+      - name: Create failure issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Security Group Deployment Failed - ${new Date().toISOString().split('T')[0]}`;
+            const body = `
+            ## Deployment Failure Report
+            
+            **Commit**: \`${{ github.sha }}\`
+            **Workflow Run**: [View Details](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            **Changed Accounts**: \`${{ needs.detect-changes.outputs.changed-accounts }}\`
+            
+            ### Failure Details
+            
+            - **Baseline Deployment**: ${{ needs.deploy-baseline.result }}
+            - **Account-Specific Deployment**: ${{ needs.deploy-account-specific.result }}
+            
+            ### Next Steps
+            
+            1. Review the workflow logs for detailed error information
+            2. Check AWS CloudTrail for any permission issues
+            3. Verify Terraform state consistency
+            4. Consider manual intervention if needed
+            5. Re-run the deployment once issues are resolved
+            
+            ### Rollback Procedure
+            
+            If needed, use the previous working commit and manually apply:
+            \`\`\`bash
+            git checkout <previous-working-commit>
+            # Apply baseline and account configs manually
+            \`\`\`
+            
+            **Assigned to**: @security-team
+            `;
+            
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['deployment-failure', 'urgent', 'security-groups'],
+              assignees: ['security-team']  # Assign to security team
+            });
+            
+      - name: Notify via Slack (if configured)
+        run: |
+          # Add Slack notification logic here if webhook is configured
+          echo "Deployment failed. Manual intervention may be required."
+          echo "Check the created GitHub issue for details."
+
+  cleanup:
+    name: "Cleanup Artifacts"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, deploy-baseline, deploy-account-specific, post-deployment]
+    if: always()
+    
+    steps:
+      - name: Clean up temporary artifacts
+        run: |
+          echo "Cleaning up temporary deployment artifacts..."
+          # Artifacts are automatically cleaned up by GitHub Actions retention policy
+          echo "Cleanup completed."

@@ -1,0 +1,198 @@
+# AWS Security Group Platform - Managed Prefix Lists
+# Centralized definition of reusable CIDR blocks
+# These become AWS Managed Prefix Lists for consistent referencing
+
+prefix_lists:
+  # Corporate network ranges
+  corporate-networks:
+    name: "corporate-networks"
+    description: "Corporate office and VPN CIDR blocks"
+    max_entries: 20
+    address_family: "IPv4"
+    entries:
+      - cidr: "10.1.0.0/16"
+        description: "Corporate HQ network"
+      - cidr: "10.2.0.0/16"
+        description: "Corporate branch offices"
+      - cidr: "10.10.0.0/16"
+        description: "Corporate VPN pool"
+      - cidr: "192.168.1.0/24"
+        description: "Corporate remote access"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "corporate"
+      
+  # WAF and CDN service IPs
+  waf-saas-providers:
+    name: "waf-saas-providers"
+    description: "WAF SaaS provider IP ranges"
+    max_entries: 100
+    address_family: "IPv4"
+    entries:
+      # Cloudflare IP ranges (commonly used WAF/CDN)
+      - cidr: "173.245.48.0/20"
+        description: "Cloudflare range 1"
+      - cidr: "103.21.244.0/22"
+        description: "Cloudflare range 2"
+      - cidr: "103.22.200.0/22"
+        description: "Cloudflare range 3"
+      - cidr: "103.31.4.0/22"
+        description: "Cloudflare range 4"
+      - cidr: "141.101.64.0/18"
+        description: "Cloudflare range 5"
+      - cidr: "108.162.192.0/18"
+        description: "Cloudflare range 6"
+      - cidr: "190.93.240.0/20"
+        description: "Cloudflare range 7"
+      - cidr: "188.114.96.0/20"
+        description: "Cloudflare range 8"
+      - cidr: "197.234.240.0/22"
+        description: "Cloudflare range 9"
+      - cidr: "198.41.128.0/17"
+        description: "Cloudflare range 10"
+      # Fastly IP ranges (another common CDN/WAF)
+      - cidr: "23.235.32.0/20"
+        description: "Fastly range 1"
+      - cidr: "43.249.72.0/22"
+        description: "Fastly range 2"
+      - cidr: "103.244.50.0/24"
+        description: "Fastly range 3"
+      - cidr: "103.245.222.0/23"
+        description: "Fastly range 4"
+      - cidr: "103.245.224.0/24"
+        description: "Fastly range 5"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "waf-cdn"
+      
+  # AWS VPC Endpoint service IPs (for S3, ECR, etc.)
+  aws-vpc-endpoints:
+    name: "aws-vpc-endpoints"
+    description: "AWS VPC Endpoint service IP ranges"
+    max_entries: 50
+    address_family: "IPv4"
+    entries:
+      # These are region-specific and should be updated based on your regions
+      # Example for us-east-1 VPC endpoint ranges
+      - cidr: "52.219.0.0/16"
+        description: "AWS S3 VPC endpoint range us-east-1"
+      - cidr: "54.231.0.0/16"
+        description: "AWS S3 service range us-east-1"
+      - cidr: "52.46.0.0/16"
+        description: "AWS ECR VPC endpoint range"
+      - cidr: "3.5.0.0/16"
+        description: "AWS EKS API endpoint range"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "aws-services"
+      
+  # Database subnet ranges (for RDS, ElastiCache, etc.)
+  database-subnets:
+    name: "database-subnets"
+    description: "Database subnet CIDR blocks across all VPCs"
+    max_entries: 30
+    address_family: "IPv4"
+    entries:
+      # These would be populated based on your actual VPC designs
+      - cidr: "10.100.10.0/24"
+        description: "Production RDS subnet AZ-1a"
+      - cidr: "10.100.11.0/24"
+        description: "Production RDS subnet AZ-1b"
+      - cidr: "10.100.12.0/24"
+        description: "Production RDS subnet AZ-1c"
+      - cidr: "10.101.10.0/24"
+        description: "Staging RDS subnet AZ-1a"
+      - cidr: "10.101.11.0/24"
+        description: "Staging RDS subnet AZ-1b"
+      - cidr: "10.102.10.0/24"
+        description: "Development RDS subnet AZ-1a"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "database"
+      
+  # Application load balancer subnets
+  alb-subnets:
+    name: "alb-subnets"
+    description: "ALB subnet CIDR blocks for ingress rules"
+    max_entries: 30
+    address_family: "IPv4"
+    entries:
+      - cidr: "10.100.1.0/24"
+        description: "Production ALB subnet AZ-1a"
+      - cidr: "10.100.2.0/24"
+        description: "Production ALB subnet AZ-1b"
+      - cidr: "10.100.3.0/24"
+        description: "Production ALB subnet AZ-1c"
+      - cidr: "10.101.1.0/24"
+        description: "Staging ALB subnet AZ-1a"
+      - cidr: "10.101.2.0/24"
+        description: "Staging ALB subnet AZ-1b"
+      - cidr: "10.102.1.0/24"
+        description: "Development ALB subnet AZ-1a"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "load-balancer"
+      
+  # CI/CD and build system IPs
+  ci-cd-systems:
+    name: "ci-cd-systems"
+    description: "CI/CD system IP ranges (GitHub Actions, Jenkins, etc.)"
+    max_entries: 20
+    address_family: "IPv4"
+    entries:
+      # GitHub Actions runner IP ranges (these change, so monitor GitHub meta API)
+      - cidr: "192.30.252.0/22"
+        description: "GitHub Actions hosted runners"
+      - cidr: "185.199.108.0/22"
+        description: "GitHub Actions hosted runners"
+      - cidr: "140.82.112.0/20"
+        description: "GitHub Actions hosted runners"
+      - cidr: "143.55.64.0/20"
+        description: "GitHub Actions hosted runners"
+      # Self-hosted runners (example ranges)
+      - cidr: "10.50.0.0/24"
+        description: "Self-hosted GitHub Actions runners"
+      - cidr: "10.51.0.0/24"
+        description: "Jenkins build agents"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "ci-cd"
+      
+  # Monitoring and logging services
+  monitoring-services:
+    name: "monitoring-services"
+    description: "External monitoring service IP ranges"
+    max_entries: 20
+    address_family: "IPv4"
+    entries:
+      # DataDog agent communication
+      - cidr: "34.226.14.0/24"
+        description: "DataDog US1 region"
+      - cidr: "52.6.168.0/22"
+        description: "DataDog US1 region"
+      # New Relic
+      - cidr: "162.247.240.0/22"
+        description: "New Relic collectors"
+      - cidr: "185.221.84.0/22"
+        description: "New Relic collectors"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "monitoring"
+
+# Regional overrides for prefix lists that vary by region
+regional_overrides:
+  us-west-2:
+    aws-vpc-endpoints:
+      entries:
+        - cidr: "52.218.0.0/16"
+          description: "AWS S3 VPC endpoint range us-west-2"
+        - cidr: "54.231.0.0/16"
+          description: "AWS S3 service range us-west-2"
+          
+  eu-west-1:
+    aws-vpc-endpoints:
+      entries:
+        - cidr: "52.218.0.0/16"
+          description: "AWS S3 VPC endpoint range eu-west-1"
+        - cidr: "54.231.0.0/16"
+          description: "AWS S3 service range eu-west-1"
