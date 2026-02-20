@@ -1,0 +1,123 @@
+# Team: Payments
+# Requested by: Sarah Chen (sarah.chen@company.com)
+# Date: 2026-02-20
+# Purpose: New payment processing microservice deployment to EKS
+
+account_id: "847291036584"
+environment: "production"
+
+vpc:
+  vpc_id: "auto"
+
+tags:
+  Team: "payments"
+  CostCenter: "FIN-PAYMENTS"
+
+security_groups:
+
+  # EKS nodes running payment processing pods
+  eks-nodes-payments:
+    description: "EKS worker nodes for payment processing cluster"
+    tags:
+      Team: "payments"
+      Environment: "production"
+      Application: "payment-service"
+
+    ingress:
+      # Inter-node communication for pod networking
+      - protocol: "tcp"
+        from_port: 0
+        to_port: 65535
+        self: true
+        description: "Pod-to-pod communication between nodes"
+
+      # Kubelet API from EKS control plane
+      - protocol: "tcp"
+        from_port: 10250
+        to_port: 10250
+        cidr_blocks: ["10.200.0.0/16"]
+        description: "Kubelet API from EKS control plane subnet"
+
+      # NodePort range from NLB
+      - protocol: "tcp"
+        from_port: 30000
+        to_port: 32767
+        cidr_blocks: ["10.200.10.0/24", "10.200.11.0/24"]
+        description: "NodePort services from NLB subnets"
+
+    egress:
+      # HTTPS for ECR image pulls and AWS API calls
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "HTTPS for ECR and AWS APIs"
+
+      # DNS resolution
+      - protocol: "udp"
+        from_port: 53
+        to_port: 53
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "DNS resolution"
+
+      - protocol: "tcp"
+        from_port: 53
+        to_port: 53
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "DNS resolution TCP"
+
+  # NLB fronting the payment service
+  nlb-payments-ingress:
+    description: "NLB for payment API ingress from WAF"
+    tags:
+      Team: "payments"
+      Environment: "production"
+      Application: "payment-api"
+      LoadBalancerType: "network"
+
+    ingress:
+      # HTTPS from WAF SaaS provider
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["waf-saas-providers"]
+        description: "HTTPS from WAF SaaS to NLB"
+
+      # Health checks from monitoring
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        cidr_blocks: ["10.200.0.0/16"]
+        description: "Health check endpoint from VPC"
+
+  # Payment gateway connectivity (outbound to Stripe/Adyen)
+  payment-gateway-egress:
+    description: "Egress rules for payment gateway API connectivity"
+    tags:
+      Team: "payments"
+      Environment: "production"
+      Application: "payment-gateway"
+      PCI: "true"
+
+    ingress:
+      # Only accept traffic from payment service pods
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        security_groups: ["eks-nodes-payments"]
+        description: "Inbound from payment service pods"
+
+    egress:
+      # Stripe API
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["13.110.218.0/23", "13.110.220.0/23"]
+        description: "Stripe API endpoints"
+
+      # Adyen API
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["185.63.168.0/22"]
+        description: "Adyen API endpoints"
