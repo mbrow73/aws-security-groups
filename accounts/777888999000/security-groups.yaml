@@ -1,0 +1,73 @@
+account_id: "777888999000"
+environment: "production"
+baseline_profiles:
+  - eks-standard
+  - vpc-endpoints
+
+security_groups:
+  # Clean SG — should pass with no issues
+  eks-nodes-clean:
+    description: "EKS worker nodes with proper security controls"
+    tags:
+      Team: "payments"
+      Environment: "production"
+      Application: "payment-api"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 10250
+        to_port: 10250
+        cidr_blocks: ["10.100.0.0/16"]
+        description: "Kubelet API from EKS control plane"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["aws-vpc-endpoints"]
+        description: "HTTPS to VPC endpoints"
+
+  # SG with PCI-relevant warnings — SSH and DB ports
+  app-with-pci-concerns:
+    description: "Application tier with database and SSH access patterns"
+    tags:
+      Team: "payments"
+      Environment: "production"
+      Application: "order-service"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        security_groups: ["eks-nodes-clean"]
+        description: "HTTP from EKS nodes"
+      - protocol: "tcp"
+        from_port: 22
+        to_port: 22
+        security_groups: ["sg-bastion123456"]
+        description: "SSH from bastion host"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.100.50.0/24"]
+        description: "PostgreSQL to RDS subnet"
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["sg-redis-prod"]
+        description: "Redis cache access"
+
+  # SG with a hard error — should block the PR
+  bad-ingress:
+    description: "This one has a blocked ingress rule"
+    tags:
+      Team: "payments"
+      Environment: "production"
+      Application: "bad-example"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "HTTPS from internet — should be blocked"
