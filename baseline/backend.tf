@@ -1,42 +1,12 @@
 # AWS Security Group Platform - Baseline Module Backend Configuration
 
 terraform {
-  backend "s3" {
-    # S3 bucket for storing Terraform state
-    # This should be configured via backend-config parameters during terraform init
-    # Example: terraform init -backend-config="bucket=my-terraform-state-bucket"
+  cloud {
+    organization = "ORGANIZATION_NAME"  # Replace with your TFC organization name
     
-    # The key is account-specific to isolate state files
-    # key is set via: -backend-config="key=security-groups/baseline/ACCOUNT_ID/terraform.tfstate"
-    
-    # Common backend configuration
-    encrypt                     = true
-    versioning                 = true
-    server_side_encryption_configuration {
-      rule {
-        apply_server_side_encryption_by_default {
-          sse_algorithm = "AES256"
-        }
-      }
+    workspaces {
+      name = "sg-platform-baseline"
     }
-    
-    # State locking via DynamoDB
-    # dynamodb_table is set via: -backend-config="dynamodb_table=terraform-state-lock"
-    
-    # Regional configuration
-    # region is set via: -backend-config="region=us-east-1"
-    
-    # Workspace support for environment isolation
-    workspace_key_prefix = "workspaces"
-    
-    # Security and access configuration
-    skip_credentials_validation = false
-    skip_metadata_api_check    = false
-    skip_region_validation     = false
-    force_path_style          = false
-    
-    # Retry configuration
-    max_retries = 10
   }
 }
 

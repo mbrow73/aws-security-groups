@@ -428,52 +428,61 @@ Prevents AWS quota violations:
 
 ### Automatic Deployment Flow
 
-1. **PR Created** → Validation runs
-2. **PR Approved** → Ready for merge
-3. **Merge to Main** → Deployment starts
-4. **Terraform Apply** → Resources created/updated
-5. **Status Update** → Results posted to Slack/GitHub
+1. **PR Created** → GitHub Actions validation runs (YAML, guardrails, quotas)
+2. **PR Opened** → Terraform Cloud runs speculative plan showing changes
+3. **PR Approved** → Ready for merge (security team review)
+4. **Merge to Main** → Terraform Cloud automatically applies changes
+5. **Status Update** → Results visible in TFC UI and notifications
 
-### Deployment Order
+### Deployment Architecture
 
-The platform deploys accounts in priority order:
-1. **Development** accounts first (lower risk)
-2. **Staging** accounts second (testing)
-3. **Production** accounts last (highest care)
+The platform uses **Terraform Cloud** for deployments:
+- **GitHub Actions**: Validation only (no Terraform operations)
+- **Terraform Cloud**: VCS-driven workspaces handle plan/apply
+- **Per-Account Workspaces**: Each AWS account has its own TFC workspace
+- **Auto-Apply**: Changes are applied automatically after merge
 
 ### What Gets Deployed
 
-When you merge changes, the platform:
+When you merge changes:
 
-1. **Generates Terraform** from your YAML
-2. **Plans Changes** showing what will be modified
-3. **Applies Changes** to your AWS account
-4. **Updates State** in centralized Terraform state
-5. **Reports Results** via Slack and GitHub
+1. **VCS Trigger** activates the appropriate TFC workspace
+2. **Terraform Plan** shows what will be modified (visible in TFC UI)
+3. **Auto Apply** deploys changes to your AWS account
+4. **State Management** handled securely by Terraform Cloud
+5. **Results Available** in TFC UI with detailed logs
 
 ### Rollback Process
 
 If issues occur:
-1. **Automatic Detection** of failed deployments
-2. **Manual Rollback** via GitHub Actions
-3. **Emergency Procedures** documented in runbooks
+1. **TFC Logging** provides detailed failure information
+2. **Manual Rollback** via TFC UI or emergency CLI access
+3. **Emergency Procedures** documented in TFC runbooks
 
 ## 📊 Monitoring and Status
 
 ### Checking Deployment Status
 
-**GitHub Actions**:
-- Go to the repository's Actions tab
-- Find your deployment run
-- Review logs and status
+**Terraform Cloud**:
+- Go to https://app.terraform.io
+- Navigate to your workspace: `sg-platform-{account-id}`
+- Review run history, plans, and apply logs
 
-**Slack Notifications**:
-- `#security-groups` channel gets deployment updates
-- Includes success/failure status and links
+**GitHub Actions**:
+- Go to the repository's Actions tab for validation results
+- Validation-only: no actual deployments happen here
 
 **AWS Console**:
 - Check EC2 → Security Groups in your account
 - Verify the security groups were created/updated
+
+### Terraform Cloud Workspace
+
+Your account's workspace: `sg-platform-123456789012` handles:
+- **Speculative Plans** on PRs (shows what would change)
+- **Auto-Apply** on merge (actually deploys changes)
+- **State Management** (securely stored in TFC)
+- **Variable Management** (AWS credentials, account settings)
 
 ### Common Status Messages
 

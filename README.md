@@ -6,20 +6,20 @@ A self-service platform for managing AWS Security Groups across multiple account
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
-│  Team YAML      │    │  GitHub Actions  │    │  AWS Accounts       │
-│  Configuration  │───▶│  Pipeline        │───▶│  Security Groups    │
+│  Team YAML      │    │  GitHub Actions  │    │  Terraform Cloud    │
+│  Configuration  │───▶│  (Validation)    │    │  (Plan/Apply)       │
 └─────────────────┘    └──────────────────┘    └─────────────────────┘
         │                        │                        │
-        │                        ▼                        │
-        │              ┌──────────────────┐               │
-        │              │  Guardrails &    │               │
-        │              │  Validation      │               │
-        │              └──────────────────┘               │
+        │                        ▼                        ▼
+        │              ┌──────────────────┐    ┌─────────────────────┐
+        │              │  Guardrails &    │    │  VCS-Driven         │
+        │              │  Validation      │    │  Workspaces         │
+        │              └──────────────────┘    └─────────────────────┘
         │                        │                        │
         ▼                        ▼                        ▼
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
-│  Baseline       │    │  Terraform       │    │  VPC Discovery      │
-│  Profiles       │    │  Generation      │    │  (Runtime)          │
+│  Baseline       │    │  Speculative     │    │  AWS Security       │
+│  Profiles       │    │  Plans on PR     │    │  Groups             │
 │  (Opt-In)       │    │                  │    │                     │
 └─────────────────┘    └──────────────────┘    └─────────────────────┘
 ```
@@ -29,7 +29,8 @@ A self-service platform for managing AWS Security Groups across multiple account
 - **🎯 Team-Centric**: Simple YAML interface for security group definitions
 - **🔒 Secure by Default**: Built-in guardrails and validation
 - **📊 GitOps Driven**: All changes via Pull Requests with approval workflows
-- **🏠 Multi-Account**: Isolated Terraform state per AWS account
+- **☁️ Terraform Cloud**: VCS-driven workspaces with speculative plans and auto-apply
+- **🏠 Multi-Account**: Isolated TFC workspaces per AWS account
 - **⚡ Baseline + Custom**: Opt-in baseline security group profiles, plus team-specific ones
 - **🔍 Dynamic Discovery**: VPC information discovered at runtime, no manual registry
 - **📋 Prefix Lists**: Reusable CIDR blocks for common services
@@ -43,9 +44,7 @@ aws-security-groups/
 ├── guardrails.yaml               # Validation rules as configuration
 ├── prefix-lists.yaml             # Managed prefix list definitions
 ├── .github/workflows/            # GitHub Actions pipelines
-│   ├── validate-pr.yml           # PR validation workflow
-│   ├── apply.yml                 # Deployment on merge
-│   └── baseline-sync.yml         # Baseline synchronization
+│   └── validate-pr.yml           # PR validation (YAML, guardrails, naming)
 ├── baseline/                     # Baseline security group profiles (opt-in)
 │   ├── profiles/                 # Modular baseline profiles
 │   │   ├── vpc-endpoints/        # VPC endpoint access profile
@@ -141,10 +140,10 @@ The platform enforces security best practices through configurable guardrails:
 ### Approval Workflow
 
 All changes require:
-1. **Automated validation** - syntax, guardrails, quota checks
-2. **Terraform plan** - shows exact changes
-3. **Human approval** - security team review (required by financial regulations)
-4. **Deployment** - baseline first, then account-specific
+1. **Automated validation** - syntax, guardrails, quota checks, naming conventions
+2. **Speculative plan** - Terraform Cloud shows exact changes on PR
+3. **Human approval** - security team review (required by compliance)
+4. **Auto-deployment** - Terraform Cloud applies changes after merge
 
 ### Audit Trail
 
@@ -200,15 +199,15 @@ All changes require:
 
 ### Emergency Changes
 
-1. **Direct Terraform** - manual application for urgent fixes
+1. **Direct Terraform** - manual application via TFC UI or CLI for urgent fixes
 2. **Follow-up PR** - must sync the YAML to match reality
-3. **Audit flags** - emergency changes are tracked
+3. **Audit flags** - emergency changes are tracked in TFC logs
 
 ## 📊 Monitoring & Alerting
 
 ### What We Monitor
 
-- **Deployment failures** - failed Terraform applies
+- **TFC deployment failures** - failed Terraform Cloud applies
 - **Quota exhaustion** - approaching AWS limits  
 - **Guardrail violations** - teams pushing boundaries
 - **Drift detection** - manual changes outside the platform
@@ -226,7 +225,7 @@ All changes require:
 
 1. **Scripts** - enhance validation, quota checking, or generation
 2. **Modules** - improve Terraform modules
-3. **Workflows** - optimize GitHub Actions
+3. **TFC Setup** - optimize Terraform Cloud workspaces and automation
 4. **Documentation** - keep guides current
 
 ### For Security Engineers
@@ -257,6 +256,23 @@ All changes require:
 - **Quota Errors**: Review rule complexity, consider consolidation
 - **Validation Failures**: Check guardrails.yaml for current rules
 - **Deployment Timeout**: Large rule sets may need account-specific tuning
+
+## ⚙️ Setup & Migration
+
+### Terraform Cloud Setup
+
+The platform uses Terraform Cloud for deployment. See the setup guide:
+
+1. **[TFC Setup Guide](docs/tfc-setup.md)** - Complete migration and workspace setup
+2. **[Workspace Script](scripts/setup-tfc-workspaces.sh)** - Automated workspace creation
+3. **Organization Setup** - Replace `ORGANIZATION_NAME` in backend configs
+
+### New Team Onboarding
+
+1. Create account directory: `accounts/123456789012/`
+2. Copy from example: `cp accounts/_example/security-groups.yaml accounts/123456789012/`
+3. TFC workspace is auto-created when PR is merged
+4. Configure OIDC/dynamic credentials in AWS account
 
 ## 🗂️ Related Documentation
 

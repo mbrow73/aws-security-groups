@@ -420,20 +420,17 @@ terraform {{
         return sanitized or 'unnamed'
     
     def generate_backend_tf(self):
-        """Generate backend.tf with S3 backend configuration"""
+        """Generate backend.tf with Terraform Cloud backend configuration"""
         content = f"""# AWS Security Group Platform - Terraform Backend Configuration
 # Account: {self.account_id}
 
 terraform {{
-  backend "s3" {{
-    bucket         = "aws-sg-platform-terraform-state"
-    key            = "accounts/{self.account_id}/terraform.tfstate"
-    region         = "us-east-1"
-    encrypt        = true
-    dynamodb_table = "aws-sg-platform-terraform-locks"
+  cloud {{
+    organization = "ORGANIZATION_NAME"  # Replace with your TFC organization name
     
-    # Optional: Uncomment if using role assumption
-    # role_arn = "arn:aws:iam::{self.account_id}:role/TerraformExecutionRole"
+    workspaces {{
+      name = "sg-platform-{self.account_id}"
+    }}
   }}
 }}
 """
