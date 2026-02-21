@@ -17,12 +17,11 @@ Welcome to the AWS Security Group self-service platform! This guide will help yo
 ## 🚀 Quick Start
 
 1. **Fork/Clone** this repository
-2. **Create** your account directory: `accounts/123456789012/`
-3. **Copy** the example configuration: `cp accounts/_example/security-groups.yaml accounts/123456789012/`
-4. **Edit** your `security-groups.yaml` file
-5. **Submit** a Pull Request
-6. **Review** validation results and fix any issues
-7. **Merge** to deploy your changes
+2. **Copy template**: `cp -r accounts/_template accounts/123456789012/`
+3. **Configure**: Update `backend.tf`, `providers.tf`, and `security-groups.yaml` with your account details
+4. **Submit** a Pull Request
+5. **Review** validation results and fix any issues
+6. **Merge** to deploy via `yamldecode()` - no code generation needed!
 
 ## 📁 Creating Your Account Directory
 
@@ -33,22 +32,52 @@ Find your 12-digit AWS Account ID from:
 - AWS CLI: `aws sts get-caller-identity --query Account --output text`
 - AWS SDK in your applications
 
-### Step 2: Create Directory Structure
+### Step 2: Copy Template Directory
 
 ```bash
-# Create your account directory (replace with your account ID)
-mkdir -p accounts/123456789012
+# Copy the entire template directory (replace 123456789012 with your account ID)
+cp -r accounts/_template accounts/123456789012
 
-# Copy the example configuration
-cp accounts/_example/security-groups.yaml accounts/123456789012/
-
-# Edit the configuration
-vim accounts/123456789012/security-groups.yaml
+# Navigate to your new account directory
+cd accounts/123456789012
 ```
 
-### Step 3: Customize the Configuration
+### Step 3: Configure Template Files
 
-Edit `accounts/123456789012/security-groups.yaml`:
+You need to update several files with your account details:
+
+#### A. Update `backend.tf`
+Replace placeholder values:
+```hcl
+terraform {
+  cloud {
+    organization = "YOUR_ORG_NAME"  # <-- Your Terraform Cloud org
+    
+    workspaces {
+      name = "sg-platform-123456789012"  # <-- Your account ID
+    }
+  }
+}
+```
+
+#### B. Update `providers.tf`
+Replace placeholder values:
+```hcl
+provider "aws" {
+  default_tags {
+    tags = {
+      AccountId = "123456789012"  # <-- Your account ID
+      # ... other tags
+    }
+  }
+}
+
+locals {
+  expected_account_id = "123456789012"  # <-- Your account ID
+}
+```
+
+#### C. Update `security-groups.yaml`
 
 ```yaml
 # Update with your actual account ID

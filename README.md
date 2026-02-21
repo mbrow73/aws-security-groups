@@ -1,32 +1,33 @@
 # AWS Security Group Platform
 
-A self-service platform for managing AWS Security Groups across multiple accounts using GitOps principles. Teams define their security group requirements in simple YAML files, and the platform handles the Terraform generation, validation, and deployment.
+A self-service platform for managing AWS Security Groups across multiple accounts using GitOps principles. Teams define their security group requirements in simple YAML files, and Terraform reads them directly using `yamldecode()` - no code generation needed!
 
 ## 🏗️ Architecture Overview
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
 │  Team YAML      │    │  GitHub Actions  │    │  Terraform Cloud    │
-│  Configuration  │───▶│  (Validation)    │    │  (Plan/Apply)       │
-└─────────────────┘    └──────────────────┘    └─────────────────────┘
-        │                        │                        │
-        │                        ▼                        ▼
-        │              ┌──────────────────┐    ┌─────────────────────┐
-        │              │  Guardrails &    │    │  VCS-Driven         │
-        │              │  Validation      │    │  Workspaces         │
-        │              └──────────────────┘    └─────────────────────┘
-        │                        │                        │
-        ▼                        ▼                        ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
-│  Baseline       │    │  Speculative     │    │  AWS Security       │
-│  Profiles       │    │  Plans on PR     │    │  Groups             │
-│  (Opt-In)       │    │                  │    │                     │
+│  Configuration  │───▶│  (Validation)    │    │  yamldecode() +     │
+└─────────────────┘    └──────────────────┘    │  Plan/Apply         │
+        │                        │              └─────────────────────┘
+        │                        ▼                        │
+        │              ┌──────────────────┐               ▼
+        │              │  Guardrails &    │    ┌─────────────────────┐
+        │              │  Validation      │    │  VCS-Driven         │
+        │              └──────────────────┘    │  Workspaces         │
+        │                        │              └─────────────────────┘
+        ▼                        ▼                        │
+┌─────────────────┐    ┌──────────────────┐               ▼
+│  Baseline       │    │  Speculative     │    ┌─────────────────────┐
+│  Profiles       │    │  Plans on PR     │    │  AWS Security       │
+│  (Opt-In)       │    │                  │    │  Groups             │
 └─────────────────┘    └──────────────────┘    └─────────────────────┘
 ```
 
 ### Key Features
 
 - **🎯 Team-Centric**: Simple YAML interface for security group definitions
+- **🚀 No Code Generation**: Terraform reads YAML directly with `yamldecode()` 
 - **🔒 Secure by Default**: Built-in guardrails and validation
 - **📊 GitOps Driven**: All changes via Pull Requests with approval workflows
 - **☁️ Terraform Cloud**: VCS-driven workspaces with speculative plans and auto-apply
@@ -57,14 +58,15 @@ aws-security-groups/
 │   ├── providers.tf
 │   └── backend.tf
 ├── modules/                      # Reusable Terraform modules
+│   ├── account/                  # Main account module (uses yamldecode)
 │   ├── security-group/           # Security group creation module
 │   └── vpc-discovery/            # VPC information discovery
 ├── scripts/                      # Python automation scripts
 │   ├── validate.py               # YAML and guardrail validation
 │   ├── check-quotas.py          # AWS quota pre-checks
-│   ├── generate-terraform.py    # YAML to Terraform conversion
 │   └── discover-accounts.py     # Account discovery helper
 ├── accounts/                     # Team security group definitions
+│   ├── _template/                # Template for new accounts
 │   ├── _example/                 # Example configuration
 │   ├── 123456789012/            # Account-specific SGs
 │   └── 234567890123/            # Account-specific SGs
@@ -77,13 +79,13 @@ aws-security-groups/
 
 ## 🚀 Quick Start for Teams
 
-1. **Create your account directory**: `accounts/YOUR-ACCOUNT-ID/`
-2. **Add `security-groups.yaml`** with your security group definitions
-3. **Create a Pull Request** - validation runs automatically
-4. **Get approval** from the security team
-5. **Merge** - security groups are deployed automatically
+1. **Copy the template**: `cp -r accounts/_template accounts/YOUR-ACCOUNT-ID`
+2. **Update configuration**: Edit `backend.tf`, `providers.tf`, and `security-groups.yaml` with your account details
+3. **Create a Pull Request** - validation runs automatically, no code generation needed!
+4. **Get approval** from the security team  
+5. **Merge** - security groups are deployed automatically via `yamldecode()`
 
-See [`docs/team-guide.md`](docs/team-guide.md) for detailed instructions.
+See [`accounts/_template/README.md`](accounts/_template/README.md) and [`docs/team-guide.md`](docs/team-guide.md) for detailed instructions.
 
 ## 📝 YAML Configuration Format
 
@@ -181,9 +183,10 @@ All changes require:
 
 ### Adding a New Account
 
-1. Create `accounts/NEW-ACCOUNT-ID/security-groups.yaml`
-2. Specify desired baseline profiles in `baseline_profiles` section
-3. Account-specific groups deployed on first PR
+1. **Copy template**: `cp -r accounts/_template accounts/NEW-ACCOUNT-ID`
+2. **Update files**: Replace placeholder values in `backend.tf`, `providers.tf`, and `security-groups.yaml`
+3. **Submit PR**: Terraform Cloud workspace created automatically
+4. **Deploy**: Account-specific groups deployed via `yamldecode()` on merge
 
 ### Updating Guardrails
 
@@ -269,10 +272,10 @@ The platform uses Terraform Cloud for deployment. See the setup guide:
 
 ### New Team Onboarding
 
-1. Create account directory: `accounts/123456789012/`
-2. Copy from example: `cp accounts/_example/security-groups.yaml accounts/123456789012/`
-3. TFC workspace is auto-created when PR is merged
-4. Configure OIDC/dynamic credentials in AWS account
+1. **Copy template**: `cp -r accounts/_template accounts/123456789012/`
+2. **Configure**: Update `backend.tf`, `providers.tf`, and `security-groups.yaml` with your account details
+3. **Submit PR**: TFC workspace is auto-created when PR is merged
+4. **AWS Setup**: Configure OIDC/dynamic credentials in AWS account for Terraform Cloud
 
 ## 🗂️ Related Documentation
 
