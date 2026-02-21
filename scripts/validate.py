@@ -70,12 +70,42 @@ class ValidationSummary:
 class SecurityGroupValidator:
     """Main validator for AWS Security Groups YAML configuration"""
     
+    # Port name mapping for blocked/warning ports
+    PORT_NAMES = {
+        23: "Telnet",
+        135: "NetBIOS/RPC",
+        139: "NetBIOS/SMB",
+        445: "SMB",
+        1433: "MSSQL",
+        3306: "MySQL",
+        3389: "RDP",
+        5432: "PostgreSQL",
+        6379: "Redis",
+        27017: "MongoDB",
+        22: "SSH",
+        21: "FTP",
+        25: "SMTP",
+        53: "DNS",
+        80: "HTTP",
+        110: "POP3",
+        143: "IMAP",
+        443: "HTTPS",
+        993: "IMAPS",
+        995: "POP3S"
+    }
+    
     def __init__(self, account_dir: str):
         self.account_dir = Path(account_dir).resolve()
         self.repo_root = self._find_repo_root()
         self.guardrails = self._load_guardrails()
         self.prefix_lists = self._load_prefix_lists()
         self.account_id = self._extract_account_id()
+    
+    def _get_port_description(self, port: int) -> str:
+        """Get human-readable port description"""
+        if port in self.PORT_NAMES:
+            return f"{port} ({self.PORT_NAMES[port]})"
+        return str(port)
         
     def _find_repo_root(self) -> Path:
         """Find the repository root by looking for guardrails.yaml"""
@@ -134,7 +164,7 @@ class SecurityGroupValidator:
         if not sg_file.exists():
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"security-groups.yaml not found in {self.account_dir}",
+                message=f"❌ security-groups.yaml not found in {self.account_dir} — this file is required to define security groups for the account.\n   → Create security-groups.yaml with your security group definitions.",
                 rule='file_exists'
             ))
             return summary
@@ -250,9 +280,11 @@ class SecurityGroupValidator:
                 continue
             
             if profile not in valid_profiles:
+                message = (f"❌ Baseline profile '{profile}' does not exist. Available profiles: {', '.join(valid_profiles)}\n"
+                          f"   → Check baseline/profiles/ for available options.")
                 summary.add_result(ValidationResult(
                     level='error',
-                    message=f"Invalid baseline profile '{profile}'. Valid profiles: {', '.join(valid_profiles)}",
+                    message=message,
                     rule='baseline_profile_name'
                 ))
         
@@ -289,7 +321,7 @@ class SecurityGroupValidator:
         if 'description' not in sg_config or not sg_config['description'].strip():
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Security group '{sg_name}' must have a non-empty description",
+                message=f"❌ Security group '{sg_name}' must have a non-empty description — descriptions help identify the purpose and scope of the security group.\n   → Add a clear description explaining what this security group protects.",
                 rule='sg_required_description',
                 context=context
             ))
@@ -329,7 +361,7 @@ class SecurityGroupValidator:
         if total_ingress > max_ingress:
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Security group '{sg_name}' has {total_ingress} ingress rules, maximum is {max_ingress}",
+                message=f"❌ Security group '{sg_name}' has {total_ingress} ingress rules, maximum is {max_ingress} — too many rules make security groups hard to manage and can impact performance.\n   → Consolidate similar rules or split into multiple security groups by function.",
                 rule='sg_rule_count_limit',
                 context=context
             ))
@@ -337,7 +369,7 @@ class SecurityGroupValidator:
         if total_egress > max_egress:
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Security group '{sg_name}' has {total_egress} egress rules, maximum is {max_egress}",
+                message=f"❌ Security group '{sg_name}' has {total_egress} egress rules, maximum is {max_egress} — too many rules make security groups hard to manage and can impact performance.\n   → Consolidate similar rules or split into multiple security groups by function.",
                 rule='sg_rule_count_limit',
                 context=context
             ))
@@ -348,9 +380,11 @@ class SecurityGroupValidator:
         
         for required_tag in required_tags:
             if required_tag not in sg_tags:
+                message = (f"❌ Missing required tag '{required_tag}' — all security groups must include ManagedBy, Environment, and Application tags for compliance tracking.\n"
+                          f"   → Add to your YAML: tags: {{ ManagedBy: \"sg-platform\", Environment: \"production\", Application: \"your-app\" }}")
                 summary.add_result(ValidationResult(
                     level='error',
-                    message=f"Security group '{sg_name}' is missing required tag '{required_tag}'",
+                    message=message,
                     rule='sg_required_tags',
                     context=context
                 ))
@@ -456,9 +490,12 @@ class SecurityGroupValidator:
         max_range_size = self.guardrails.get('validation', {}).get('port_ranges', {}).get('max_range_size', 1000)
         
         if port_range_size > max_range_size:
+            message = (f"❌ Port range {from_port}-{to_port} is too broad ({port_range_size} ports, max {max_range_size}) — this effectively opens all ports.\n"
+                      f"   → Narrow to specific ports your application needs (e.g., 443, 8080).\n"
+                      f"   → If this is for EKS node communication, set type: \"eks-nodes\" to allow ephemeral ranges.")
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Port range in {sg_name} {rule_type}[{rule_index}] is too large ({port_range_size} ports, max {max_range_size})",
+                message=message,
                 rule='rule_port_range_too_large',
                 context=context
             ))
@@ -467,9 +504,28 @@ class SecurityGroupValidator:
         blocked_ports = self.guardrails.get('validation', {}).get('blocked_ports', [])
         for port in range(from_port, to_port + 1):
             if port in blocked_ports:
+                port_desc = self._get_port_description(port)
+                if port in [135, 139]:
+                    reason = "commonly exploited for lateral movement attacks. Not needed for cloud workloads"
+                    suggestion = "Remove this rule. If you need Windows RPC, contact the security team."
+                elif port == 23:
+                    reason = "transmits data in plain text, easily intercepted by attackers"
+                    suggestion = "Use SSH (port 22) or AWS Systems Manager Session Manager instead."
+                elif port == 3389:
+                    reason = "commonly brute-forced and vulnerable to exploits"
+                    suggestion = "Use AWS Systems Manager Session Manager for Windows access."
+                elif port in [21, 25]:
+                    reason = "insecure protocols that transmit credentials in plain text"
+                    suggestion = "Use secure alternatives (SFTP, encrypted email protocols)."
+                else:
+                    reason = "blocked for security reasons"
+                    suggestion = "Remove this rule or contact the security team if required."
+                
+                message = (f"❌ Port {port_desc} is blocked — {reason}.\n"
+                          f"   → {suggestion}")
                 summary.add_result(ValidationResult(
                     level='error',
-                    message=f"Port {port} is blocked by policy in {sg_name} {rule_type}[{rule_index}]",
+                    message=message,
                     rule='rule_blocked_port',
                     context=context
                 ))
@@ -478,9 +534,20 @@ class SecurityGroupValidator:
         warn_ports = self.guardrails.get('validation', {}).get('warn_on_ports', [])
         for port in range(from_port, to_port + 1):
             if port in warn_ports:
+                port_desc = self._get_port_description(port)
+                if port == 22:
+                    message = (f"⚠️ Port {port_desc} detected — consider AWS Systems Manager Session Manager instead (no open inbound ports needed).\n"
+                              f"   → If SSH is required, restrict source to a bastion security group, not a CIDR range.")
+                elif port == 3389:
+                    message = (f"⚠️ Port {port_desc} detected — consider AWS Systems Manager Session Manager for Windows instead.\n"
+                              f"   → If RDP is required, restrict source to a bastion security group, not a CIDR range.")
+                else:
+                    message = (f"⚠️ Port {port_desc} detected — requires special attention for security.\n"
+                              f"   → Consider using AWS Systems Manager Session Manager or restrict source access.")
+                
                 summary.add_result(ValidationResult(
                     level='warning',
-                    message=f"Port {port} requires special attention in {sg_name} {rule_type}[{rule_index}] - consider using bastion/Session Manager",
+                    message=message,
                     rule='rule_warning_port',
                     context=context
                 ))
@@ -543,9 +610,17 @@ class SecurityGroupValidator:
         # Check against blocked CIDRs
         blocked_cidrs = self.guardrails.get('validation', {}).get('blocked_cidrs', [])
         if cidr in blocked_cidrs:
+            if rule_type == 'ingress':
+                message = (f"❌ {cidr} ingress is not allowed — this opens the port to the entire internet.\n"
+                          f"   → Use a specific CIDR, security group reference, or prefix list instead.\n"
+                          f"   → Example: prefix_list_ids: [\"corporate-networks\"]")
+            else:
+                message = (f"❌ {cidr} egress detected — unrestricted outbound access. Consider scoping to specific CIDRs or prefix lists.\n"
+                          f"   → For AWS services, use: prefix_list_ids: [\"aws-vpc-endpoints\"]")
+            
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"CIDR block '{cidr}' is blocked by policy in {sg_name} {rule_type}[{rule_index}]",
+                message=message,
                 rule='rule_blocked_cidr',
                 context=context
             ))
@@ -563,9 +638,19 @@ class SecurityGroupValidator:
                         # This is an allowed exception
                         return
             
+            if rule_type == 'ingress':
+                message = (f"❌ {cidr} ingress is not allowed — this opens the port to the entire internet.\n"
+                          f"   → Use a specific CIDR, security group reference, or prefix list instead.\n"
+                          f"   → Example: prefix_list_ids: [\"corporate-networks\"]")
+                level = 'error'
+            else:
+                message = (f"⚠️ {cidr} egress detected — unrestricted outbound access. Consider scoping to specific CIDRs or prefix lists.\n"
+                          f"   → For AWS services, use: prefix_list_ids: [\"aws-vpc-endpoints\"]")
+                level = 'warning'
+            
             summary.add_result(ValidationResult(
-                level='warning' if rule_type == 'egress' else 'error',
-                message=f"Open internet access ({cidr}) in {sg_name} {rule_type}[{rule_index}] - requires explicit justification",
+                level=level,
+                message=message,
                 rule='rule_open_internet',
                 context=context
             ))
@@ -756,6 +841,97 @@ class SecurityGroupValidator:
                 message=f"Referenced prefix list '{prefix_list}' is not defined in prefix-lists.yaml",
                 rule='undefined_prefix_list_reference'
             ))
+    
+    def format_markdown_output(self, summary: ValidationSummary) -> str:
+        """Format validation results as markdown for PR comments"""
+        output = []
+        
+        # Header with summary
+        error_count = len(summary.errors)
+        warning_count = len(summary.warnings)
+        
+        if error_count == 0 and warning_count == 0:
+            output.append("## ✅ Security Group Validation Results")
+            output.append(f"**Account:** {self.account_id} | **Status:** All checks passed!")
+            return "\n\n".join(output)
+        
+        output.append("## 🔍 Security Group Validation Results")
+        output.append(f"**Account:** {self.account_id} | **Errors:** {error_count} | **Warnings:** {warning_count}")
+        output.append("")
+        
+        # Group results by security group
+        sg_results = {}
+        
+        # Process all results
+        for result in summary.errors + summary.warnings:
+            if result.context and 'security_group.' in result.context:
+                sg_name = result.context.split('.')[1]
+                if sg_name not in sg_results:
+                    sg_results[sg_name] = {'errors': [], 'warnings': []}
+                
+                if result.level == 'error':
+                    sg_results[sg_name]['errors'].append(result)
+                else:
+                    sg_results[sg_name]['warnings'].append(result)
+            else:
+                # Global errors (not specific to a security group)
+                if 'global' not in sg_results:
+                    sg_results['global'] = {'errors': [], 'warnings': []}
+                
+                if result.level == 'error':
+                    sg_results['global']['errors'].append(result)
+                else:
+                    sg_results['global']['warnings'].append(result)
+        
+        # Generate sections for each security group
+        for sg_name, results in sg_results.items():
+            sg_error_count = len(results['errors'])
+            sg_warning_count = len(results['warnings'])
+            
+            if sg_error_count == 0 and sg_warning_count == 0:
+                continue
+            
+            # Determine emoji and title
+            if sg_name == 'global':
+                emoji = "⚙️"
+                title = f"{emoji} Configuration Issues — {sg_error_count} errors, {sg_warning_count} warnings"
+            elif sg_error_count > 0:
+                emoji = "❌"
+                title = f"{emoji} {sg_name} — {sg_error_count} errors, {sg_warning_count} warnings"
+            else:
+                emoji = "⚠️"
+                title = f"{emoji} {sg_name} — {sg_warning_count} warnings"
+            
+            output.append(f"<details>")
+            output.append(f"<summary>{title}</summary>")
+            output.append("")
+            
+            # Add errors
+            if results['errors']:
+                output.append("### Errors")
+                for error in results['errors']:
+                    # Clean up the message - remove existing emoji if present
+                    message = error.message
+                    if message.startswith('❌'):
+                        message = message[1:].strip()
+                    output.append(f"- ❌ {message}")
+                output.append("")
+            
+            # Add warnings
+            if results['warnings']:
+                output.append("### Warnings")  
+                for warning in results['warnings']:
+                    # Clean up the message - remove existing emoji if present
+                    message = warning.message
+                    if message.startswith('⚠️'):
+                        message = message[2:].strip()
+                    output.append(f"- ⚠️ {message}")
+                output.append("")
+            
+            output.append("</details>")
+            output.append("")
+        
+        return "\n".join(output)
 
 
 def main():
@@ -782,7 +958,7 @@ Examples:
     
     parser.add_argument(
         '--format',
-        choices=['text', 'json'],
+        choices=['text', 'json', 'markdown'],
         default='text',
         help='Output format (default: text)'
     )
@@ -812,7 +988,9 @@ Examples:
             summary.warnings = []
         
         # Output results
-        if args.format == 'json':
+        if args.format == 'markdown':
+            print(validator.format_markdown_output(summary))
+        elif args.format == 'json':
             output = {
                 'account_dir': args.account_dir,
                 'account_id': validator.account_id,

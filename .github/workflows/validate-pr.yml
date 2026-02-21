@@ -69,12 +69,33 @@ jobs:
         run: |
           IFS=',' read -ra ACCOUNTS <<< "${{ needs.detect-changes.outputs.changed-accounts }}"
           EXIT_CODE=0
+          VALIDATION_OUTPUT=""
+          
           for account in "${ACCOUNTS[@]}"; do
             echo "========================================="
             echo "Validating account: $account"
             echo "========================================="
-            python scripts/validate.py "accounts/$account" || EXIT_CODE=$?
+            
+            # Run validation and capture output
+            if ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown 2>&1); then
+              VALIDATION_OUTPUT="$VALIDATION_OUTPUT$ACCOUNT_OUTPUT"$'\n\n'
+            else
+              ACCOUNT_EXIT_CODE=$?
+              VALIDATION_OUTPUT="$VALIDATION_OUTPUT$ACCOUNT_OUTPUT"$'\n\n'
+              if [ $ACCOUNT_EXIT_CODE -eq 1 ]; then
+                EXIT_CODE=1  # Errors found
+              elif [ $ACCOUNT_EXIT_CODE -eq 2 ] && [ $EXIT_CODE -eq 0 ]; then
+                EXIT_CODE=2  # Warnings only
+              fi
+            fi
           done
+          
+          # Save validation output for the comment step
+          echo "VALIDATION_OUTPUT<<EOF" >> $GITHUB_ENV
+          echo "$VALIDATION_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          
+          echo "EXIT_CODE=$EXIT_CODE" >> $GITHUB_ENV
           exit $EXIT_CODE
 
   post-summary:
@@ -83,18 +104,64 @@ jobs:
     needs: [detect-changes, validate]
     if: always() && needs.detect-changes.outputs.changed-accounts != ''
     steps:
-      - name: Post summary
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install pyyaml
+        
+      - name: Generate validation summary
+        id: generate-summary
+        run: |
+          IFS=',' read -ra ACCOUNTS <<< "${{ needs.detect-changes.outputs.changed-accounts }}"
+          VALIDATION_OUTPUT=""
+          
+          for account in "${ACCOUNTS[@]}"; do
+            # Run validation with markdown output (ignore exit code for summary)
+            if ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown 2>/dev/null || true); then
+              VALIDATION_OUTPUT="$VALIDATION_OUTPUT$ACCOUNT_OUTPUT"$'\n\n'
+            fi
+          done
+          
+          # If no markdown output was generated (all passed), create a success message
+          if [ -z "$VALIDATION_OUTPUT" ] || echo "$VALIDATION_OUTPUT" | grep -q "All checks passed"; then
+            VALIDATION_OUTPUT="## ✅ Security Group Validation Results"$'\n\n'"**Status:** All schema, guardrails, and naming checks passed!"$'\n\n'"🚀 Once approved and merged, Terraform Cloud will handle deployment."
+          fi
+          
+          # Save to environment variable for the comment step
+          echo "VALIDATION_SUMMARY<<EOF" >> $GITHUB_ENV
+          echo "$VALIDATION_OUTPUT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+      
+      - name: Post summary comment
         uses: actions/github-script@v7
         with:
           script: |
-            const validateResult = '${{ needs.validate.result }}';
-            let summary = '## 🔍 Validation Summary\n\n';
-            if (validateResult === 'success') {
-              summary += '✅ **Schema, guardrails, and naming checks passed.**\n\n';
-              summary += '🚀 Once approved and merged, Terraform Cloud will handle deployment.\n';
-            } else {
-              summary += '❌ **Validation failed.** Check the workflow logs for details.\n';
+            // Delete previous validation comments from this workflow
+            const comments = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            for (const comment of comments.data) {
+              if (comment.user.login === 'github-actions[bot]' && 
+                  comment.body.includes('Security Group Validation Results')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
             }
+            
+            // Post new summary
+            const summary = process.env.VALIDATION_SUMMARY;
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
