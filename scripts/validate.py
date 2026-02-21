@@ -200,6 +200,16 @@ class SecurityGroupValidator:
         
         return summary
     
+    # Known top-level keys in security-groups.yaml
+    KNOWN_TOP_LEVEL_KEYS = {'account_id', 'environment', 'security_groups', 'baseline_profiles', 'tags'}
+    # Known keys within a security group definition
+    KNOWN_SG_KEYS = {'description', 'ingress', 'egress', 'tags', 'type'}
+    # Known keys within a rule definition
+    KNOWN_RULE_KEYS = {'protocol', 'from_port', 'to_port', 'cidr_blocks', 'ipv6_cidr_blocks',
+                       'security_groups', 'prefix_list_ids', 'self', 'description'}
+    # Valid environments
+    VALID_ENVIRONMENTS = {'prod', 'test', 'dev'}
+
     def _validate_schema(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate basic YAML schema structure"""
         required_fields = ['account_id', 'security_groups']
@@ -212,6 +222,31 @@ class SecurityGroupValidator:
                     rule='schema_required_fields'
                 ))
         
+        # Check for unknown top-level keys (typo detection)
+        unknown_keys = set(data.keys()) - self.KNOWN_TOP_LEVEL_KEYS
+        for key in sorted(unknown_keys):
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"❌ Unknown top-level key '{key}' — did you mean one of: {', '.join(sorted(self.KNOWN_TOP_LEVEL_KEYS))}?\n   → Typos in key names are silently ignored and your config won't apply.",
+                rule='schema_unknown_key'
+            ))
+        
+        # Validate environment field
+        if 'environment' in data:
+            env = data['environment']
+            if not isinstance(env, str):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"'environment' must be a string, got {type(env).__name__}",
+                    rule='schema_environment_type'
+                ))
+            elif env not in self.VALID_ENVIRONMENTS:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ Invalid environment '{env}' — must be one of: {', '.join(sorted(self.VALID_ENVIRONMENTS))}\n   → This controls environment-specific guardrails and tagging.",
+                    rule='schema_invalid_environment'
+                ))
+        
         if 'security_groups' in data:
             if not isinstance(data['security_groups'], dict):
                 summary.add_result(ValidationResult(
@@ -219,6 +254,34 @@ class SecurityGroupValidator:
                     message="'security_groups' must be a dictionary/object",
                     rule='schema_type'
                 ))
+            else:
+                # Validate unknown keys within each security group
+                for sg_name, sg_config in data['security_groups'].items():
+                    if not isinstance(sg_config, dict):
+                        continue
+                    unknown_sg_keys = set(sg_config.keys()) - self.KNOWN_SG_KEYS
+                    for key in sorted(unknown_sg_keys):
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"❌ Unknown key '{key}' in security group '{sg_name}' — valid keys: {', '.join(sorted(self.KNOWN_SG_KEYS))}\n   → Typos are silently ignored. Check spelling.",
+                            rule='schema_unknown_sg_key',
+                            context=f"security_group.{sg_name}"
+                        ))
+                    
+                    # Validate unknown keys within each rule
+                    for rule_type in ['ingress', 'egress']:
+                        if rule_type in sg_config and isinstance(sg_config[rule_type], list):
+                            for i, rule in enumerate(sg_config[rule_type]):
+                                if not isinstance(rule, dict):
+                                    continue
+                                unknown_rule_keys = set(rule.keys()) - self.KNOWN_RULE_KEYS
+                                for key in sorted(unknown_rule_keys):
+                                    summary.add_result(ValidationResult(
+                                        level='error',
+                                        message=f"❌ Unknown key '{key}' in {sg_name} {rule_type}[{i}] — valid keys: {', '.join(sorted(self.KNOWN_RULE_KEYS))}\n   → This key will be ignored. Check spelling.",
+                                        rule='schema_unknown_rule_key',
+                                        context=f"security_group.{sg_name}.{rule_type}[{i}]"
+                                    ))
     
     def _validate_account_id(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate account ID format and consistency"""
@@ -345,13 +408,49 @@ class SecurityGroupValidator:
         """Validate individual security groups"""
         if 'security_groups' not in data or not data['security_groups']:
             return
+        if not isinstance(data['security_groups'], dict):
+            return  # already caught by schema validation
         
         for sg_name, sg_config in data['security_groups'].items():
             self._validate_security_group(sg_name, sg_config, summary)
     
+    def _safe_sort_tuple(self, val) -> tuple:
+        """Safely convert a field to a sorted tuple for hashing, handling type errors."""
+        if isinstance(val, list):
+            try:
+                return tuple(sorted(str(v) for v in val))
+            except TypeError:
+                return (str(val),)
+        elif val is None:
+            return ()
+        else:
+            return (str(val),)
+
+    def _normalize_rule(self, rule: Dict[str, Any]) -> tuple:
+        """Create a hashable representation of a rule for duplicate detection"""
+        return (
+            rule.get('protocol'),
+            rule.get('from_port'),
+            rule.get('to_port'),
+            self._safe_sort_tuple(rule.get('cidr_blocks', [])),
+            self._safe_sort_tuple(rule.get('ipv6_cidr_blocks', [])),
+            self._safe_sort_tuple(rule.get('security_groups', [])),
+            self._safe_sort_tuple(rule.get('prefix_list_ids', [])),
+            rule.get('self', False),
+        )
+
     def _validate_security_group(self, sg_name: str, sg_config: Dict[str, Any], summary: ValidationSummary):
         """Validate a single security group configuration"""
         context = f"security_group.{sg_name}"
+        
+        if not isinstance(sg_config, dict):
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Security group '{sg_name}' must be a dictionary/object, got {type(sg_config).__name__}",
+                rule='sg_type',
+                context=context
+            ))
+            return
         
         # Required fields
         if 'description' not in sg_config or not sg_config['description'].strip():
@@ -365,8 +464,17 @@ class SecurityGroupValidator:
         # Validate ingress rules
         if 'ingress' in sg_config:
             if isinstance(sg_config['ingress'], list):
-                for i, rule in enumerate(sg_config['ingress']):
-                    self._validate_security_group_rule(sg_name, 'ingress', i, rule, summary)
+                if len(sg_config['ingress']) == 0:
+                    summary.add_result(ValidationResult(
+                        level='warning',
+                        message=f"⚠️ Security group '{sg_name}' has an empty ingress list — remove it or add rules.",
+                        rule='sg_empty_rules',
+                        context=context
+                    ))
+                else:
+                    for i, rule in enumerate(sg_config['ingress']):
+                        self._validate_security_group_rule(sg_name, 'ingress', i, rule, summary)
+                    self._check_duplicate_rules(sg_name, 'ingress', sg_config['ingress'], summary)
             else:
                 summary.add_result(ValidationResult(
                     level='error',
@@ -378,8 +486,17 @@ class SecurityGroupValidator:
         # Validate egress rules
         if 'egress' in sg_config:
             if isinstance(sg_config['egress'], list):
-                for i, rule in enumerate(sg_config['egress']):
-                    self._validate_security_group_rule(sg_name, 'egress', i, rule, summary)
+                if len(sg_config['egress']) == 0:
+                    summary.add_result(ValidationResult(
+                        level='warning',
+                        message=f"⚠️ Security group '{sg_name}' has an empty egress list — remove it or add rules.",
+                        rule='sg_empty_rules',
+                        context=context
+                    ))
+                else:
+                    for i, rule in enumerate(sg_config['egress']):
+                        self._validate_security_group_rule(sg_name, 'egress', i, rule, summary)
+                    self._check_duplicate_rules(sg_name, 'egress', sg_config['egress'], summary)
             else:
                 summary.add_result(ValidationResult(
                     level='error',
@@ -425,6 +542,25 @@ class SecurityGroupValidator:
                     context=context
                 ))
     
+    def _check_duplicate_rules(self, sg_name: str, rule_type: str, rules: List[Dict[str, Any]], 
+                              summary: ValidationSummary):
+        """Detect duplicate rules within a security group"""
+        seen = {}
+        for i, rule in enumerate(rules):
+            if not isinstance(rule, dict):
+                continue
+            normalized = self._normalize_rule(rule)
+            if normalized in seen:
+                first_index = seen[normalized]
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ Duplicate rule: {sg_name} {rule_type}[{i}] is identical to {rule_type}[{first_index}] — AWS will silently dedupe this but it indicates a copy-paste error.\n   → Remove the duplicate rule.",
+                    rule='rule_duplicate',
+                    context=f"security_group.{sg_name}.{rule_type}[{i}]"
+                ))
+            else:
+                seen[normalized] = i
+
     def _validate_security_group_rule(self, sg_name: str, rule_type: str, rule_index: int, 
                                     rule: Dict[str, Any], summary: ValidationSummary):
         """Validate a single security group rule"""
@@ -567,8 +703,11 @@ class SecurityGroupValidator:
                 ))
         
         # High-signal security warnings — only patterns that are genuinely risky
-        has_cidr_source = bool(rule.get('cidr_blocks', []))
-        has_broad_cidr = any(c in ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'] for c in rule.get('cidr_blocks', []))
+        cidr_list = rule.get('cidr_blocks', [])
+        if not isinstance(cidr_list, list):
+            cidr_list = [cidr_list] if isinstance(cidr_list, str) else []
+        has_cidr_source = bool(cidr_list)
+        has_broad_cidr = any(c in ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'] for c in cidr_list)
         
         # 1. SSH/RDP from a CIDR range (from a SG is fine)
         if rule_type == 'ingress' and has_cidr_source:
@@ -630,18 +769,72 @@ class SecurityGroupValidator:
         for cidr_field in ['cidr_blocks', 'ipv6_cidr_blocks']:
             if cidr_field in rule:
                 is_ipv6 = cidr_field == 'ipv6_cidr_blocks'
-                for cidr in rule[cidr_field]:
-                    self._validate_cidr_block(sg_name, rule_type, rule_index, cidr, is_ipv6, summary, rule)
+                cidr_value = rule[cidr_field]
+                
+                # Type check — must be a list
+                if isinstance(cidr_value, str):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"❌ '{cidr_field}' in {sg_name} {rule_type}[{rule_index}] must be a list, not a bare string.\n   → Change: {cidr_field}: \"{cidr_value}\"\n   → To:     {cidr_field}: [\"{cidr_value}\"]",
+                        rule='rule_cidr_type',
+                        context=context
+                    ))
+                    # Still validate the single CIDR so they get useful feedback
+                    self._validate_cidr_block(sg_name, rule_type, rule_index, cidr_value, is_ipv6, summary, rule)
+                elif not isinstance(cidr_value, list):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"'{cidr_field}' in {sg_name} {rule_type}[{rule_index}] must be a list, got {type(cidr_value).__name__}",
+                        rule='rule_cidr_type',
+                        context=context
+                    ))
+                else:
+                    for cidr in cidr_value:
+                        if not isinstance(cidr, str):
+                            summary.add_result(ValidationResult(
+                                level='error',
+                                message=f"CIDR block in {sg_name} {rule_type}[{rule_index}] must be a string, got {type(cidr).__name__}: {cidr}",
+                                rule='rule_cidr_item_type',
+                                context=context
+                            ))
+                        else:
+                            self._validate_cidr_block(sg_name, rule_type, rule_index, cidr, is_ipv6, summary, rule)
+        
+        # Validate 'self' field
+        if 'self' in rule:
+            if not isinstance(rule['self'], bool):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"'self' in {sg_name} {rule_type}[{rule_index}] must be true or false, got \"{rule['self']}\"",
+                    rule='rule_self_type',
+                    context=context
+                ))
         
         # Validate security group references
         if 'security_groups' in rule:
-            for sg_ref in rule['security_groups']:
-                self._validate_security_group_reference(sg_name, rule_type, rule_index, sg_ref, summary)
+            if not isinstance(rule['security_groups'], list):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"'security_groups' in {sg_name} {rule_type}[{rule_index}] must be a list",
+                    rule='rule_sg_ref_type',
+                    context=context
+                ))
+            else:
+                for sg_ref in rule['security_groups']:
+                    self._validate_security_group_reference(sg_name, rule_type, rule_index, sg_ref, summary)
         
         # Validate prefix list references
         if 'prefix_list_ids' in rule:
-            for prefix_list_id in rule['prefix_list_ids']:
-                self._validate_prefix_list_reference(sg_name, rule_type, rule_index, prefix_list_id, summary)
+            if not isinstance(rule['prefix_list_ids'], list):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"'prefix_list_ids' in {sg_name} {rule_type}[{rule_index}] must be a list",
+                    rule='rule_prefix_list_type',
+                    context=context
+                ))
+            else:
+                for prefix_list_id in rule['prefix_list_ids']:
+                    self._validate_prefix_list_reference(sg_name, rule_type, rule_index, prefix_list_id, summary)
     
     def _validate_cidr_block(self, sg_name: str, rule_type: str, rule_index: int, 
                            cidr: str, is_ipv6: bool, summary: ValidationSummary, rule: Dict[str, Any] = None):
@@ -759,7 +952,7 @@ class SecurityGroupValidator:
     
     def _validate_guardrails(self, data: Dict[str, Any], summary: ValidationSummary):
         """Apply type-specific guardrail overrides"""
-        if 'security_groups' not in data:
+        if 'security_groups' not in data or not isinstance(data['security_groups'], dict):
             return
         
         for sg_name, sg_config in data['security_groups'].items():
@@ -837,7 +1030,7 @@ class SecurityGroupValidator:
     
     def _validate_naming_conventions(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate naming conventions for security groups"""
-        if 'security_groups' not in data:
+        if 'security_groups' not in data or not isinstance(data['security_groups'], dict):
             return
         
         naming_config = self.guardrails.get('validation', {}).get('naming', {})
@@ -876,7 +1069,7 @@ class SecurityGroupValidator:
     
     def _validate_prefix_list_references(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate that all referenced prefix lists are defined"""
-        if 'security_groups' not in data:
+        if 'security_groups' not in data or not isinstance(data['security_groups'], dict):
             return
         
         referenced_prefix_lists = set()
