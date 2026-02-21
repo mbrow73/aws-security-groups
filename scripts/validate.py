@@ -71,7 +71,7 @@ class SecurityGroupValidator:
     """Main validator for AWS Security Groups YAML configuration"""
     
     def __init__(self, account_dir: str):
-        self.account_dir = Path(account_dir)
+        self.account_dir = Path(account_dir).resolve()
         self.repo_root = self._find_repo_root()
         self.guardrails = self._load_guardrails()
         self.prefix_lists = self._load_prefix_lists()

@@ -1,0 +1,24 @@
+account_id: "111222333444"
+environment: "production"
+
+security_groups:
+  wide-open-disaster:
+    description: "This should fail every check"
+    tags:
+      Team: "yolo-team"
+    ingress:
+      - protocol: "tcp"
+        from_port: 0
+        to_port: 65535
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "Let everyone in"
+      - protocol: "tcp"
+        from_port: 22
+        to_port: 22
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "SSH from the internet"
+      - protocol: "tcp"
+        from_port: 3389
+        to_port: 3389
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "RDP from the internet"
