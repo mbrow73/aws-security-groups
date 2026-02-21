@@ -530,39 +530,47 @@ class SecurityGroupValidator:
                     context=context
                 ))
         
-        # PCI DSS compliance warnings for sensitive ports
-        warn_ports = self.guardrails.get('validation', {}).get('warn_on_ports', [])
-        for port in range(from_port, to_port + 1):
-            if port in warn_ports:
-                port_desc = self._get_port_description(port)
-                # Check if source is a CIDR (less secure) vs security group/prefix list (more secure)
-                has_cidr_source = bool(rule.get('cidr_blocks', []))
-                has_sg_source = bool(rule.get('security_groups', []) or rule.get('self'))
-                
-                if port == 22:
-                    message = (f"⚠️ Port {port_desc} — PCI DSS Req 1.3.2: Restrict inbound traffic to only authorized sources.\n"
-                              f"   → Use AWS Systems Manager Session Manager to eliminate SSH entirely (PCI DSS Req 2.2.7: Remove unnecessary services).\n"
-                              f"   → If SSH is required, source MUST be a bastion security group, not a CIDR range.")
-                elif port == 3389:
-                    message = (f"⚠️ Port {port_desc} — PCI DSS Req 1.3.2: Restrict inbound traffic to only authorized sources.\n"
-                              f"   → Use AWS Systems Manager Session Manager to eliminate RDP entirely (PCI DSS Req 2.2.7: Remove unnecessary services).\n"
-                              f"   → If RDP is required, source MUST be a bastion security group, not a CIDR range.")
-                elif port in [3306, 5432, 1433, 27017, 6379]:
-                    message = (f"⚠️ Port {port_desc} — PCI DSS Req 1.3.1: Restrict inbound traffic to system components in the CDE.\n"
-                              f"   → Database ports must only be accessible from application-tier security groups, never from CIDRs.\n"
-                              f"   → PCI DSS Req 3.4: Ensure data-at-rest encryption is also configured on the database.")
-                    if has_cidr_source:
-                        message += (f"\n   → ❗ CIDR-based access to database ports is a PCI audit finding. Use security group references instead.")
-                else:
-                    message = (f"⚠️ Port {port_desc} — PCI DSS Req 1.2.1: Restrict traffic to that which is necessary for the CDE.\n"
-                              f"   → Ensure this port is documented in your network flow diagrams (PCI DSS Req 1.1.2).")
-                
+        # High-signal security warnings — only patterns that are genuinely risky
+        has_cidr_source = bool(rule.get('cidr_blocks', []))
+        has_broad_cidr = any(c in ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'] for c in rule.get('cidr_blocks', []))
+        
+        # 1. SSH/RDP from a CIDR range (from a SG is fine)
+        if rule_type == 'ingress' and has_cidr_source:
+            if from_port <= 22 <= to_port:
                 summary.add_result(ValidationResult(
                     level='warning',
-                    message=message,
-                    rule='pci_dss_sensitive_port',
+                    message=f"⚠️ HIGH: SSH (port 22) ingress from CIDR — any host in that range gets SSH access. PCI DSS Req 1.3.2",
+                    rule='high_risk_pattern',
                     context=context
                 ))
+            if from_port <= 3389 <= to_port:
+                summary.add_result(ValidationResult(
+                    level='warning',
+                    message=f"⚠️ HIGH: RDP (port 3389) ingress from CIDR — any host in that range gets RDP access. PCI DSS Req 1.3.2",
+                    rule='high_risk_pattern',
+                    context=context
+                ))
+        
+        # 2. Database ports from a CIDR range
+        db_ports = {3306: 'MySQL', 5432: 'PostgreSQL', 1433: 'MSSQL', 27017: 'MongoDB', 6379: 'Redis'}
+        if rule_type == 'ingress' and has_cidr_source:
+            for db_port, db_name in db_ports.items():
+                if from_port <= db_port <= to_port:
+                    summary.add_result(ValidationResult(
+                        level='warning',
+                        message=f"⚠️ HIGH: {db_name} (port {db_port}) ingress from CIDR — CIDR-based database access is a common audit finding. PCI DSS Req 1.3.1",
+                        rule='high_risk_pattern',
+                        context=context
+                    ))
+        
+        # 3. Broad internal CIDR (10.0.0.0/8 etc.)
+        if rule_type == 'ingress' and has_broad_cidr:
+            summary.add_result(ValidationResult(
+                level='warning',
+                message=f"⚠️ MEDIUM: Ingress from overly broad internal CIDR (e.g. 10.0.0.0/8) — scope to specific VPC or subnet CIDRs. PCI DSS Req 1.2.1",
+                rule='broad_cidr_pattern',
+                context=context
+            ))
     
     def _validate_rule_sources(self, sg_name: str, rule_type: str, rule_index: int, 
                              rule: Dict[str, Any], summary: ValidationSummary):
@@ -587,7 +595,7 @@ class SecurityGroupValidator:
             if cidr_field in rule:
                 is_ipv6 = cidr_field == 'ipv6_cidr_blocks'
                 for cidr in rule[cidr_field]:
-                    self._validate_cidr_block(sg_name, rule_type, rule_index, cidr, is_ipv6, summary)
+                    self._validate_cidr_block(sg_name, rule_type, rule_index, cidr, is_ipv6, summary, rule)
         
         # Validate security group references
         if 'security_groups' in rule:
@@ -600,7 +608,7 @@ class SecurityGroupValidator:
                 self._validate_prefix_list_reference(sg_name, rule_type, rule_index, prefix_list_id, summary)
     
     def _validate_cidr_block(self, sg_name: str, rule_type: str, rule_index: int, 
-                           cidr: str, is_ipv6: bool, summary: ValidationSummary):
+                           cidr: str, is_ipv6: bool, summary: ValidationSummary, rule: Dict[str, Any] = None):
         """Validate a CIDR block"""
         context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
         
@@ -654,18 +662,26 @@ class SecurityGroupValidator:
                 message = (f"❌ {cidr} ingress is not allowed — this opens the port to the entire internet.\n"
                           f"   → Use a specific CIDR, security group reference, or prefix list instead.\n"
                           f"   → Example: prefix_list_ids: [\"corporate-networks\"]")
-                level = 'error'
-            else:
-                message = (f"⚠️ {cidr} egress detected — unrestricted outbound access. Consider scoping to specific CIDRs or prefix lists.\n"
-                          f"   → For AWS services, use: prefix_list_ids: [\"aws-vpc-endpoints\"]")
-                level = 'warning'
-            
-            summary.add_result(ValidationResult(
-                level=level,
-                message=message,
-                rule='rule_open_internet',
-                context=context
-            ))
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=message,
+                    rule='rule_open_internet',
+                    context=context
+                ))
+            elif rule_type == 'egress':
+                r_from = rule.get('from_port', 0) if rule else 0
+                r_to = rule.get('to_port', 0) if rule else 0
+                if r_from == 443 and r_to == 443:
+                    return  # HTTPS egress to internet is normal
+                # Non-443 egress to 0.0.0.0/0 is worth flagging
+                port_display = f"port {r_from}" if r_from == r_to else f"ports {r_from}-{r_to}"
+                message = (f"⚠️ MEDIUM: Egress to {cidr} on {port_display} — unrestricted non-HTTPS outbound. PCI DSS Req 1.3.4")
+                summary.add_result(ValidationResult(
+                    level='warning',
+                    message=message,
+                    rule='rule_open_egress',
+                    context=context
+                ))
     
     def _validate_security_group_reference(self, sg_name: str, rule_type: str, rule_index: int, 
                                          sg_ref: str, summary: ValidationSummary):
