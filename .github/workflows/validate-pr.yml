@@ -77,7 +77,7 @@ jobs:
             echo "========================================="
             
             # Run validation and capture output
-            if ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown --no-warnings 2>&1); then
+            if ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown  2>&1); then
               VALIDATION_OUTPUT="$VALIDATION_OUTPUT$ACCOUNT_OUTPUT"$'\n\n'
             else
               ACCOUNT_EXIT_CODE=$?
@@ -123,7 +123,7 @@ jobs:
           
           for account in "${ACCOUNTS[@]}"; do
             # Run validation with markdown output (ignore exit code for summary)
-            if ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown --no-warnings 2>/dev/null || true); then
+            if ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown  2>/dev/null || true); then
               VALIDATION_OUTPUT="$VALIDATION_OUTPUT$ACCOUNT_OUTPUT"$'\n\n'
             fi
           done

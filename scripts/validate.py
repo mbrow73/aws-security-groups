@@ -530,25 +530,37 @@ class SecurityGroupValidator:
                     context=context
                 ))
         
-        # Check for warning ports
+        # PCI DSS compliance warnings for sensitive ports
         warn_ports = self.guardrails.get('validation', {}).get('warn_on_ports', [])
         for port in range(from_port, to_port + 1):
             if port in warn_ports:
                 port_desc = self._get_port_description(port)
+                # Check if source is a CIDR (less secure) vs security group/prefix list (more secure)
+                has_cidr_source = bool(rule.get('cidr_blocks', []))
+                has_sg_source = bool(rule.get('security_groups', []) or rule.get('self'))
+                
                 if port == 22:
-                    message = (f"⚠️ Port {port_desc} detected — consider AWS Systems Manager Session Manager instead (no open inbound ports needed).\n"
-                              f"   → If SSH is required, restrict source to a bastion security group, not a CIDR range.")
+                    message = (f"⚠️ Port {port_desc} — PCI DSS Req 1.3.2: Restrict inbound traffic to only authorized sources.\n"
+                              f"   → Use AWS Systems Manager Session Manager to eliminate SSH entirely (PCI DSS Req 2.2.7: Remove unnecessary services).\n"
+                              f"   → If SSH is required, source MUST be a bastion security group, not a CIDR range.")
                 elif port == 3389:
-                    message = (f"⚠️ Port {port_desc} detected — consider AWS Systems Manager Session Manager for Windows instead.\n"
-                              f"   → If RDP is required, restrict source to a bastion security group, not a CIDR range.")
+                    message = (f"⚠️ Port {port_desc} — PCI DSS Req 1.3.2: Restrict inbound traffic to only authorized sources.\n"
+                              f"   → Use AWS Systems Manager Session Manager to eliminate RDP entirely (PCI DSS Req 2.2.7: Remove unnecessary services).\n"
+                              f"   → If RDP is required, source MUST be a bastion security group, not a CIDR range.")
+                elif port in [3306, 5432, 1433, 27017, 6379]:
+                    message = (f"⚠️ Port {port_desc} — PCI DSS Req 1.3.1: Restrict inbound traffic to system components in the CDE.\n"
+                              f"   → Database ports must only be accessible from application-tier security groups, never from CIDRs.\n"
+                              f"   → PCI DSS Req 3.4: Ensure data-at-rest encryption is also configured on the database.")
+                    if has_cidr_source:
+                        message += (f"\n   → ❗ CIDR-based access to database ports is a PCI audit finding. Use security group references instead.")
                 else:
-                    message = (f"⚠️ Port {port_desc} detected — requires special attention for security.\n"
-                              f"   → Consider using AWS Systems Manager Session Manager or restrict source access.")
+                    message = (f"⚠️ Port {port_desc} — PCI DSS Req 1.2.1: Restrict traffic to that which is necessary for the CDE.\n"
+                              f"   → Ensure this port is documented in your network flow diagrams (PCI DSS Req 1.1.2).")
                 
                 summary.add_result(ValidationResult(
                     level='warning',
                     message=message,
-                    rule='rule_warning_port',
+                    rule='pci_dss_sensitive_port',
                     context=context
                 ))
     
@@ -746,14 +758,9 @@ class SecurityGroupValidator:
             required_rules = type_overrides['required_egress']
             egress_rules = sg_config.get('egress', [])
             
-            for required_rule in required_rules:
-                if not self._has_matching_rule(egress_rules, required_rule):
-                    summary.add_result(ValidationResult(
-                        level='warning',
-                        message=f"Missing recommended egress rule for {sg_type}: {required_rule.get('description', 'unnamed rule')}",
-                        rule='type_missing_recommended_rule',
-                        context=context
-                    ))
+            # Removed: "missing recommended rule" warnings — teams define their own egress.
+            # Re-enable if org wants to enforce mandatory egress patterns per SG type.
+            pass
         
         # Check rule count overrides
         if 'max_rules' in type_overrides:
