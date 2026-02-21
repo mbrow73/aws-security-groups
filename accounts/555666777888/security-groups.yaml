@@ -1,0 +1,39 @@
+account_id: "555666777888"
+environment: "nonprod"
+baseline_profiles:
+  - vpc-endpoints
+
+security_groups:
+  eks-nodes-dev:
+    description: "EKS nodes for development environment"
+    tags:
+      Team: "dev-team"
+      Environment: "nonprod"
+      Application: "dev-cluster"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 10250
+        to_port: 10250
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Kubelet API from control plane"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["aws-vpc-endpoints"]
+        description: "HTTPS to AWS VPC endpoints"
+
+  bad-rule-on-purpose:
+    description: "This SG has one bad rule to show validation catching it"
+    tags:
+      Team: "dev-team"
+      Environment: "nonprod"
+      Application: "test-app"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "This should get flagged"
