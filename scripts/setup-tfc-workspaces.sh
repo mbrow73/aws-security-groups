@@ -454,8 +454,8 @@ create_account_workspaces() {
     
     for account_id in "${accounts[@]}"; do
         local workspace_name="sg-platform-${account_id}"
-        local working_directory=""  # Root directory for account workspaces
-        local trigger_paths="[\"accounts/${account_id}/\"]"
+        local working_directory="terraform"  # Shared terraform directory
+        local trigger_paths="[\"accounts/${account_id}/\", \"terraform/\", \"modules/\", \"baseline/\"]"
         local description="AWS Security Group Platform - Account ${account_id}"
         
         if create_workspace "$workspace_name" "$working_directory" "$trigger_paths" "$description"; then

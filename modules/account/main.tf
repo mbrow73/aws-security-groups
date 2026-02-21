@@ -14,8 +14,7 @@ terraform {
 # Load and parse the YAML configuration
 locals {
   # Load the security groups YAML configuration
-  config_file_path = var.yaml_file != "" ? var.yaml_file : "${path.module}/security-groups.yaml"
-  config = yamldecode(file(local.config_file_path))
+  config = yamldecode(file(var.yaml_file))
   
   # Load guardrails configuration
   guardrails = yamldecode(file("${path.module}/../../../guardrails.yaml"))

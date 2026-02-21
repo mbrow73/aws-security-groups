@@ -21,9 +21,144 @@ env:
   PYTHON_VERSION: '3.11'
 
 jobs:
+  create-tfc-workspaces:
+    name: "Create TFC Workspaces for New Accounts"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          
+      - name: Detect new account directories
+        id: detect-new
+        run: |
+          # Get list of changed files
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+          
+          # Extract potential new account directories
+          NEW_ACCOUNTS=""
+          for file in $CHANGED_FILES; do
+            if [[ $file =~ ^accounts/([0-9]{12})/security-groups\.yaml$ ]]; then
+              account_id="${BASH_REMATCH[1]}"
+              # Check if this is truly a new directory by seeing if it existed in the previous commit
+              if ! git show HEAD~1:accounts/$account_id/security-groups.yaml >/dev/null 2>&1; then
+                NEW_ACCOUNTS="$NEW_ACCOUNTS,$account_id"
+              fi
+            fi
+          done
+          
+          NEW_ACCOUNTS=$(echo "$NEW_ACCOUNTS" | sed 's/^,//' | sed 's/,$//')
+          echo "new_accounts=$NEW_ACCOUNTS" >> $GITHUB_OUTPUT
+          echo "New accounts detected: $NEW_ACCOUNTS"
+          
+      - name: Create TFC workspaces for new accounts
+        if: steps.detect-new.outputs.new_accounts != ''
+        env:
+          TFC_TOKEN: ${{ secrets.TFC_API_TOKEN }}
+          TFC_ORGANIZATION: ${{ vars.TFC_ORGANIZATION }}
+          REPO_IDENTIFIER: ${{ github.repository }}
+          OAUTH_TOKEN_ID: ${{ vars.TFC_OAUTH_TOKEN_ID }}
+        run: |
+          IFS=',' read -ra ACCOUNTS <<< "${{ steps.detect-new.outputs.new_accounts }}"
+          
+          for account_id in "${ACCOUNTS[@]}"; do
+            if [[ -z "$account_id" ]]; then continue; fi
+            
+            workspace_name="sg-platform-${account_id}"
+            echo "Creating TFC workspace: $workspace_name"
+            
+            # Check if workspace already exists
+            response=$(curl -s -w "%{http_code}" \
+              -H "Authorization: Bearer $TFC_TOKEN" \
+              -H "Content-Type: application/vnd.api+json" \
+              "https://app.terraform.io/api/v2/organizations/$TFC_ORGANIZATION/workspaces/$workspace_name" \
+              -o /dev/null)
+            
+            if [[ "$response" == "200" ]]; then
+              echo "Workspace $workspace_name already exists, skipping..."
+              continue
+            fi
+            
+            # Create workspace payload
+            payload=$(cat << EOF
+          {
+            "data": {
+              "type": "workspaces",
+              "attributes": {
+                "name": "$workspace_name",
+                "description": "AWS Security Group Platform - Account $account_id",
+                "working-directory": "terraform",
+                "auto-apply": true,
+                "speculative-enabled": true,
+                "trigger-prefixes": ["accounts/$account_id/", "terraform/", "modules/", "baseline/"],
+                "vcs-repo": {
+                  "identifier": "$REPO_IDENTIFIER",
+                  "oauth-token-id": "$OAUTH_TOKEN_ID",
+                  "branch": "main",
+                  "ingress-submodules": false
+                }
+              }
+            }
+          }
+          EOF
+            )
+            
+            # Create the workspace
+            create_response=$(curl -s -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer $TFC_TOKEN" \
+              -H "Content-Type: application/vnd.api+json" \
+              -d "$payload" \
+              "https://app.terraform.io/api/v2/organizations/$TFC_ORGANIZATION/workspaces" \
+              -o /tmp/create_response.json)
+            
+            if [[ "${create_response: -3}" == "201" ]]; then
+              echo "✅ Created workspace: $workspace_name"
+              
+              # Set account_id variable
+              var_payload=$(cat << EOF
+          {
+            "data": {
+              "type": "vars",
+              "attributes": {
+                "key": "account_id",
+                "value": "$account_id",
+                "category": "terraform",
+                "sensitive": false
+              }
+            }
+          }
+          EOF
+              )
+              
+              var_response=$(curl -s -w "%{http_code}" \
+                -X POST \
+                -H "Authorization: Bearer $TFC_TOKEN" \
+                -H "Content-Type: application/vnd.api+json" \
+                -d "$var_payload" \
+                "https://app.terraform.io/api/v2/workspaces/$workspace_name/vars" \
+                -o /dev/null)
+              
+              if [[ "${var_response: -3}" == "201" ]]; then
+                echo "✅ Set account_id variable for $workspace_name"
+              else
+                echo "❌ Failed to set account_id variable for $workspace_name"
+              fi
+            else
+              echo "❌ Failed to create workspace: $workspace_name"
+              cat /tmp/create_response.json || echo "No response file"
+            fi
+          done
   detect-changes:
     name: "Detect Changed Accounts"
     runs-on: ubuntu-latest
+    needs: create-tfc-workspaces
+    if: always()  # Run even if workspace creation fails
     outputs:
       changed-accounts: ${{ steps.detect.outputs.accounts }}
       baseline-changed: ${{ steps.detect.outputs.baseline_changed }}

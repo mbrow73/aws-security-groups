@@ -44,8 +44,13 @@ aws-security-groups/
 ├── README.md                      # This file
 ├── guardrails.yaml               # Validation rules as configuration
 ├── prefix-lists.yaml             # Managed prefix list definitions
+├── terraform/                    # Shared Terraform configuration (all workspaces)
+│   ├── main.tf                   # Calls account module with dynamic YAML path
+│   ├── backend.tf                # Generic TFC cloud backend
+│   ├── providers.tf              # AWS provider with account-specific assume role
+│   └── variables.tf              # account_id and aws_region variables
 ├── .github/workflows/            # GitHub Actions pipelines
-│   └── validate-pr.yml           # PR validation (YAML, guardrails, naming)
+│   └── validate-pr.yml           # PR validation + auto workspace creation
 ├── baseline/                     # Baseline security group profiles (opt-in)
 │   ├── profiles/                 # Modular baseline profiles
 │   │   ├── vpc-endpoints/        # VPC endpoint access profile
@@ -64,14 +69,18 @@ aws-security-groups/
 ├── scripts/                      # Python automation scripts
 │   ├── validate.py               # YAML and guardrail validation
 │   ├── check-quotas.py          # AWS quota pre-checks
-│   └── discover-accounts.py     # Account discovery helper
-├── accounts/                     # Team security group definitions
-│   ├── _template/                # Template for new accounts
+│   ├── discover-accounts.py     # Account discovery helper
+│   └── setup-tfc-workspaces.sh  # Bulk TFC workspace setup
+├── accounts/                     # Team security group definitions (YAML only)
 │   ├── _example/                 # Example configuration
-│   ├── 123456789012/            # Account-specific SGs
-│   └── 234567890123/            # Account-specific SGs
+│   │   └── security-groups.yaml # Reference implementation
+│   ├── 123456789012/            # Account-specific directory
+│   │   └── security-groups.yaml # Team's YAML file (that's it!)
+│   └── 234567890123/            # Another account
+│       └── security-groups.yaml # Another team's YAML file
 └── docs/                        # Documentation
     ├── team-guide.md            # Step-by-step guide for teams
+    ├── tfc-setup.md             # TFC workspace configuration
     ├── naming-conventions.md    # Naming standards
     └── examples/               # Copy-paste examples
         └── eks-standard.yaml
@@ -79,13 +88,15 @@ aws-security-groups/
 
 ## 🚀 Quick Start for Teams
 
-1. **Copy the template**: `cp -r accounts/_template accounts/YOUR-ACCOUNT-ID`
-2. **Update configuration**: Edit `backend.tf`, `providers.tf`, and `security-groups.yaml` with your account details
-3. **Create a Pull Request** - validation runs automatically, no code generation needed!
+1. **Create directory**: `mkdir accounts/YOUR-ACCOUNT-ID`
+2. **Add YAML file**: Copy and customize `accounts/_example/security-groups.yaml`
+3. **Submit Pull Request** - TFC workspace auto-created, validation runs automatically!
 4. **Get approval** from the security team  
 5. **Merge** - security groups are deployed automatically via `yamldecode()`
 
-See [`accounts/_template/README.md`](accounts/_template/README.md) and [`docs/team-guide.md`](docs/team-guide.md) for detailed instructions.
+That's it! No Terraform files to manage - just one YAML file per account.
+
+See [`docs/team-guide.md`](docs/team-guide.md) for detailed instructions.
 
 ## 📝 YAML Configuration Format
 

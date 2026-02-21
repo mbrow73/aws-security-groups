@@ -5,7 +5,7 @@ Welcome to the AWS Security Group self-service platform! This guide will help yo
 ## 📋 Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [Creating Your Account Directory](#creating-your-account-directory)
+2. [Creating Your Account Configuration](#creating-your-account-configuration)
 3. [YAML Configuration Format](#yaml-configuration-format)
 4. [Submitting Changes](#submitting-changes)
 5. [Understanding Validation](#understanding-validation)
@@ -16,14 +16,17 @@ Welcome to the AWS Security Group self-service platform! This guide will help yo
 
 ## 🚀 Quick Start
 
-1. **Fork/Clone** this repository
-2. **Copy template**: `cp -r accounts/_template accounts/123456789012/`
-3. **Configure**: Update `backend.tf`, `providers.tf`, and `security-groups.yaml` with your account details
-4. **Submit** a Pull Request
-5. **Review** validation results and fix any issues
-6. **Merge** to deploy via `yamldecode()` - no code generation needed!
+The new simplified process:
 
-## 📁 Creating Your Account Directory
+1. **Create directory**: `mkdir accounts/YOUR-ACCOUNT-ID`
+2. **Add YAML file**: Copy `accounts/_example/security-groups.yaml` and customize
+3. **Submit Pull Request** - TFC workspace is auto-created!
+4. **Get approval** from security team
+5. **Merge** - deployed automatically via Terraform Cloud
+
+That's it! No Terraform files to manage.
+
+## 📁 Creating Your Account Configuration
 
 ### Step 1: Identify Your Account ID
 
@@ -32,723 +35,278 @@ Find your 12-digit AWS Account ID from:
 - AWS CLI: `aws sts get-caller-identity --query Account --output text`
 - AWS SDK in your applications
 
-### Step 2: Copy Template Directory
+### Step 2: Create Account Directory
 
 ```bash
-# Copy the entire template directory (replace 123456789012 with your account ID)
-cp -r accounts/_template accounts/123456789012
+# Create directory for your account (replace 123456789012 with your account ID)
+mkdir accounts/123456789012
 
 # Navigate to your new account directory
 cd accounts/123456789012
 ```
 
-### Step 3: Configure Template Files
+### Step 3: Create security-groups.yaml
 
-You need to update several files with your account details:
+Copy the example configuration and customize it:
 
-#### A. Update `backend.tf`
-Replace placeholder values:
-```hcl
-terraform {
-  cloud {
-    organization = "YOUR_ORG_NAME"  # <-- Your Terraform Cloud org
-    
-    workspaces {
-      name = "sg-platform-123456789012"  # <-- Your account ID
-    }
-  }
-}
+```bash
+# Copy the example file
+cp ../accounts/_example/security-groups.yaml .
+
+# Edit with your preferred editor
+vim security-groups.yaml
 ```
 
-#### B. Update `providers.tf`
-Replace placeholder values:
-```hcl
-provider "aws" {
-  default_tags {
-    tags = {
-      AccountId = "123456789012"  # <-- Your account ID
-      # ... other tags
-    }
-  }
-}
-
-locals {
-  expected_account_id = "123456789012"  # <-- Your account ID
-}
-```
-
-#### C. Update `security-groups.yaml`
-
-```yaml
-# Update with your actual account ID
-account_id: "123456789012"
-
-# Set your environment
-environment: "production"  # or "staging", "development"
-
-# Configure your security groups
-security_groups:
-  my-app-servers:
-    description: "Security group for my application servers"
-    # ... add your rules
-```
+That's it! No backend.tf, providers.tf, or other Terraform files needed.
 
 ## 📝 YAML Configuration Format
 
-### Basic Structure
+The security-groups.yaml file contains your complete security group configuration:
 
 ```yaml
-account_id: "123456789012"          # Required: Your AWS Account ID
-environment: "production"           # Optional: Environment name
-vpc:                               # Optional: VPC configuration
-  vpc_id: "auto"                   # "auto" or specific VPC ID
-tags:                              # Optional: Global tags
-  Team: "backend"
-  Project: "microservices"
+# Required: Your 12-digit AWS Account ID
+account_id: "123456789012"
 
-baseline_profiles:                 # Optional: Opt-in to baseline security groups
-  - vpc-endpoints                  # Enables VPC endpoint access
-  - internet-ingress               # Enables WAF/CDN → NLB traffic
-  - eks-standard                   # Enables EKS cluster communication
+# Optional: Environment designation
+environment: "production"
 
+# Optional: VPC configuration
+vpc:
+  vpc_id: "auto"  # Auto-discover, or specify VPC ID
+  filter_tags:
+    Environment: "production"
+
+# Optional: Global tags for all resources
+tags:
+  Team: "platform"
+  CostCenter: "engineering"
+
+# Optional: Baseline security group profiles
+baseline_profiles:
+  - vpc-endpoints
+  - eks-standard
+
+# Security Groups Configuration
 security_groups:
-  group-name:                      # Your security group name
-    description: "Purpose of this security group"  # Required
-    tags:                          # Required tags
-      Team: "your-team"
-      Environment: "production"
-      Application: "your-app"
-    ingress:                       # Inbound rules
-      - protocol: "tcp"
-        from_port: 80
-        to_port: 80
-        cidr_blocks: ["10.0.0.0/8"]
-        description: "HTTP from internal"
-    egress:                        # Outbound rules (optional)
-      - protocol: "tcp"
+  web-servers:
+    description: "Security group for web servers"
+    ingress:
+      - description: "HTTPS from load balancer"
         from_port: 443
         to_port: 443
+        protocol: "tcp"
+        security_groups: ["alb-web"]
+    
+    egress:
+      - description: "HTTPS to internet"
+        from_port: 443
+        to_port: 443
+        protocol: "tcp"
         cidr_blocks: ["0.0.0.0/0"]
-        description: "HTTPS outbound"
 ```
 
 ### Required Fields
 
-| Field | Level | Description | Example |
-|-------|-------|-------------|---------|
-| `account_id` | Root | 12-digit AWS Account ID | `"123456789012"` |
-| `description` | Security Group | Purpose of the security group | `"Web servers for API"` |
-| `Team` | Tag | Owning team name | `"backend"` |
-| `Environment` | Tag | Environment designation | `"production"` |
-| `Application` | Tag | Application name | `"order-service"` |
-| `ManagedBy` | Tag | Always "sg-platform" | `"sg-platform"` (auto-added) |
+- **account_id**: Your 12-digit AWS account ID
+- **security_groups**: Dictionary of security group definitions
 
-### Rule Configuration
+### Optional Fields
 
-#### Basic Rule Structure
+- **environment**: Environment name (dev, staging, production)
+- **vpc**: VPC configuration (defaults to auto-discovery)
+- **tags**: Additional tags to apply to all resources
+- **baseline_profiles**: Pre-built security group profiles to include
 
-```yaml
-ingress:
-  - protocol: "tcp"              # tcp, udp, icmp, icmpv6, gre, ah, esp, all, -1
-    from_port: 80                # Port number (0-65535)
-    to_port: 80                  # Port number (0-65535)
-    description: "HTTP traffic"   # Required description
-    # One or more sources:
-    cidr_blocks: ["10.0.0.0/8"]           # IPv4 CIDR blocks
-    ipv6_cidr_blocks: ["::/0"]             # IPv6 CIDR blocks
-    security_groups: ["sg-12345678"]       # Security group IDs or names
-    prefix_list_ids: ["corporate-networks"] # Prefix list references
-    self: true                             # Allow within same SG
-```
+## 📤 Submitting Changes
 
-#### Source Types
-
-**CIDR Blocks** - Specify IP ranges:
-```yaml
-cidr_blocks: 
-  - "10.0.0.0/8"        # Internal network
-  - "192.168.1.0/24"    # Specific subnet
-```
-
-**Security Groups** - Reference other security groups:
-```yaml
-security_groups:
-  - "sg-0123456789abcdef0"    # By security group ID
-  - "alb-production"          # By name (if in same account)
-```
-
-**Prefix Lists** - Use managed IP ranges:
-```yaml
-prefix_list_ids:
-  - "corporate-networks"      # Custom prefix list
-  - "pl-12345678"            # AWS managed prefix list
-  - "waf-saas-providers"     # WAF provider IPs
-```
-
-**Self Reference** - Allow communication within the security group:
-```yaml
-self: true  # Allows instances in this SG to communicate with each other
-```
-
-### VPC Configuration
-
-Control which VPC your security groups are deployed to:
-
-```yaml
-vpc:
-  # Automatic VPC discovery (default)
-  vpc_id: "auto"
-  
-  # Or specify a particular VPC
-  vpc_id: "vpc-0123456789abcdef0"
-  
-  # Filter VPCs during auto-discovery
-  filter_tags:
-    Environment: "production"
-    Name: "main-vpc"
-  
-  # Requirements for auto-discovery
-  require_internet_access: true
-  require_private_subnets: true
-  min_availability_zones: 2
-```
-
-### Environment-Specific Configurations
-
-The platform applies different rules based on environment:
-
-**Production** (`environment: "production"`):
-- Stricter CIDR validation (max /24)
-- All changes require approval
-- Enhanced monitoring
-
-**Staging** (`environment: "staging"`):
-- Moderate restrictions (max /16)
-- Changes require approval
-- Standard monitoring
-
-**Development** (`environment: "development"`):
-- Relaxed restrictions (max /8)
-- No approval required
-- Basic monitoring
-- Additional allowed ports for dev tools
-
-## 🛡️ Baseline Security Group Profiles
-
-The platform provides optional **baseline security group profiles** that contain common security patterns used across the organization. These are opt-in per account, allowing teams to choose which baseline patterns they need.
-
-### Available Baseline Profiles
-
-#### `vpc-endpoints` - VPC Endpoint Access
-Enables secure access to AWS VPC endpoints (S3, ECR, EKS API, etc.)
-
-**What it provides:**
-- HTTPS (443) access from VPC CIDR to VPC endpoints
-- HTTP (80) access from VPC CIDR to VPC endpoints (for S3)
-- Configurable additional ports for custom VPC endpoints
-
-**When to use:**
-- Applications need to access AWS services privately through VPC endpoints
-- Required for EKS clusters using ECR for container images
-- Applications using S3, SSM, CloudWatch, or other AWS services
-
-#### `internet-ingress` - WAF/CDN to NLB Traffic  
-Enables WAF and CDN providers (Cloudflare, Fastly, etc.) to reach Network Load Balancers
-
-**What it provides:**
-- HTTP (80) and HTTPS (443) access from WAF/CDN provider IPs
-- Configurable custom ports for specific applications
-- Uses managed prefix lists for WAF provider IP ranges
-
-**When to use:**
-- Public-facing applications behind Network Load Balancers
-- Using WAF services like Cloudflare, Fastly, or AWS WAF
-- Need to restrict ingress to known CDN/WAF provider IPs
-
-#### `eks-standard` - EKS Cluster Communication
-Provides baseline security for EKS cluster API and node communication
-
-**What it provides:**
-- EKS API (443) access from private subnets (for worker nodes)
-- EKS API (443) access from corporate networks (for kubectl)
-- Standard EKS control plane communication patterns
-
-**When to use:**
-- Running EKS clusters in the account
-- Need standard EKS security group patterns
-- kubectl access from corporate networks required
-
-### How to Enable Baseline Profiles
-
-Add the `baseline_profiles` section to your `security-groups.yaml`:
-
-```yaml
-account_id: "123456789012"
-environment: "production"
-
-# Opt into baseline security group profiles
-baseline_profiles:
-  - vpc-endpoints      # Enable VPC endpoint access patterns
-  - internet-ingress   # Enable WAF/CDN → NLB patterns  
-  - eks-standard       # Enable EKS cluster patterns
-
-security_groups:
-  # Your custom security groups...
-```
-
-### Using Baseline Security Groups in Rules
-
-Once enabled, you can reference baseline security groups in your custom security group rules:
-
-```yaml
-security_groups:
-  my-app-servers:
-    description: "Application servers with baseline access"
-    ingress:
-      # Allow access from baseline internet-ingress SG
-      - protocol: tcp
-        from_port: 8080
-        to_port: 8080
-        security_groups: ["baseline-waf-to-nlb"]
-        description: "App access from WAF/CDN"
-      
-      # Custom rules...
-    
-    # Inherit VPC endpoint access
-    egress:
-      - protocol: tcp
-        from_port: 443
-        to_port: 443
-        security_groups: ["baseline-vpc-endpoints"]
-        description: "HTTPS to AWS services via VPC endpoints"
-```
-
-### Baseline Profile Configuration
-
-You can customize baseline profile behavior using additional variables:
-
-```yaml
-baseline_profiles:
-  - vpc-endpoints
-  - internet-ingress
-  - eks-standard
-
-# Optional: Customize baseline profile settings
-baseline_config:
-  vpc_endpoints:
-    additional_ports:
-      - port: 8080
-        service: "custom-api"
-  
-  internet_ingress:
-    custom_ports: [8080, 8443, 9000]
-  
-  eks_standard:
-    cluster_name: "production-cluster"
-```
-
-### Important Notes
-
-- **Opt-in Only**: Baseline profiles are never deployed automatically
-- **Account-specific**: Each account chooses which profiles to enable
-- **Managed by Platform**: Baseline security groups are managed by the security team
-- **Automatic Updates**: When baseline profiles change, only opted-in accounts are updated
-- **No Conflicts**: Baseline security groups use reserved names starting with `baseline-`
-
-## 🔄 Submitting Changes
-
-### Step 1: Create a Branch
-
-```bash
-git checkout -b update-security-groups-myteam
-```
-
-### Step 2: Make Changes
-
-Edit your `accounts/123456789012/security-groups.yaml` file with your desired security group configuration.
-
-### Step 3: Test Locally (Optional)
-
-```bash
-# Validate your configuration
-python scripts/validate.py accounts/123456789012
-
-# Check quota limits
-python scripts/check-quotas.py 123456789012
-
-# Generate Terraform (to preview)
-python scripts/generate-terraform.py accounts/123456789012 --dry-run
-```
-
-### Step 4: Commit and Push
+### Step 1: Create Pull Request
 
 ```bash
 git add accounts/123456789012/security-groups.yaml
-git commit -m "Add security groups for myteam production environment"
-git push origin update-security-groups-myteam
+git commit -m "Add security groups for account 123456789012"
+git push origin feature/account-123456789012
 ```
 
-### Step 5: Create Pull Request
+Create a Pull Request on GitHub.
 
-1. Go to GitHub and create a Pull Request
-2. Fill out the PR template with:
-   - Purpose of the changes
-   - Security justification for any open rules
-   - Testing plan
-3. Wait for validation checks to complete
+### Step 2: Automated Workspace Creation
 
-## ✅ Understanding Validation
+When you submit a PR with a new account directory, the GitHub Actions pipeline will:
 
-Every Pull Request triggers automatic validation checks:
+1. **Detect** the new account directory
+2. **Create** a Terraform Cloud workspace automatically
+3. **Configure** the workspace with:
+   - Working directory: `terraform/`
+   - Account ID variable set
+   - VCS trigger paths configured
+   - Auto-apply enabled
 
-### Schema Validation
+### Step 3: Validation
 
-Ensures your YAML follows the correct structure:
-- ✅ Required fields present
-- ✅ Data types correct
-- ✅ Account ID format (12 digits)
-- ✅ Security group names follow conventions
+The PR will trigger validation checks:
 
-### Guardrail Validation
+- ✅ **YAML Schema**: Validates your configuration format
+- ✅ **Naming Conventions**: Ensures compliance with org standards
+- ✅ **Guardrails**: Checks against security policies
+- ✅ **Quota Check**: Verifies AWS account limits won't be exceeded
 
-Enforces security policies:
-- ❌ **Blocked CIDRs**: `0.0.0.0/0`, `169.254.169.254/32`
-- ⚠️ **Warning Ports**: SSH (22), RDP (3389), Database ports
-- ❌ **Blocked Ports**: Telnet (23), NetBIOS (139), SMB (445)
-- ✅ **Port Range Limits**: Max 1000 ports per rule
-- ✅ **Rule Count Limits**: Max 60 ingress + 60 egress rules
+## 🔍 Understanding Validation
 
-### Naming Validation
+### YAML Schema Validation
 
-Enforces consistent naming:
-- Must be lowercase alphanumeric with hyphens
-- Must start and end with alphanumeric characters
-- Maximum 63 characters
-- Required tags must be present
+Checks that your YAML file follows the correct structure and includes required fields.
 
-### Quota Validation
-
-Prevents AWS quota violations:
-- Security groups per VPC (default: 2500)
-- Rules per security group (default: 120)
-- Warns at 80% utilization
-
-### Example Validation Output
-
-```
-🔍 Validating AWS Security Groups for account: 123456789012
-📁 Directory: accounts/123456789012
-
-❌ Errors:
-   • Security group 'web-servers' is missing required tag 'Team' [security_group.web-servers] (sg_required_tags)
-   • Port 22 is blocked by policy in app-servers ingress[0] [security_group.app-servers.ingress[0]] (rule_blocked_port)
-
-⚠️  Warnings:
-   • Port 22 requires special attention in web-servers ingress[1] - consider using bastion/Session Manager [security_group.web-servers.ingress[1]] (rule_warning_port)
-
-📊 Summary:
-   Errors: 2
-   Warnings: 1
-
-❌ Validation failed with errors
-```
-
-## 🚀 Deployment Process
-
-### Automatic Deployment Flow
-
-1. **PR Created** → GitHub Actions validation runs (YAML, guardrails, quotas)
-2. **PR Opened** → Terraform Cloud runs speculative plan showing changes
-3. **PR Approved** → Ready for merge (security team review)
-4. **Merge to Main** → Terraform Cloud automatically applies changes
-5. **Status Update** → Results visible in TFC UI and notifications
-
-### Deployment Architecture
-
-The platform uses **Terraform Cloud** for deployments:
-- **GitHub Actions**: Validation only (no Terraform operations)
-- **Terraform Cloud**: VCS-driven workspaces handle plan/apply
-- **Per-Account Workspaces**: Each AWS account has its own TFC workspace
-- **Auto-Apply**: Changes are applied automatically after merge
-
-### What Gets Deployed
-
-When you merge changes:
-
-1. **VCS Trigger** activates the appropriate TFC workspace
-2. **Terraform Plan** shows what will be modified (visible in TFC UI)
-3. **Auto Apply** deploys changes to your AWS account
-4. **State Management** handled securely by Terraform Cloud
-5. **Results Available** in TFC UI with detailed logs
-
-### Rollback Process
-
-If issues occur:
-1. **TFC Logging** provides detailed failure information
-2. **Manual Rollback** via TFC UI or emergency CLI access
-3. **Emergency Procedures** documented in TFC runbooks
-
-## 📊 Monitoring and Status
-
-### Checking Deployment Status
-
-**Terraform Cloud**:
-- Go to https://app.terraform.io
-- Navigate to your workspace: `sg-platform-{account-id}`
-- Review run history, plans, and apply logs
-
-**GitHub Actions**:
-- Go to the repository's Actions tab for validation results
-- Validation-only: no actual deployments happen here
-
-**AWS Console**:
-- Check EC2 → Security Groups in your account
-- Verify the security groups were created/updated
-
-### Terraform Cloud Workspace
-
-Your account's workspace: `sg-platform-123456789012` handles:
-- **Speculative Plans** on PRs (shows what would change)
-- **Auto-Apply** on merge (actually deploys changes)
-- **State Management** (securely stored in TFC)
-- **Variable Management** (AWS credentials, account settings)
-
-### Common Status Messages
-
-- ✅ **"Deployment successful"** - Changes applied
-- ⏳ **"Deployment in progress"** - Currently applying
-- ❌ **"Validation failed"** - Fix YAML and retry
-- ⚠️ **"Quota warning"** - Approaching AWS limits
-- 🔄 **"Plan generated"** - Ready for approval
-
-### Troubleshooting Deployments
-
-If your deployment fails:
-
-1. **Check validation errors** in the PR comments
-2. **Review GitHub Actions logs** for detailed error messages
-3. **Verify AWS permissions** are correct for your account
-4. **Check quota limits** with `scripts/check-quotas.py`
-5. **Ask for help** in `#security-groups` Slack channel
-
-## ⚠️ Troubleshooting
-
-### Common Issues
-
-#### "Account ID mismatch"
-```
-Account ID mismatch: expected 123456789012, got 987654321098
-```
-**Solution**: Verify you're deploying to the correct AWS account or update the `account_id` field.
-
-#### "VPC not found"
-```
-VPC vpc-12345678 not found in account
-```
-**Solution**: Check the VPC ID exists or use `vpc_id: "auto"` for automatic discovery.
-
-#### "Security group limit exceeded"
-```
-Would exceed security groups per VPC limit (2500)
-```
-**Solution**: Clean up unused security groups or request quota increase.
-
-#### "Invalid CIDR block"
-```
-Invalid CIDR block '10.0.0.0/33' in web-servers ingress[0]
-```
-**Solution**: Fix the CIDR notation (valid range: /0 to /32 for IPv4).
-
-#### "Missing required tag"
-```
-Security group 'api-servers' is missing required tag 'Team'
-```
-**Solution**: Add all required tags: `Team`, `Environment`, `Application`, `ManagedBy`.
-
-### Getting Help
-
-1. **Check this documentation** for common patterns
-2. **Review the example** in `accounts/_example/`
-3. **Ask in Slack** `#security-groups` channel
-4. **Create a GitHub issue** for bugs or feature requests
-5. **Contact the platform team** for urgent issues
-
-## 🏆 Best Practices
-
-### Security Best Practices
-
-1. **Principle of Least Privilege**
-   ```yaml
-   # Good: Specific CIDR
-   cidr_blocks: ["10.100.0.0/24"]
-   
-   # Avoid: Open to internet unless necessary
-   cidr_blocks: ["0.0.0.0/0"]
-   ```
-
-2. **Use Prefix Lists**
-   ```yaml
-   # Good: Managed prefix list
-   prefix_list_ids: ["corporate-networks"]
-   
-   # Avoid: Hard-coded IPs
-   cidr_blocks: ["203.0.113.1/32", "203.0.113.2/32"]
-   ```
-
-3. **Meaningful Descriptions**
-   ```yaml
-   # Good: Clear purpose
-   description: "HTTPS from ALB to backend API servers"
-   
-   # Avoid: Vague descriptions
-   description: "Web traffic"
-   ```
-
-4. **Avoid SSH/RDP Direct Access**
-   ```yaml
-   # Better: Use bastion/Session Manager
-   security_groups: ["bastion-production"]
-   
-   # Avoid: Direct SSH from internet
-   cidr_blocks: ["0.0.0.0/0"]  # Port 22
-   ```
+Common issues:
+- Missing `account_id` field
+- Invalid security group rule format
+- Incorrect data types (string vs number)
 
 ### Naming Conventions
 
-1. **Security Group Names**
-   ```yaml
-   # Good examples:
-   eks-nodes-production
-   alb-api-staging
-   rds-postgres-dev
-   
-   # Follow pattern: service-purpose-environment
-   ```
+Security group names must follow organizational standards:
+- Use lowercase letters and hyphens
+- Include purpose/service identifier
+- Follow patterns: `service-purpose`, `tier-role`
 
-2. **Consistent Tagging**
-   ```yaml
-   tags:
-     Team: "backend"              # Owning team
-     Environment: "production"    # Environment tier
-     Application: "order-api"     # Application name
-     Purpose: "web-servers"       # Specific purpose
-     CostCenter: "engineering"    # Optional: billing
-   ```
+Examples:
+- ✅ `web-servers`, `api-gateway`, `db-primary`
+- ❌ `WebServers`, `SG_API`, `database123`
 
-### YAML Organization
+### Guardrails Validation
 
-1. **Group Related Rules**
-   ```yaml
-   ingress:
-     # Application traffic
-     - protocol: "tcp"
-       from_port: 8080
-       to_port: 8080
-       description: "Application HTTP"
-     
-     # Health checks
-     - protocol: "tcp"
-       from_port: 8081
-       to_port: 8081
-       description: "Health check endpoint"
-     
-     # Administrative access
-     - protocol: "tcp"
-       from_port: 22
-       to_port: 22
-       description: "SSH from bastion"
-   ```
+Automatically enforces security policies:
+- No unrestricted inbound access (0.0.0.0/0 on sensitive ports)
+- Management ports (SSH/RDP) must be restricted
+- Egress rules should be specific where possible
 
-2. **Use Comments**
-   ```yaml
-   security_groups:
-     # Production web servers behind ALB
-     web-production:
-       description: "Production web servers"
-       # ... configuration
-     
-     # Staging environment for testing
-     web-staging:
-       description: "Staging web servers"
-       # ... configuration
-   ```
+### Quota Checks
 
-### Change Management
+Validates that your changes won't exceed AWS limits:
+- Security groups per VPC
+- Rules per security group
+- Security groups per ENI
 
-1. **Small, Incremental Changes**
-   - Add one security group per PR
-   - Test in development first
-   - Deploy to staging before production
+## 🚀 Deployment Process
 
-2. **Clear Commit Messages**
-   ```bash
-   # Good
-   git commit -m "Add security group for Redis cache servers in production"
-   
-   # Avoid
-   git commit -m "Update security groups"
-   ```
+### After PR Approval and Merge
 
-3. **Document Security Justifications**
-   - Include reasoning for open rules in PR description
-   - Reference security reviews or approvals
-   - Document temporary rules with expiration dates
+1. **Terraform Cloud Detects** changes via VCS webhook
+2. **Plan Phase**: TFC runs `terraform plan`
+   - Reads your YAML file using `yamldecode()`
+   - Shows what will be created/changed
+3. **Auto-Apply**: If plan is clean, automatically applies changes
+4. **Notification**: Status posted to PR/Slack (if configured)
 
-### Performance Optimization
+### Monitoring Deployments
 
-1. **Minimize Rule Count**
-   ```yaml
-   # Good: Use port ranges
-   from_port: 8000
-   to_port: 8099
-   
-   # Avoid: Multiple single-port rules
-   ```
+Check Terraform Cloud workspace for your account:
+- Workspace name: `sg-platform-YOUR-ACCOUNT-ID`
+- URL: `https://app.terraform.io/app/ORG-NAME/workspaces/sg-platform-YOUR-ACCOUNT-ID`
 
-2. **Use Security Group References**
-   ```yaml
-   # Good: Reference other security groups
-   security_groups: ["alb-production"]
-   
-   # Avoid: Hard-coding CIDR blocks when possible
-   ```
+## 📊 Monitoring and Status
 
-3. **Leverage Prefix Lists**
-   ```yaml
-   # Good: Centrally managed IP ranges
-   prefix_list_ids: ["database-subnets"]
-   
-   # Better: Than listing all individual subnets
-   ```
+### Workspace Status
 
-### Environment Strategy
+Each account has its own TFC workspace where you can:
+- View current state
+- See deployment history
+- Check for drift detection
+- Review plan/apply logs
 
-1. **Environment Separation**
-   ```
-   accounts/
-   ├── 111111111111/  # Production account
-   ├── 222222222222/  # Staging account  
-   └── 333333333333/  # Development account
-   ```
+### GitHub Integration
 
-2. **Promote Changes Through Environments**
-   - Develop → Stage → Production
-   - Test thoroughly in each environment
-   - Use identical configurations when possible
+- PR status checks show validation results
+- Merge triggers automatic deployment
+- Comments provide detailed feedback
+
+## 🛠 Troubleshooting
+
+### Common Issues
+
+#### 1. Workspace Creation Failed
+**Symptom**: PR shows workspace creation error
+
+**Solution**: 
+- Verify TFC API token has workspace management permissions
+- Check that organization name is correct
+- Ensure OAuth connection is properly configured
+
+#### 2. Account ID Validation Error
+**Symptom**: "Account ID mismatch" error during apply
+
+**Solution**:
+- Verify the SecurityGroupApplierRole exists in target account
+- Check cross-account trust relationship
+- Ensure TFC has assume-role permissions
+
+#### 3. YAML Validation Fails
+**Symptom**: Schema validation errors in PR
+
+**Solution**:
+- Check YAML syntax using online validator
+- Ensure all required fields are present
+- Verify data types match schema
+
+#### 4. Guardrails Violations
+**Symptom**: Security policy violations block PR
+
+**Solution**:
+- Review guardrails.yaml for specific rules
+- Contact security team for exceptions
+- Modify rules to comply with policies
+
+### Getting Help
+
+1. **Documentation**: Check this guide and `accounts/_example/security-groups.yaml`
+2. **Security Team**: For guardrails exceptions or security questions
+3. **Platform Team**: For technical issues or feature requests
+4. **GitHub Issues**: Report bugs or request features
+
+## 📚 Best Practices
+
+### 1. Security Group Design
+
+- **Least Privilege**: Only allow necessary ports/protocols
+- **Descriptive Names**: Use clear, purposeful naming
+- **Group by Function**: Separate web/app/db tiers
+- **Use References**: Reference other security groups instead of IP ranges
+
+### 2. YAML Organization
+
+- **Comments**: Document complex rules
+- **Consistent Format**: Follow the example structure
+- **Validation**: Test locally before submitting PR
+- **Version Control**: Use meaningful commit messages
+
+### 3. Change Management
+
+- **Small Changes**: Submit focused, single-purpose PRs
+- **Testing**: Verify in lower environments first
+- **Rollback Plan**: Document how to revert if needed
+- **Documentation**: Update descriptions when changing rules
+
+### 4. Baseline Profiles
+
+Use baseline profiles for common patterns:
+- `vpc-endpoints`: For accessing AWS services
+- `eks-standard`: For Kubernetes workloads
+- `internet-ingress`: For load balancer traffic
+
+### 5. Monitoring
+
+- **Regular Reviews**: Audit security groups periodically
+- **Drift Detection**: Monitor TFC for configuration drift
+- **Access Logs**: Review VPC Flow Logs for unusual traffic
+- **Compliance**: Track against organizational policies
+
+## 🔗 Related Resources
+
+- [`accounts/_example/security-groups.yaml`](../accounts/_example/security-groups.yaml) - Complete example
+- [`docs/naming-conventions.md`](naming-conventions.md) - Naming standards
+- [`guardrails.yaml`](../guardrails.yaml) - Security policies
+- [`prefix-lists.yaml`](../prefix-lists.yaml) - Reusable IP ranges
+- [Terraform Cloud Documentation](https://developer.hashicorp.com/terraform/cloud-docs)
 
 ---
 
-## 📚 Additional Resources
-
-- [Naming Conventions](naming-conventions.md)
-- [Example Configurations](examples/)
-- [Troubleshooting Runbook](#troubleshooting)
-- [Security Guidelines](https://wiki.company.com/security)
-- [AWS Security Group Documentation](https://docs.aws.amazon.com/vpc/latest/userguide/VPC_SecurityGroups.html)
-
----
-
-**Need help?** Reach out to the platform team:
-- Slack: `#security-groups`
-- Email: platform-team@company.com
-- On-call: PagerDuty "AWS Platform"
+**Questions?** Contact the platform team or open an issue in this repository.

@@ -1,87 +1,128 @@
 # Terraform Cloud Setup Guide
 
-This guide explains how to set up Terraform Cloud (TFC) workspaces for the AWS Security Group platform after migrating from GitHub Actions.
+This guide explains how to set up Terraform Cloud (TFC) workspaces for the AWS Security Group platform with the new shared terraform directory architecture.
 
 ## 🏗️ Architecture Overview
 
-The platform now uses:
-- **GitHub Actions**: YAML validation, guardrail checks, quota pre-checks, naming conventions
-- **Terraform Cloud**: Terraform plan/apply operations with VCS-driven workspaces
-- **Per-Account Workspaces**: Each AWS account gets its own TFC workspace
+The platform now uses a shared terraform configuration:
+- **All account workspaces** point to the same `terraform/` directory
+- **Account-specific variables** determine which account YAML to read
+- **Auto-created workspaces** for new accounts via GitHub Actions
+- **VCS-driven workflows** for plan and apply operations
 
 ```
 ┌─────────────┐    ┌──────────────────┐    ┌─────────────────────┐
 │   PR/Push   │───▶│ GitHub Actions   │    │ Terraform Cloud     │
-│             │    │ (Validation)     │    │ (Plan/Apply)        │
+│             │    │ • Validation     │    │ • Shared terraform/ │
+│             │    │ • Auto-workspace │    │ • Account variables │
 └─────────────┘    └──────────────────┘    └─────────────────────┘
                             │                        │
                             │                        ▼
                             │              ┌─────────────────────┐
-                            │              │  VCS-Triggered      │
-                            │              │  Speculative Plans  │
-                            │              │  & Auto-Apply       │
+                            │              │  yamldecode(file(   │
+                            │              │  "accounts/${var.   │
+                            │              │  account_id}/..."   │
                             │              └─────────────────────┘
                             │                        │
                             ▼                        ▼
                    ┌─────────────────┐    ┌─────────────────────┐
-                   │  Validation     │    │  AWS Resources      │
-                   │  (Pass/Fail)    │    │  (Security Groups)  │
+                   │  New TFC        │    │  AWS Resources      │
+                   │  Workspaces     │    │  (Security Groups)  │
                    └─────────────────┘    └─────────────────────┘
 ```
 
-## 📋 Workspace Naming Convention
+## 📋 Workspace Structure
 
-- **Baseline workspace**: `sg-platform-baseline`
+### Workspace Naming Convention
+
 - **Account workspaces**: `sg-platform-<ACCOUNT_ID>`
 
 Examples:
-- `sg-platform-baseline`
 - `sg-platform-123456789012`
 - `sg-platform-987654321098`
+
+### Shared Configuration
+
+All workspaces use the same configuration files in `terraform/`:
+
+| File | Purpose |
+|------|---------|
+| `main.tf` | Calls account module with dynamic YAML path |
+| `backend.tf` | Generic TFC cloud backend |
+| `providers.tf` | AWS provider with account-specific assume role |
+| `variables.tf` | `account_id` and `aws_region` variables |
 
 ## 🔧 Workspace Configuration
 
 ### VCS Trigger Paths
 
-Each workspace should be configured with the following VCS trigger paths:
+Each account workspace monitors these paths for changes:
 
-| Workspace Type | Trigger Path | Example |
-|---------------|-------------|---------|
-| Baseline | `baseline/` | All changes to baseline profiles |
-| Account-specific | `accounts/<ACCOUNT_ID>/` | `accounts/123456789012/` |
+| Path | Purpose |
+|------|---------|
+| `accounts/<ACCOUNT_ID>/` | Account-specific YAML changes |
+| `terraform/` | Shared terraform configuration |
+| `modules/` | Module updates |
+| `baseline/` | Baseline profile changes |
 
-### Recommended Workspace Settings
+### Required Variables
 
-```yaml
-# Per workspace configuration
-Auto Apply: true                    # Apply after merge to main
-Speculative Plans: true            # Plan on PRs
-Working Directory: "baseline/"     # For baseline workspace
-Working Directory: ""              # For account workspaces (root)
-```
+Each workspace needs these Terraform variables:
 
-## 🔐 OIDC/Dynamic Credentials Setup
+| Variable | Value | Example |
+|----------|-------|---------|
+| `account_id` | Target AWS account ID | `"123456789012"` |
+| `aws_region` | AWS region | `"us-east-1"` |
 
-### Prerequisites
+### Environment Variables
 
-1. **AWS IAM Identity Provider** configured in each target account
-2. **IAM Role** for Terraform Cloud with appropriate permissions
-3. **TFC Variables** configured for AWS authentication
+For AWS authentication, each workspace needs:
 
-### Step 1: Configure AWS IAM OIDC Provider
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `TFC_AWS_PROVIDER_AUTH` | `true` | Enable AWS provider auth |
+| `TFC_AWS_RUN_ROLE_ARN` | `arn:aws:iam::ACCOUNT_ID:role/SecurityGroupApplierRole` | Cross-account role |
 
-In each AWS account, create an OIDC identity provider:
+## 🚀 Automated Setup
+
+### GitHub Actions Auto-Creation
+
+New workspaces are automatically created when:
+
+1. A PR adds a new directory `accounts/123456789012/`
+2. The directory contains `security-groups.yaml`
+3. The account ID hasn't been seen before
+
+The GitHub Actions workflow will:
+- Create the TFC workspace
+- Set the working directory to `terraform/`
+- Configure VCS trigger paths
+- Set the `account_id` variable
+- Enable auto-apply
+
+### Manual Setup Script
+
+For bulk setup or initial configuration, use:
 
 ```bash
-aws iam create-open-id-connect-provider \
-  --url https://app.terraform.io \
-  --client-id-list aws.workload.identity \
-  --thumbprint-list 9e99a48a9960b14926bb7f3b02e22da2b0ab7280
+./scripts/setup-tfc-workspaces.sh \
+  --org "your-tfc-org" \
+  --token "$TFC_TOKEN" \
+  --repo "your-org/aws-security-groups" \
+  --oauth-token "ot-xxxxxxxxx"
 ```
 
-### Step 2: Create IAM Role
+## 📝 Prerequisites
 
-Create an IAM role that TFC can assume:
+### 1. Terraform Cloud Organization
+
+- TFC organization created
+- API token with workspace management permissions
+- VCS connection to GitHub repository
+
+### 2. AWS IAM Roles
+
+Each AWS account needs a cross-account role for TFC:
 
 ```json
 {
@@ -90,15 +131,12 @@ Create an IAM role that TFC can assume:
     {
       "Effect": "Allow",
       "Principal": {
-        "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/app.terraform.io"
+        "AWS": "arn:aws:iam::TERRAFORM_CLOUD_ACCOUNT:root"
       },
-      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Action": "sts:AssumeRole",
       "Condition": {
         "StringEquals": {
-          "app.terraform.io:aud": "aws.workload.identity"
-        },
-        "StringLike": {
-          "app.terraform.io:sub": "organization:YOUR_ORG_NAME:project:*:workspace:sg-platform-*:run_phase:*"
+          "aws:ExternalId": "your-workspace-external-id"
         }
       }
     }
@@ -106,150 +144,156 @@ Create an IAM role that TFC can assume:
 }
 ```
 
-Attach the following policy (customize as needed):
+Role name: `SecurityGroupApplierRole`
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ec2:*SecurityGroup*",
-        "ec2:DescribeVpcs",
-        "ec2:DescribeSubnets",
-        "ec2:DescribePrefixLists",
-        "ec2:CreateTags",
-        "ec2:DeleteTags",
-        "ec2:DescribeTags"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
+### 3. GitHub Secrets/Variables
+
+Required in repository settings:
+
+| Type | Name | Purpose |
+|------|------|---------|
+| Secret | `TFC_API_TOKEN` | TFC API access for workspace creation |
+| Variable | `TFC_ORGANIZATION` | Your TFC organization name |
+| Variable | `TFC_OAUTH_TOKEN_ID` | OAuth token ID for VCS connection |
+
+## 🔍 Workspace Settings
+
+### Working Directory
+All account workspaces use `terraform/` as the working directory.
+
+### Auto-Apply
+Enabled by default - plans are automatically applied after approval.
+
+### Speculative Plans
+Enabled - shows plan results on PRs before merge.
+
+### VCS Integration
+- Branch: `main`
+- Trigger on: Push to monitored paths
+- Include submodules: `false`
+
+## 🎯 Per-Account Variables
+
+Each workspace gets account-specific configuration:
+
+```hcl
+# Terraform Variables
+account_id = "123456789012"
+aws_region = "us-east-1"
+
+# Environment Variables
+TFC_AWS_PROVIDER_AUTH = "true"
+TFC_AWS_RUN_ROLE_ARN = "arn:aws:iam::123456789012:role/SecurityGroupApplierRole"
+AWS_DEFAULT_REGION = "us-east-1"
 ```
 
-### Step 3: Configure TFC Workspace Variables
+## 🔄 Workflow Process
 
-In each TFC workspace, set the following environment variables:
+### For New Accounts
 
-| Variable Name | Type | Sensitive | Value |
-|--------------|------|-----------|--------|
-| `TFC_AWS_PROVIDER_AUTH` | Environment | No | `true` |
-| `TFC_AWS_RUN_ROLE_ARN` | Environment | No | `arn:aws:iam::ACCOUNT_ID:role/TerraformCloudRole` |
-| `AWS_DEFAULT_REGION` | Environment | No | `us-east-1` (or your preferred region) |
+1. Team creates `accounts/123456789012/security-groups.yaml`
+2. Opens Pull Request
+3. GitHub Actions:
+   - Creates TFC workspace automatically
+   - Configures workspace settings
+   - Sets account_id variable
+4. Validation runs (YAML, guardrails, quotas)
+5. Security team reviews and approves
+6. PR merges
+7. TFC detects change and runs plan/apply
 
-## 🏠 Workspace Variables
+### For Existing Accounts
 
-### Required Variables (All Workspaces)
+1. Team updates `accounts/123456789012/security-groups.yaml`
+2. Opens Pull Request
+3. Validation runs
+4. TFC shows speculative plan on PR
+5. Security team reviews
+6. PR merges
+7. TFC auto-applies changes
 
-| Variable | Type | Description | Example |
-|----------|------|-------------|---------|
-| `AWS_DEFAULT_REGION` | Environment | AWS region | `us-east-1` |
-| `TFC_AWS_PROVIDER_AUTH` | Environment | Enable AWS dynamic credentials | `true` |
-| `TFC_AWS_RUN_ROLE_ARN` | Environment | IAM role ARN | `arn:aws:iam::123456789012:role/TerraformCloudRole` |
+## 🛡️ Security Considerations
 
-### Account-Specific Variables
+### Cross-Account Roles
+- Use least privilege permissions
+- Limit to security group management only
+- Enable CloudTrail logging
+- Regular access reviews
 
-For account workspaces, also set:
+### API Tokens
+- Store securely in GitHub Secrets
+- Use workspace-scoped tokens where possible
+- Rotate regularly
+- Monitor for unusual activity
 
-| Variable | Type | Description | Example |
-|----------|------|-------------|---------|
-| `account_id` | Terraform | AWS Account ID | `123456789012` |
+### VCS Integration
+- Limit branch access to `main`
+- Require PR reviews
+- Use branch protection rules
+- Enable signed commits
 
-### Baseline Variables
+## 🚨 Troubleshooting
 
-For the baseline workspace:
+### Workspace Creation Fails
 
-| Variable | Type | Description | Example |
-|----------|------|-------------|---------|
-| `account_id` | Terraform | Target account ID | Set per run or use default |
+**Symptoms:**
+- GitHub Actions shows workspace creation error
+- New account PRs fail validation
 
-## 🚀 Workspace Setup Helper
+**Solutions:**
+1. Verify TFC API token permissions
+2. Check TFC organization name in variables
+3. Confirm OAuth token ID is correct
+4. Ensure repository VCS connection is active
 
-Use the included helper script to create workspaces in bulk:
+### Apply Failures
 
-```bash
-# Make the script executable
-chmod +x scripts/setup-tfc-workspaces.sh
+**Symptoms:**
+- TFC workspace shows apply errors
+- AWS authentication failures
 
-# Run the setup (interactive)
-./scripts/setup-tfc-workspaces.sh
+**Solutions:**
+1. Verify SecurityGroupApplierRole exists in target account
+2. Check role trust relationship
+3. Confirm TFC run role ARN is correct
+4. Test assume-role manually with AWS CLI
 
-# Or provide parameters directly
-./scripts/setup-tfc-workspaces.sh \
-  --org "my-tfc-org" \
-  --token "$TFC_TOKEN" \
-  --repo-identifier "my-org/aws-security-groups" \
-  --oauth-token-id "ot-abc123"
-```
+### Variable Configuration Issues
 
-## 🔄 Migration Workflow
+**Symptoms:**
+- Wrong account targeted
+- Region mismatches
 
-1. **Create TFC Organization** (if not exists)
-2. **Connect GitHub Repository** to TFC
-3. **Run workspace setup script** to create all workspaces
-4. **Configure OIDC** in each AWS account
-5. **Set workspace variables** for AWS authentication
-6. **Test with a small change** to verify everything works
+**Solutions:**
+1. Check `account_id` variable in workspace
+2. Verify `aws_region` setting
+3. Ensure variables are set as Terraform (not Environment) type
 
-## 🔍 Workspace Settings Deep Dive
+## 📊 Monitoring
 
-### Auto Apply Settings
+### Workspace Health
+- Monitor workspace run success rates
+- Set up notifications for failures
+- Regular drift detection runs
 
-| Setting | Recommended Value | Reason |
-|---------|------------------|---------|
-| Auto Apply | `true` | Automatic deployment after merge |
-| Auto Apply on pull requests | `false` | Only speculative plans on PRs |
+### Cost Tracking
+- Tag workspaces by team/environment
+- Monitor TFC usage costs
+- Track AWS resource costs per account
 
-### Execution Settings
+### Access Auditing
+- Review workspace access permissions
+- Monitor API token usage
+- Track cross-account role assumptions
 
-| Setting | Recommended Value | Reason |
-|---------|------------------|---------|
-| Execution Mode | Remote | Use TFC's infrastructure |
-| Terraform Version | Latest compatible | Usually `~> 1.6` |
-
-### VCS Settings
-
-| Setting | Value | Notes |
-|---------|-------|-------|
-| VCS Provider | GitHub | Connected to your GitHub repo |
-| Repository | `org/aws-security-groups` | Your repo identifier |
-| Branch | `main` | Primary branch for deployments |
-
-## 🛠️ Troubleshooting
-
-### Common Issues
-
-1. **Authentication Failures**
-   - Verify OIDC provider thumbprint: `9e99a48a9960b14926bb7f3b02e22da2b0ab7280`
-   - Check IAM role trust policy conditions
-   - Ensure workspace has correct `TFC_AWS_RUN_ROLE_ARN`
-
-2. **Permission Denied**
-   - Review IAM role permissions
-   - Check if account ID in role ARN matches workspace
-
-3. **VCS Trigger Not Working**
-   - Verify working directory setting
-   - Check VCS trigger paths configuration
-   - Ensure OAuth token has repository access
-
-4. **State Lock Issues**
-   - TFC handles state locking automatically
-   - No DynamoDB table needed
-   - Clear any manual locks in TFC UI
-
-### Debug Steps
-
-1. **Check Workspace Logs** in TFC UI
-2. **Verify Variables** are set correctly
-3. **Test AWS Credentials** with a simple plan
-4. **Review VCS Configuration** and trigger paths
-
-## 📚 Additional Resources
+## 🔗 Related Resources
 
 - [Terraform Cloud Documentation](https://developer.hashicorp.com/terraform/cloud-docs)
-- [AWS Provider Dynamic Credentials](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#authentication-and-configuration)
-- [VCS-driven Workflow](https://developer.hashicorp.com/terraform/cloud-docs/vcs)
-- [Workspace Variables](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/variables)
+- [AWS IAM Cross-Account Roles](https://docs.aws.amazon.com/IAM/latest/UserGuide/tutorial_cross-account-with-roles.html)
+- [GitHub Actions with TFC](https://developer.hashicorp.com/terraform/cloud-docs/vcs/github-actions)
+- [Team Guide](team-guide.md) - For end users
+- [Setup Script](../scripts/setup-tfc-workspaces.sh) - Automated setup
+
+---
+
+**Questions?** Contact the platform team or open an issue in this repository.
