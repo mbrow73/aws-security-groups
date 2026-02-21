@@ -1111,77 +1111,78 @@ class SecurityGroupValidator:
         output.append(f"**Account:** {self.account_id} | **Errors:** {error_count} | **Warnings:** {warning_count}")
         output.append("")
         
-        # Group results by security group
+        # Categorize results: tags, schema/global, and per-SG rule issues
+        tag_results = {'errors': [], 'warnings': []}
+        schema_results = {'errors': [], 'warnings': []}
         sg_results = {}
         
-        # Process all results
+        # Tag and schema rule names
+        TAG_RULES = {'sg_required_tags'}
+        SCHEMA_RULES = {'schema_unknown_key', 'schema_unknown_sg_key', 'schema_unknown_rule_key',
+                       'schema_required_fields', 'schema_type', 'schema_invalid_environment',
+                       'schema_environment_type', 'file_exists', 'yaml_syntax', 'yaml_content'}
+        
         for result in summary.errors + summary.warnings:
-            if result.context and 'security_group.' in result.context:
+            bucket = 'errors' if result.level == 'error' else 'warnings'
+            
+            if result.rule in TAG_RULES:
+                tag_results[bucket].append(result)
+            elif result.rule in SCHEMA_RULES or (not result.context or 'security_group.' not in result.context):
+                schema_results[bucket].append(result)
+            else:
                 sg_name = result.context.split('.')[1]
                 if sg_name not in sg_results:
                     sg_results[sg_name] = {'errors': [], 'warnings': []}
-                
-                if result.level == 'error':
-                    sg_results[sg_name]['errors'].append(result)
-                else:
-                    sg_results[sg_name]['warnings'].append(result)
-            else:
-                # Global errors (not specific to a security group)
-                if 'global' not in sg_results:
-                    sg_results['global'] = {'errors': [], 'warnings': []}
-                
-                if result.level == 'error':
-                    sg_results['global']['errors'].append(result)
-                else:
-                    sg_results['global']['warnings'].append(result)
+                sg_results[sg_name][bucket].append(result)
         
-        # Generate sections for each security group
-        for sg_name, results in sg_results.items():
-            sg_error_count = len(results['errors'])
-            sg_warning_count = len(results['warnings'])
-            
-            if sg_error_count == 0 and sg_warning_count == 0:
-                continue
-            
-            # Determine emoji and title
-            if sg_name == 'global':
-                emoji = "⚙️"
-                title = f"{emoji} Configuration Issues — {sg_error_count} errors, {sg_warning_count} warnings"
-            elif sg_error_count > 0:
-                emoji = "❌"
-                title = f"{emoji} {sg_name} — {sg_error_count} errors, {sg_warning_count} warnings"
-            else:
-                emoji = "⚠️"
-                title = f"{emoji} {sg_name} — {sg_warning_count} warnings"
-            
-            output.append(f"<details>")
+        # Helper to render a dropdown section
+        def _render_section(title, results):
+            sec_errors = len(results['errors'])
+            sec_warnings = len(results['warnings'])
+            if sec_errors == 0 and sec_warnings == 0:
+                return
+            output.append("<details>")
             output.append(f"<summary>{title}</summary>")
             output.append("")
-            
-            # Add errors
             if results['errors']:
                 output.append("### Errors")
                 for error in results['errors']:
-                    # Clean up the message - remove existing emoji if present
                     message = error.message
                     if message.startswith('❌'):
                         message = message[1:].strip()
                     output.append(f"- ❌ {message}")
                 output.append("")
-            
-            # Add warnings
             if results['warnings']:
-                output.append("### Warnings")  
+                output.append("### Warnings")
                 for warning in results['warnings']:
-                    # Clean up the message - remove existing emoji if present
                     message = warning.message
                     if message.startswith('⚠️'):
                         message = message[2:].strip()
                     output.append(f"- ⚠️ {message}")
                 output.append("")
-            
             output.append("</details>")
             output.append("")
+        
+        # 1. Schema/config issues
+        s_e = len(schema_results['errors'])
+        s_w = len(schema_results['warnings'])
+        if s_e or s_w:
+            _render_section(f"⚙️ Configuration Issues — {s_e} errors, {s_w} warnings", schema_results)
+        
+        # 2. Tag compliance
+        t_e = len(tag_results['errors'])
+        t_w = len(tag_results['warnings'])
+        if t_e or t_w:
+            _render_section(f"🏷️ Tag Compliance — {t_e} errors, {t_w} warnings", tag_results)
+        
+        # 3. Per-SG rule issues
+        for sg_name, results in sg_results.items():
+            sg_e = len(results['errors'])
+            sg_w = len(results['warnings'])
+            if sg_e == 0 and sg_w == 0:
+                continue
+            emoji = "❌" if sg_e > 0 else "⚠️"
+            _render_section(f"{emoji} {sg_name} — {sg_e} errors, {sg_w} warnings", results)
         
         return "\n".join(output)
 
