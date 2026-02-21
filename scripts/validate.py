@@ -975,11 +975,21 @@ Examples:
         help='Treat warnings as errors'
     )
     
+    parser.add_argument(
+        '--no-warnings',
+        action='store_true',
+        help='Suppress warning output (only show errors)'
+    )
+    
     args = parser.parse_args()
     
     try:
         validator = SecurityGroupValidator(args.account_dir)
         summary = validator.validate()
+        
+        # Suppress warnings if requested
+        if args.no_warnings:
+            summary.warnings = []
         
         # Adjust exit code if warnings should be treated as errors
         if args.warnings_as_errors and summary.has_warnings and not summary.has_errors:
