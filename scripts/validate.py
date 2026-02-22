@@ -299,8 +299,23 @@ class SecurityGroupValidator:
         
         # Profile dependency checks
         PROFILE_DEPENDENCIES = {
-            'eks-standard': ['vpc-endpoints'],  # eks-standard requires vpc-endpoints for SG chaining
+            'eks-standard': ['vpc-endpoints'],
+            'eks-internet': ['vpc-endpoints'],
         }
+        
+        # Mutually exclusive profiles
+        MUTUALLY_EXCLUSIVE = [
+            {'eks-standard', 'eks-internet'},  # pick one EKS profile, not both
+        ]
+        
+        for exclusive_set in MUTUALLY_EXCLUSIVE:
+            conflicts = exclusive_set.intersection(set(baseline_profiles))
+            if len(conflicts) > 1:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ Profiles {', '.join(sorted(conflicts))} cannot be used together — pick one EKS profile per account.\n   → Use 'eks-standard' for intranet-only clusters, 'eks-internet' for internet-facing clusters.",
+                    rule='baseline_profile_conflict'
+                ))
         
         for profile in baseline_profiles:
             if profile in PROFILE_DEPENDENCIES:
