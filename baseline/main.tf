@@ -62,6 +62,7 @@ locals {
 #
 
 # VPC Endpoints Profile
+# Auto-enabled when eks-standard is selected (SG chaining dependency)
 module "vpc_endpoints" {
   count  = local.enable_vpc_endpoints ? 1 : 0
   source = "./profiles/vpc-endpoints"
@@ -70,8 +71,6 @@ module "vpc_endpoints" {
   vpc_cidr    = local.vpc_cidr
   account_id  = var.account_id
   common_tags = local.common_tags
-
-  additional_vpc_endpoint_ports = var.additional_vpc_endpoint_ports
 }
 
 # Internet Ingress Profile (WAF → NLB)
