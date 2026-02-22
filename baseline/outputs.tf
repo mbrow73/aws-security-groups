@@ -51,18 +51,23 @@ output "waf_to_nlb_security_group_name" {
 
 # EKS Standard Profile Outputs
 output "eks_cluster_security_group_id" {
-  description = "ID of the EKS cluster baseline security group (if enabled)"
+  description = "ID of the EKS cluster control plane security group (if enabled)"
   value       = length(module.eks_standard) > 0 ? module.eks_standard[0].eks_cluster_security_group_id : null
 }
 
-output "eks_cluster_security_group_arn" {
-  description = "ARN of the EKS cluster baseline security group (if enabled)"
-  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].eks_cluster_security_group_arn : null
+output "eks_workers_security_group_id" {
+  description = "ID of the EKS worker nodes security group (if enabled)"
+  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].eks_workers_security_group_id : null
 }
 
-output "eks_cluster_security_group_name" {
-  description = "Name of the EKS cluster baseline security group (if enabled)"
-  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].eks_cluster_security_group_name : null
+output "istio_nodes_security_group_id" {
+  description = "ID of the istio dedicated gateway nodes security group (if enabled)"
+  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].istio_nodes_security_group_id : null
+}
+
+output "intranet_nlb_security_group_id" {
+  description = "ID of the intranet NLB security group (if enabled)"
+  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].intranet_nlb_security_group_id : null
 }
 
 # Prefix Lists (still global)

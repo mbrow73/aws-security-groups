@@ -24,9 +24,10 @@ locals {
   enabled_profiles = toset(var.baseline_profiles)
 
   # Check if specific profiles are enabled
-  enable_vpc_endpoints   = contains(local.enabled_profiles, "vpc-endpoints")
+  # eks-standard implicitly requires vpc-endpoints — auto-enable it
+  enable_vpc_endpoints    = contains(local.enabled_profiles, "vpc-endpoints") || contains(local.enabled_profiles, "eks-standard")
   enable_internet_ingress = contains(local.enabled_profiles, "internet-ingress")
-  enable_eks_standard    = contains(local.enabled_profiles, "eks-standard")
+  enable_eks_standard     = contains(local.enabled_profiles, "eks-standard")
 }
 
 # Data source to get VPC information if not provided
@@ -86,13 +87,13 @@ module "internet_ingress" {
 }
 
 # EKS Standard Profile
+# Depends on vpc-endpoints for SG chaining (auto-enabled above)
 module "eks_standard" {
   count  = local.enable_eks_standard ? 1 : 0
   source = "./profiles/eks-standard"
 
-  vpc_id      = local.vpc_id
-  account_id  = var.account_id
-  common_tags = local.common_tags
-
-  eks_cluster_name = var.eks_cluster_name
+  vpc_id              = local.vpc_id
+  vpc_endpoints_sg_id = module.vpc_endpoints[0].vpc_endpoints_security_group_id
+  account_id          = var.account_id
+  common_tags         = local.common_tags
 }

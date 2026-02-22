@@ -297,11 +297,32 @@ class SecurityGroupValidator:
                 rule='baseline_profile_duplicates'
             ))
         
+        # Profile dependency checks
+        PROFILE_DEPENDENCIES = {
+            'eks-standard': ['vpc-endpoints'],  # eks-standard requires vpc-endpoints for SG chaining
+        }
+        
+        for profile in baseline_profiles:
+            if profile in PROFILE_DEPENDENCIES:
+                for dep in PROFILE_DEPENDENCIES[profile]:
+                    if dep not in baseline_profiles:
+                        summary.add_result(ValidationResult(
+                            level='info',
+                            message=f"ℹ️ Profile '{profile}' requires '{dep}' — it will be auto-deployed by the platform.",
+                            rule='baseline_profile_dependency'
+                        ))
+        
         # Informational message about what's being deployed
         if baseline_profiles:
+            # Show what will actually deploy (including auto-deps)
+            effective_profiles = set(baseline_profiles)
+            for profile in baseline_profiles:
+                if profile in PROFILE_DEPENDENCIES:
+                    effective_profiles.update(PROFILE_DEPENDENCIES[profile])
+            
             summary.add_result(ValidationResult(
                 level='info',
-                message=f"Will deploy baseline profiles: {', '.join(baseline_profiles)}",
+                message=f"Will deploy baseline profiles: {', '.join(sorted(effective_profiles))}",
                 rule='baseline_profiles_info'
             ))
     
