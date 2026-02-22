@@ -1,7 +1,12 @@
-# AWS Security Group Platform - EKS Standard Profile Variables
+# EKS Standard Profile Variables
 
 variable "vpc_id" {
   description = "VPC ID where security groups will be created"
+  type        = string
+}
+
+variable "vpc_endpoints_sg_id" {
+  description = "Security group ID of the VPC endpoints SG (from vpc-endpoints baseline profile)"
   type        = string
 }
 
@@ -14,10 +19,4 @@ variable "common_tags" {
   description = "Common tags to apply to all resources"
   type        = map(string)
   default     = {}
-}
-
-variable "eks_cluster_name" {
-  description = "Name of the EKS cluster (optional, used for tagging)"
-  type        = string
-  default     = ""
 }

@@ -23,46 +23,56 @@ output "vpc_endpoints_security_group_id" {
   value       = length(module.vpc_endpoints) > 0 ? module.vpc_endpoints[0].vpc_endpoints_security_group_id : null
 }
 
-output "vpc_endpoints_security_group_arn" {
-  description = "ARN of the VPC endpoints security group (if enabled)"
-  value       = length(module.vpc_endpoints) > 0 ? module.vpc_endpoints[0].vpc_endpoints_security_group_arn : null
+# EKS Internet Profile Outputs
+output "inet_eks_cluster_security_group_id" {
+  description = "ID of the EKS cluster control plane SG (eks-internet, if enabled)"
+  value       = length(module.eks_internet) > 0 ? module.eks_internet[0].eks_cluster_security_group_id : null
 }
 
-output "vpc_endpoints_security_group_name" {
-  description = "Name of the VPC endpoints security group (if enabled)"
-  value       = length(module.vpc_endpoints) > 0 ? module.vpc_endpoints[0].vpc_endpoints_security_group_name : null
+output "inet_eks_workers_security_group_id" {
+  description = "ID of the EKS worker nodes SG (eks-internet, if enabled)"
+  value       = length(module.eks_internet) > 0 ? module.eks_internet[0].eks_workers_security_group_id : null
 }
 
-# Internet Ingress Profile Outputs
-output "waf_to_nlb_security_group_id" {
-  description = "ID of the WAF to NLB security group (if enabled)"
-  value       = length(module.internet_ingress) > 0 ? module.internet_ingress[0].waf_to_nlb_security_group_id : null
+output "inet_istio_intranet_nodes_security_group_id" {
+  description = "ID of the intranet istio nodes SG (eks-internet, if enabled)"
+  value       = length(module.eks_internet) > 0 ? module.eks_internet[0].istio_intranet_nodes_security_group_id : null
 }
 
-output "waf_to_nlb_security_group_arn" {
-  description = "ARN of the WAF to NLB security group (if enabled)"
-  value       = length(module.internet_ingress) > 0 ? module.internet_ingress[0].waf_to_nlb_security_group_arn : null
+output "inet_intranet_nlb_security_group_id" {
+  description = "ID of the intranet NLB SG (eks-internet, if enabled)"
+  value       = length(module.eks_internet) > 0 ? module.eks_internet[0].intranet_nlb_security_group_id : null
 }
 
-output "waf_to_nlb_security_group_name" {
-  description = "Name of the WAF to NLB security group (if enabled)"
-  value       = length(module.internet_ingress) > 0 ? module.internet_ingress[0].waf_to_nlb_security_group_name : null
+output "inet_istio_inet_nodes_security_group_id" {
+  description = "ID of the internet istio nodes SG (eks-internet, if enabled)"
+  value       = length(module.eks_internet) > 0 ? module.eks_internet[0].istio_inet_nodes_security_group_id : null
+}
+
+output "inet_internet_nlb_security_group_id" {
+  description = "ID of the internet NLB SG (eks-internet, if enabled)"
+  value       = length(module.eks_internet) > 0 ? module.eks_internet[0].internet_nlb_security_group_id : null
 }
 
 # EKS Standard Profile Outputs
 output "eks_cluster_security_group_id" {
-  description = "ID of the EKS cluster baseline security group (if enabled)"
+  description = "ID of the EKS cluster control plane security group (if enabled)"
   value       = length(module.eks_standard) > 0 ? module.eks_standard[0].eks_cluster_security_group_id : null
 }
 
-output "eks_cluster_security_group_arn" {
-  description = "ARN of the EKS cluster baseline security group (if enabled)"
-  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].eks_cluster_security_group_arn : null
+output "eks_workers_security_group_id" {
+  description = "ID of the EKS worker nodes security group (if enabled)"
+  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].eks_workers_security_group_id : null
 }
 
-output "eks_cluster_security_group_name" {
-  description = "Name of the EKS cluster baseline security group (if enabled)"
-  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].eks_cluster_security_group_name : null
+output "istio_nodes_security_group_id" {
+  description = "ID of the istio dedicated gateway nodes security group (if enabled)"
+  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].istio_nodes_security_group_id : null
+}
+
+output "intranet_nlb_security_group_id" {
+  description = "ID of the intranet NLB security group (if enabled)"
+  value       = length(module.eks_standard) > 0 ? module.eks_standard[0].intranet_nlb_security_group_id : null
 }
 
 # Prefix Lists (still global)

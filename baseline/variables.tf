@@ -60,9 +60,9 @@ variable "baseline_profiles" {
   validation {
     condition = alltrue([
       for profile in var.baseline_profiles : 
-      contains(["vpc-endpoints", "internet-ingress", "eks-standard"], profile)
+      contains(["vpc-endpoints", "eks-standard", "eks-internet"], profile)
     ])
-    error_message = "All baseline profiles must be one of: vpc-endpoints, internet-ingress, eks-standard."
+    error_message = "All baseline profiles must be one of: vpc-endpoints, eks-standard, eks-internet."
   }
 }
 

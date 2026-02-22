@@ -1,16 +1,21 @@
-# AWS Security Group Platform - EKS Standard Profile Outputs
+# EKS Standard Profile Outputs
 
 output "eks_cluster_security_group_id" {
-  description = "ID of the EKS cluster baseline security group"
-  value       = aws_security_group.eks_cluster_baseline.id
+  description = "ID of the EKS cluster control plane security group"
+  value       = aws_security_group.eks_cluster.id
 }
 
-output "eks_cluster_security_group_arn" {
-  description = "ARN of the EKS cluster baseline security group"
-  value       = aws_security_group.eks_cluster_baseline.arn
+output "eks_workers_security_group_id" {
+  description = "ID of the EKS worker nodes security group"
+  value       = aws_security_group.eks_workers.id
 }
 
-output "eks_cluster_security_group_name" {
-  description = "Name of the EKS cluster baseline security group"
-  value       = aws_security_group.eks_cluster_baseline.name
+output "istio_nodes_security_group_id" {
+  description = "ID of the istio dedicated gateway nodes security group"
+  value       = aws_security_group.istio_nodes.id
+}
+
+output "intranet_nlb_security_group_id" {
+  description = "ID of the intranet NLB security group"
+  value       = aws_security_group.intranet_nlb.id
 }

@@ -1,12 +1,12 @@
-# VPC Endpoints Profile Variables
+# EKS Internet Profile Variables
 
 variable "vpc_id" {
-  description = "VPC ID where the security group will be created"
+  description = "VPC ID where security groups will be created"
   type        = string
 }
 
-variable "vpc_cidr" {
-  description = "VPC CIDR block for ingress rules"
+variable "vpc_endpoints_sg_id" {
+  description = "Security group ID of the VPC endpoints SG (from vpc-endpoints baseline profile)"
   type        = string
 }
 
