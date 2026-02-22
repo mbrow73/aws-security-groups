@@ -2,7 +2,6 @@ account_id: "999888777666"
 environment: "production"
 baseline_profiles:
   - eks-standard
-  - vpc-endpoints
 
 security_groups:
   eks-nodes-api:

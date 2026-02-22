@@ -1,514 +1,67 @@
 # AWS Security Group Platform - Example Configuration
-# This is a comprehensive example showing all features and best practices
-# Copy this to your account directory (accounts/123456789012/) and customize
+# Copy to accounts/<your-account-id>/security-groups.yaml
 
-# Required: Your 12-digit AWS Account ID
 account_id: "123456789012"
+environment: "production"  # prod | test | dev
 
-# Optional: Environment designation (used for tagging and guardrail enforcement)
-environment: "production"
-
-# Optional: VPC configuration for deployment
-vpc:
-  # Set to "auto" for automatic VPC discovery (default)
-  # Set to specific VPC ID if you have multiple VPCs and want to target one
-  vpc_id: "auto"
-  
-  # Optional: Tags to filter VPCs during auto-discovery
-  filter_tags:
-    Environment: "production"
-    ManagedBy: "terraform"
-  
-  # Optional: VPC requirements for validation
-  require_internet_access: true
-  require_private_subnets: true
-  require_public_subnets: false
-  min_availability_zones: 2
-
-# Optional: Global tags applied to all security groups
-tags:
-  Team: "platform"
-  CostCenter: "engineering"
-  Project: "aws-migration"
-
-# Optional: Baseline security group profiles to deploy
-# These are common security groups that provide standard patterns across the organization
+# Baseline profiles (optional) — pre-built zero-trust SG sets
+# eks-standard:  Intranet-only EKS (auto-deploys vpc-endpoints)
+# eks-internet:  Internet + intranet EKS (auto-deploys vpc-endpoints)
+# vpc-endpoints: Standalone VPC endpoint access
+# Note: eks-standard and eks-internet are mutually exclusive
 baseline_profiles:
-  - vpc-endpoints      # Enables secure access to VPC endpoints (S3, ECR, EKS API, etc.)
-  - internet-ingress   # Enables WAF/CDN providers to reach Network Load Balancers
-  - eks-standard       # Provides baseline security for EKS cluster communication
-  
-# Available baseline profiles:
-# - vpc-endpoints: Security group for VPC endpoint access (HTTPS/HTTP to AWS services)
-# - internet-ingress: Security group for WAF/CDN → NLB traffic (Cloudflare, Fastly, etc.)
-# - eks-standard: Security group for EKS cluster API and node communication
-#
-# Note: Teams can reference these baseline security groups in their custom rules
-# Example: security_groups: ["baseline-vpc-endpoints", "my-custom-sg"]
+  - eks-standard
 
-# Security Groups Configuration
+# Custom security groups
 security_groups:
 
-  # Example 1: Standard EKS Node Group Security Group
-  # This shows common patterns for EKS worker nodes
-  eks-nodes-production:
-    description: "Security group for EKS worker nodes in production"
-    
-    # Required tags (Team, Environment, Application, ManagedBy are enforced)
-    tags:
-      Team: "platform"
-      Environment: "production"
-      Application: "kubernetes"
-      Purpose: "eks-nodes"
-      
-    # Ingress rules (inbound traffic)
-    ingress:
-      # Allow communication between EKS nodes (cluster internal communication)
-      - protocol: "tcp"
-        from_port: 0
-        to_port: 65535
-        self: true  # Allow communication within the same security group
-        description: "Inter-node communication"
-      
-      # Allow kubelet API from control plane
-      - protocol: "tcp"
-        from_port: 10250
-        to_port: 10250
-        security_groups: ["sg-0123456789abcdef0"]  # EKS control plane SG
-        description: "Kubelet API from control plane"
-      
-      # Allow NodePort services from ALB subnets
-      - protocol: "tcp"
-        from_port: 30000
-        to_port: 32767
-        prefix_list_ids: ["alb-subnets"]  # Reference to prefix list
-        description: "NodePort services from ALB"
-      
-      # SSH access from bastion (warning will be generated)
-      - protocol: "tcp"
-        from_port: 22
-        to_port: 22
-        security_groups: ["sg-bastion123456789"]
-        description: "SSH access from bastion host"
-    
-    # Egress rules (outbound traffic) - if not specified, default allows all
-    egress:
-      # HTTPS for pulling container images
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "HTTPS outbound for container images"
-      
-      # DNS resolution
-      - protocol: "tcp"
-        from_port: 53
-        to_port: 53
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "DNS TCP"
-      
-      - protocol: "udp"
-        from_port: 53
-        to_port: 53
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "DNS UDP"
-      
-      # NTP for time synchronization
-      - protocol: "udp"
-        from_port: 123
-        to_port: 123
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "NTP time synchronization"
-
-  # Example 2: Network Load Balancer with WAF Protection
-  # Shows prefix list usage for WAF provider IPs
-  nlb-production-api:
-    description: "Network Load Balancer for production API with WAF protection"
-    
-    tags:
-      Team: "backend"
-      Environment: "production"
-      Application: "api-gateway"
-      LoadBalancerType: "network"
-      
-    ingress:
-      # HTTPS from WAF providers (Cloudflare, Fastly)
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        prefix_list_ids: ["waf-saas-providers"]
-        description: "HTTPS from WAF providers"
-      
-      # HTTP redirect from WAF providers
-      - protocol: "tcp"
-        from_port: 80
-        to_port: 80
-        prefix_list_ids: ["waf-saas-providers"]
-        description: "HTTP redirect from WAF providers"
-      
-      # Health checks from ALB in same VPC
-      - protocol: "tcp"
-        from_port: 8080
-        to_port: 8080
-        prefix_list_ids: ["alb-subnets"]
-        description: "Health checks from ALB"
-        
-      # Corporate office access for testing
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        prefix_list_ids: ["corporate-networks"]
-        description: "Corporate office testing access"
-    
-    # Default egress allows all outbound (implicitly applied)
-
-  # Example 3: Custom Application Security Group
-  # Shows explicit VPC targeting and complex rule patterns
-  app-backend-service:
-    description: "Backend service security group with database connectivity"
-    
-    # Override VPC for this specific security group
-    vpc_id: "vpc-0abcdef1234567890"
-    
+  # Example: Application behind NLB
+  app-backend:
+    description: "Backend API service"
     tags:
       Team: "backend"
       Environment: "production"
       Application: "order-service"
-      Tier: "application"
-      
+      ManagedBy: "sg-platform"
     ingress:
-      # Application port from ALB
       - protocol: "tcp"
         from_port: 8080
         to_port: 8080
-        security_groups: ["alb-backend-production"]
+        security_groups: ["sg-0123456789abcdef0"]
         description: "HTTP from ALB"
-      
-      # Health check endpoint
-      - protocol: "tcp"
-        from_port: 8081
-        to_port: 8081
-        security_groups: ["alb-backend-production"]
-        description: "Health check endpoint"
-      
-      # Metrics scraping from monitoring
       - protocol: "tcp"
         from_port: 9090
         to_port: 9090
         prefix_list_ids: ["monitoring-services"]
-        description: "Prometheus metrics scraping"
-        
-      # SSH access (will generate warning)
-      - protocol: "tcp"
-        from_port: 22
-        to_port: 22
-        security_groups: ["bastion-production"]
-        description: "SSH access via bastion"
-    
+        description: "Prometheus scraping"
     egress:
-      # Database connectivity
       - protocol: "tcp"
         from_port: 5432
         to_port: 5432
         prefix_list_ids: ["database-subnets"]
-        description: "PostgreSQL database access"
-      
-      # Redis cache
-      - protocol: "tcp"
-        from_port: 6379
-        to_port: 6379
-        security_groups: ["redis-production"]
-        description: "Redis cache access"
-      
-      # External API calls
+        description: "PostgreSQL access"
       - protocol: "tcp"
         from_port: 443
         to_port: 443
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "External API calls"
-      
-      # DNS resolution
-      - protocol: "tcp"
-        from_port: 53
-        to_port: 53
         prefix_list_ids: ["aws-vpc-endpoints"]
-        description: "DNS via VPC endpoints"
-        
+        description: "ECR, S3 via VPC endpoints"
       - protocol: "udp"
         from_port: 53
         to_port: 53
-        prefix_list_ids: ["aws-vpc-endpoints"]
-        description: "DNS via VPC endpoints"
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "DNS resolution"
 
-  # Example 4: Database Security Group
-  # Shows restrictive database access patterns
-  rds-postgres-production:
-    description: "PostgreSQL RDS database security group"
-    
+  # Example: Database (restrictive)
+  rds-postgres:
+    description: "PostgreSQL RDS"
     tags:
       Team: "data"
       Environment: "production"
       Application: "postgres"
-      Tier: "database"
-      BackupRequired: "true"
-      
+      ManagedBy: "sg-platform"
     ingress:
-      # PostgreSQL access from application servers
       - protocol: "tcp"
         from_port: 5432
         to_port: 5432
-        security_groups: ["app-backend-service", "app-frontend-service"]
-        description: "PostgreSQL from application servers"
-      
-      # Read replica access for analytics
-      - protocol: "tcp"
-        from_port: 5432
-        to_port: 5432
-        security_groups: ["analytics-readonly"]
-        description: "PostgreSQL read access for analytics"
-      
-      # Database administration from bastion
-      - protocol: "tcp"
-        from_port: 5432
-        to_port: 5432
-        security_groups: ["bastion-production"]
-        description: "PostgreSQL admin access via bastion"
-    
-    # No egress rules needed for RDS (managed service)
-    # If egress was specified, it would override the default "allow all"
-
-  # Example 5: Web Tier Security Group
-  # Shows public-facing web server patterns
-  web-frontend-public:
-    description: "Public web frontend servers behind ALB"
-    
-    tags:
-      Team: "frontend"
-      Environment: "production"
-      Application: "web-app"
-      Tier: "web"
-      PublicFacing: "true"
-      
-    ingress:
-      # HTTP from ALB
-      - protocol: "tcp"
-        from_port: 80
-        to_port: 80
-        security_groups: ["alb-public-production"]
-        description: "HTTP from public ALB"
-      
-      # HTTPS from ALB
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        security_groups: ["alb-public-production"]
-        description: "HTTPS from public ALB"
-      
-      # SSH access for maintenance
-      - protocol: "tcp"
-        from_port: 22
-        to_port: 22
-        security_groups: ["bastion-production"]
-        description: "SSH maintenance access"
-    
-    egress:
-      # API calls to backend services
-      - protocol: "tcp"
-        from_port: 8080
-        to_port: 8080
-        security_groups: ["app-backend-service"]
-        description: "Backend API calls"
-      
-      # CDN and static asset updates
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "CDN and external assets"
-      
-      # DNS resolution
-      - protocol: "tcp"
-        from_port: 53
-        to_port: 53
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "DNS resolution"
-      
-      - protocol: "udp"
-        from_port: 53
-        to_port: 53
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "DNS resolution"
-
-  # Example 6: Monitoring and Logging Security Group
-  # Shows patterns for observability infrastructure
-  monitoring-stack:
-    description: "Monitoring stack (Prometheus, Grafana, etc.)"
-    
-    tags:
-      Team: "sre"
-      Environment: "production"
-      Application: "monitoring"
-      Critical: "true"
-      
-    ingress:
-      # Grafana web UI
-      - protocol: "tcp"
-        from_port: 3000
-        to_port: 3000
-        prefix_list_ids: ["corporate-networks"]
-        description: "Grafana UI access from corporate"
-      
-      # Prometheus web UI
-      - protocol: "tcp"
-        from_port: 9090
-        to_port: 9090
-        prefix_list_ids: ["corporate-networks"]
-        description: "Prometheus UI access from corporate"
-      
-      # Metrics ingestion from applications
-      - protocol: "tcp"
-        from_port: 9091
-        to_port: 9091
-        security_groups: ["app-backend-service", "web-frontend-public"]
-        description: "Pushgateway metrics ingestion"
-      
-      # Log aggregation
-      - protocol: "tcp"
-        from_port: 5140
-        to_port: 5140
-        cidr_blocks: ["10.0.0.0/8"]  # VPC CIDR
-        description: "Syslog from VPC instances"
-    
-    egress:
-      # External alerting (PagerDuty, Slack)
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "External alerting services"
-      
-      # Scraping metrics from targets
-      - protocol: "tcp"
-        from_port: 1
-        to_port: 65535
-        cidr_blocks: ["10.0.0.0/8"]  # VPC CIDR
-        description: "Metrics scraping within VPC"
-
-  # Example 7: CI/CD Security Group
-  # Shows patterns for build and deployment infrastructure
-  cicd-runners:
-    description: "CI/CD runners and build agents"
-    
-    tags:
-      Team: "devops"
-      Environment: "production"
-      Application: "cicd"
-      Purpose: "build-agents"
-      
-    ingress:
-      # SSH access for administration
-      - protocol: "tcp"
-        from_port: 22
-        to_port: 22
-        security_groups: ["bastion-production"]
-        description: "SSH administration access"
-      
-      # Runner registration and job polling
-      - protocol: "tcp"
-        from_port: 8080
-        to_port: 8080
-        prefix_list_ids: ["ci-cd-systems"]
-        description: "CI/CD system communication"
-    
-    egress:
-      # Git repository access
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "Git repository access"
-      
-      # SSH Git access
-      - protocol: "tcp"
-        from_port: 22
-        to_port: 22
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "SSH Git access"
-      
-      # Docker registry
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        prefix_list_ids: ["aws-vpc-endpoints"]
-        description: "ECR Docker registry"
-      
-      # Deployment targets
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        security_groups: ["eks-nodes-production"]
-        description: "Kubernetes API for deployments"
-      
-      # Artifact storage
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        prefix_list_ids: ["aws-vpc-endpoints"]
-        description: "S3 artifact storage"
-
-  # Example 8: IPv6 and Mixed Protocol Example
-  # Shows IPv6 support and various protocols
-  mixed-protocol-example:
-    description: "Example showing IPv6 and various protocols"
-    
-    tags:
-      Team: "network"
-      Environment: "production"
-      Application: "network-services"
-      IPv6Enabled: "true"
-      
-    ingress:
-      # IPv4 and IPv6 HTTP
-      - protocol: "tcp"
-        from_port: 80
-        to_port: 80
-        cidr_blocks: ["10.0.0.0/8"]
-        ipv6_cidr_blocks: ["2001:db8::/32"]
-        description: "HTTP from internal networks"
-      
-      # ICMP for ping (IPv4)
-      - protocol: "icmp"
-        from_port: -1
-        to_port: -1
-        cidr_blocks: ["10.0.0.0/8"]
-        description: "ICMP ping from internal"
-      
-      # ICMPv6 for ping (IPv6)
-      - protocol: "icmpv6"
-        from_port: -1
-        to_port: -1
-        ipv6_cidr_blocks: ["2001:db8::/32"]
-        description: "ICMPv6 ping from internal"
-      
-      # GRE tunnel
-      - protocol: "gre"
-        from_port: 0
-        to_port: 0
-        security_groups: ["vpn-endpoints"]
-        description: "GRE tunnel from VPN endpoints"
-
-# Advanced Features Examples:
-
-# Example showing environment-specific overrides
-# (This would be in accounts/456789012345/security-groups.yaml for staging)
-# environment: "staging"  # This would allow larger CIDR blocks per guardrails
-
-# Example showing cross-account security group references
-# security_groups:
-#   cross-account-example:
-#     ingress:
-#       - protocol: "tcp"
-#         from_port: 443
-#         to_port: 443
-#         security_groups: ["sg-0123456789abcdef0"]  # From another account
-#         description: "Cross-account access"
+        security_groups: ["app-backend"]
+        description: "PostgreSQL from app servers"
