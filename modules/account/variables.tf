@@ -1,11 +1,10 @@
-# AWS Security Group Platform - Account Module Variables
-
 variable "yaml_file" {
-  description = "Path to the security-groups.yaml file"
+  description = "Path to the account's security-groups.yaml"
   type        = string
-  
-  validation {
-    condition = can(regex(".*\\.ya?ml$", var.yaml_file))
-    error_message = "YAML file must have .yaml or .yml extension."
-  }
+}
+
+variable "prefix_list_mappings" {
+  description = "Map of prefix list names to IDs"
+  type        = map(string)
+  default     = {}
 }
