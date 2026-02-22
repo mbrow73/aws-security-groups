@@ -362,6 +362,16 @@ resource "aws_vpc_security_group_egress_rule" "workers_self_15006" {
   description                  = "Envoy sidecar outbound to other pod sidecars"
 }
 
+# Workers → on-prem addons via TGW
+resource "aws_vpc_security_group_egress_rule" "workers_to_onprem_443" {
+  security_group_id = aws_security_group.eks_workers.id
+  prefix_list_id    = data.aws_ec2_managed_prefix_list.corporate_networks.id
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  description       = "HTTPS to on-prem services (addons, config) via TGW"
+}
+
 # =======================================================
 # ISTIO INTRANET NODES — Corporate/On-Prem Path
 # =======================================================
