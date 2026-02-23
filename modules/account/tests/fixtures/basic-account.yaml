@@ -1,0 +1,28 @@
+account_id: "999888777666"
+environment: "production"
+
+security_groups:
+  app-backend:
+    description: "Backend API service"
+    tags:
+      Team: "backend"
+      Environment: "production"
+      Application: "order-service"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "HTTP from internal"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.100.0.0/16"]
+        description: "PostgreSQL access"
+      - protocol: "udp"
+        from_port: 53
+        to_port: 53
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "DNS resolution"

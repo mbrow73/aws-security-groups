@@ -1,0 +1,63 @@
+account_id: "111222333444"
+environment: "production"
+
+security_groups:
+  api-backend:
+    description: "API backend service"
+    tags:
+      Team: "backend"
+      Environment: "production"
+      Application: "api"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "HTTP from internal"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "HTTPS to VPC endpoints"
+
+  rds-postgres:
+    description: "PostgreSQL database"
+    tags:
+      Team: "data"
+      Environment: "production"
+      Application: "postgres"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "PostgreSQL from app tier"
+    egress: []
+
+  redis-cache:
+    description: "Redis cache cluster"
+    tags:
+      Team: "backend"
+      Environment: "production"
+      Application: "redis"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Redis from app tier"
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        self: true
+        description: "Redis cluster replication"
+    egress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        self: true
+        description: "Redis cluster replication outbound"
