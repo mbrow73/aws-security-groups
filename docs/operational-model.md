@@ -2,6 +2,8 @@
 
 ## TL;DR
 
+> **Note:** Baseline SG code lives in [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) (TFC private registry). This repo manages team SGs only.
+
 - **Baselines are immutable.** Platform team owns them. Teams don't touch them.
 - **Teams create new SGs** for their workloads via PR.
 - **AWS merges rules additively** when multiple SGs attach to the same ENI.
