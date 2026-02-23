@@ -27,8 +27,8 @@ As we scale EKS adoption with strict mTLS via Istio service mesh, the need for p
 
 We will implement a **two-layer security group management platform** consisting of:
 
-1. **Baseline Security Groups** — platform-owned, immutable EKS networking SGs published as a versioned Terraform module on the TFC private registry
-2. **Team Security Groups** — self-service, PR-driven SG requests with automated validation, deployed via Terraform Cloud
+1. **Baseline Security Groups** - platform-owned, immutable EKS networking SGs published as a versioned Terraform module on the TFC private registry
+2. **Team Security Groups** - self-service, PR-driven SG requests with automated validation, deployed via Terraform Cloud
 
 ### Architecture
 
@@ -132,7 +132,7 @@ Platform Engineer              Module Repo                    Registry
 
 ## Baseline Security Group Profiles
 
-### eks-standard — Intranet-Only EKS
+### eks-standard - Intranet-Only EKS
 
 5 security groups, 38 rules. All cross-SG traffic uses security group references (SG chaining).
 
@@ -153,9 +153,9 @@ Corporate Network → Intranet NLB → Istio Nodes → Worker Pods (via envoy si
                                               VPC Endpoints (ECR, S3, STS)
 ```
 
-### eks-internet — Internet + Intranet EKS
+### eks-internet - Internet + Intranet EKS
 
-7 security groups, ~58 rules. Client IP preservation enabled — istio sees WAF NAT IPs, not NLB private IPs.
+7 security groups, ~58 rules. Client IP preservation enabled - istio sees WAF NAT IPs, not NLB private IPs.
 
 | Security Group | Purpose | Attached To |
 |----------------|---------|-------------|
@@ -177,7 +177,7 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
                                                               VPC Endpoints
 ```
 
-### vpc-endpoints — Standalone
+### vpc-endpoints - Standalone
 
 1 security group, 2 rules. For non-EKS accounts needing VPC endpoint access.
 
@@ -196,7 +196,7 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 | Already in place, no migration needed | AFT is an account factory, not a policy engine |
 | Single pipeline for account provisioning | SG changes require full AFT pipeline run |
 | Familiar to the team | No PR-level validation or guardrails |
-| | No self-service — platform team bottleneck |
+| | No self-service - platform team bottleneck |
 | | No versioning of SG configurations |
 | | Blast radius of AFT changes is entire account |
 
@@ -208,9 +208,9 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Pros | Cons |
 |------|------|
-| AWS-native, no custom tooling | Coarse-grained — applies policies to all resources matching criteria |
+| AWS-native, no custom tooling | Coarse-grained - applies policies to all resources matching criteria |
 | Automatic remediation | Cannot express SG chaining (security group references) |
-| Built-in compliance reporting | Limited rule logic — no port-level guardrails |
+| Built-in compliance reporting | Limited rule logic - no port-level guardrails |
 | Integrates with AWS Organizations | No GitOps workflow, ClickOps management |
 | | Cost: per-policy per-region pricing |
 | | Doesn't support the two-layer (baseline + team) model |
@@ -223,43 +223,29 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Pros | Cons |
 |------|------|
-| AWS-native self-service | CloudFormation, not Terraform (different from existing IaC) |
-| Built-in approval workflows | No GitOps — changes are made in the console |
-| Portfolio-level access control | Limited validation — only what CFN supports natively |
-| | No SG chaining support in CF parameters |
-| | Separate toolchain from everything else |
+| AWS-native self-service with approval workflows | Products are CloudFormation under the hood - adds a CFN layer on top of Terraform |
+| Can be provisioned via Terraform (`aws_servicecatalog_provisioned_product`) | Limited validation - only what CFN constraints and launch constraints support natively |
+| Portfolio-level access control and governance | No SG chaining support in CF parameters - difficult to express security group references |
+| Built-in versioning of products | Product updates require maintaining both CFN templates and Terraform consumers |
+| | Self-service UX is the Service Catalog console, not a Git-native PR workflow |
 
-**Decision:** Rejected. We are a Terraform shop. Introducing CloudFormation for one use case adds operational complexity without meaningful benefit.
+**Decision:** Rejected. While Service Catalog products can be consumed via Terraform, the underlying products are still CloudFormation templates. This creates a dual-IaC maintenance burden (CFN for products, Terraform for consumers) without adding validation capabilities beyond what we achieve with the PR-based pipeline. The Git-native workflow provides better auditability, team familiarity, and guardrail flexibility.
 
-### Alternative 4: Crossplane / Kubernetes-Native SG Management
-
-**Description:** Use Crossplane AWS provider to manage security groups as Kubernetes custom resources.
-
-| Pros | Cons |
-|------|------|
-| GitOps via ArgoCD/Flux | Requires Crossplane infrastructure |
-| Kubernetes-native developer experience | Adds dependency on cluster availability for SG management |
-| Drift detection built-in | Team must learn Crossplane XRDs |
-| | Circular dependency: SGs needed for EKS, managed by EKS |
-| | Less mature than Terraform for AWS resource management |
-
-**Decision:** Rejected. Circular dependency between EKS and SG management is a non-starter. Baseline SGs must exist before the cluster does.
-
-### Alternative 5: Centralized Transit Gateway with AWS Network Firewall
+### Alternative 4: Centralized Transit Gateway with AWS Network Firewall
 
 **Description:** Route all inter-VPC and egress traffic through a centralized inspection VPC using Transit Gateway and AWS Network Firewall. Enforce security policy at the network layer rather than per-resource security groups.
 
-**Intended model:** Single-tenant application VPCs with open intra-VPC access (broad baseline SGs like 10.0.0.0/8) and Network Firewall at the TGW segmenting inter-application traffic. Each VPC is one app, so intra-VPC trust is acceptable. The firewall enforces app-to-app boundaries — "payments VPC can reach auth VPC on 443, nothing else."
+**Intended model:** Single-tenant application VPCs with open intra-VPC access (broad baseline SGs like 10.0.0.0/8) and Network Firewall at the TGW segmenting inter-application traffic. Each VPC is one app, so intra-VPC trust is acceptable. The firewall enforces app-to-app boundaries - "payments VPC can reach auth VPC on 443, nothing else."
 
 | Pros | Cons |
 |------|------|
-| Clean two-tier model: SGs for intra-VPC, firewall for inter-VPC | **NAT gateways destroy source identity** — traffic arrives at the firewall with the NAT gateway's private IP, not the originating workload's IP. Firewall rules degrade to "allow NAT IP" instead of "allow this service." |
+| Clean two-tier model: SGs for intra-VPC, firewall for inter-VPC | **NAT gateways destroy source identity** - traffic arrives at the firewall with the NAT gateway's private IP, not the originating workload's IP. Firewall rules degrade to "allow NAT IP" instead of "allow this service." |
 | Centralized inter-app segmentation at the VPC boundary | Loses the ability to write meaningful L4 rules based on source workload identity |
-| Deep packet inspection, IDS/IPS for cross-VPC flows | Intra-VPC security becomes entirely dependent on broad SGs with no chaining — acceptable for single-tenant, but loses defense-in-depth |
+| Deep packet inspection, IDS/IPS for cross-VPC flows | Intra-VPC security becomes entirely dependent on broad SGs with no chaining - acceptable for single-tenant, but loses defense-in-depth |
 | Single-tenant VPCs mean intra-VPC trust is a reasonable tradeoff | TGW routing complexity grows with every VPC and peering relationship |
 | Unified cross-VPC traffic logging and visibility | Firewall becomes a single point of failure for all inter-app communication |
 
-**Decision:** Rejected. This would be the preferred architecture if NAT gateways did not obscure source identity. The model is sound — single-tenant VPCs with a centralized firewall segmenting inter-app traffic. However, NAT gateways rewrite the source IP on egress, making it impossible for Network Firewall to attribute traffic to specific workloads. Without source identity, firewall rules cannot express "workers in payments VPC can reach auth VPC" — only "the NAT IP in payments VPC can reach auth VPC." This eliminates the primary value of centralized inspection.
+**Decision:** Rejected. This would be the preferred architecture if NAT gateways did not obscure source identity. The model is sound - single-tenant VPCs with a centralized firewall segmenting inter-app traffic. However, NAT gateways rewrite the source IP on egress, making it impossible for Network Firewall to attribute traffic to specific workloads. Without source identity, firewall rules cannot express "workers in payments VPC can reach auth VPC" - only "the NAT IP in payments VPC can reach auth VPC." This eliminates the primary value of centralized inspection.
 
 The SG chaining approach preserves source identity at every hop (security group references, not CIDRs), which is why we chose per-VPC security group management over centralized firewall inspection.
 
@@ -267,19 +253,19 @@ The SG chaining approach preserves source identity at every hop (security group 
 
 ### Positive
 
-- **Zero-trust by default** — baseline SGs use SG chaining exclusively. New EKS clusters start with least-privilege networking.
-- **Self-service without sacrificing security** — teams get SGs in minutes via PR, not days via ticket. Guardrails prevent dangerous configs automatically.
-- **Immutable baselines** — platform team controls EKS networking SGs. Teams cannot modify them. Changes are versioned and rolled out via registry.
-- **Full audit trail** — every SG and every rule change is a Git commit with PR review, author attribution, and approval history.
-- **Testable without AWS credentials** — Terraform test suite uses `mock_provider`, enabling CI validation and local development without cloud access.
-- **Separation of concerns** — baselines (platform) and team SGs (self-service) have independent lifecycles, repos, and deployment pipelines.
+- **Zero-trust by default** - baseline SGs use SG chaining exclusively. New EKS clusters start with least-privilege networking.
+- **Self-service without sacrificing security** - teams get SGs in minutes via PR, not days via ticket. Guardrails prevent dangerous configs automatically.
+- **Immutable baselines** - platform team controls EKS networking SGs. Teams cannot modify them. Changes are versioned and rolled out via registry.
+- **Full audit trail** - every SG and every rule change is a Git commit with PR review, author attribution, and approval history.
+- **Testable without AWS credentials** - Terraform test suite uses `mock_provider`, enabling CI validation and local development without cloud access.
+- **Separation of concerns** - baselines (platform) and team SGs (self-service) have independent lifecycles, repos, and deployment pipelines.
 
 ### Negative
 
-- **Two repos to maintain** — baseline module and team SG platform are separate codebases. Increases surface area for maintenance.
-- **SG attachment is out-of-band** — the platform creates SGs but does not attach them to resources. Attachment is the consumer's responsibility. Mitigated by tagging and AWS Config detection.
-- **Prefix list management is centralized** — adding a new prefix list entry requires a baseline module PR. This is intentional (security control) but adds friction for urgent changes.
-- **Learning curve** — teams must learn the YAML schema and PR workflow. Mitigated by the team guide, example templates, and clear validation error messages.
+- **Two repos to maintain** - baseline module and team SG platform are separate codebases. Increases surface area for maintenance.
+- **SG attachment is out-of-band** - the platform creates SGs but does not attach them to resources. Attachment is the consumer's responsibility. Mitigated by tagging and AWS Config detection.
+- **Prefix list management is centralized** - adding a new prefix list entry requires a baseline module PR. This is intentional (security control) but adds friction for urgent changes.
+- **Learning curve** - teams must learn the YAML schema and PR workflow. Mitigated by the team guide, example templates, and clear validation error messages.
 
 ### Risks and Mitigations
 
@@ -327,7 +313,7 @@ The team SG platform includes automated validation that runs on every PR:
 
 ## References
 
-- [Operational Model](./operational-model.md) — Detailed two-layer SG model documentation
-- [Anti-Patterns & Mitigations](./anti-patterns-and-mitigations.md) — Risk analysis and layered defenses
-- [Team Guide](./team-guide.md) — How to request security groups
-- [Baseline Profiles](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs/blob/main/BASELINE-PROFILES.md) — Complete SG rule tables
+- [Operational Model](./operational-model.md) - Detailed two-layer SG model documentation
+- [Anti-Patterns & Mitigations](./anti-patterns-and-mitigations.md) - Risk analysis and layered defenses
+- [Team Guide](./team-guide.md) - How to request security groups
+- [Baseline Profiles](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs/blob/main/BASELINE-PROFILES.md) - Complete SG rule tables
