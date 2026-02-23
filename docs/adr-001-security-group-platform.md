@@ -281,10 +281,15 @@ The SG chaining approach preserves source identity at every hop (security group 
 
 ### Repositories
 
-| Repository | Purpose | Owner |
-|------------|---------|-------|
-| [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) | Baseline SG module (TFC private registry) | Platform Team |
-| [`aws-security-groups`](https://github.com/mbrow73/aws-security-groups) | Team self-service SG platform | Platform Team (validated), Teams (PRs) |
+| Repository | Purpose | Owner | CODEOWNERS |
+|------------|---------|-------|------------|
+| [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) | Baseline SG module (TFC private registry) | Platform Engineering | Network Security (policy review) |
+| [`aws-security-groups`](https://github.com/mbrow73/aws-security-groups) | Team self-service SG platform | Network Security | Network Security |
+
+**Ownership model:**
+- **Platform Engineering** owns baseline SG operations - they deploy, version, and are responsible for outages caused by rule changes.
+- **Network Security** reviews all baseline policy changes as CODEOWNERS and owns the self-service platform (guardrails, validation, team PR approvals).
+- **Application Teams** submit PRs to the self-service repo. They own their workload-level SGs but cannot modify baselines.
 
 ### Validation Pipeline
 
