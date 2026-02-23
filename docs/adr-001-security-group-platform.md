@@ -17,7 +17,7 @@ Security group management across our AWS organization has historically been frag
 - **Inconsistent naming and tagging** across accounts, making audit and inventory unreliable
 - **Overly permissive rules** that go unreviewed (e.g., `0.0.0.0/0` ingress, wide port ranges)
 - **No guardrails** preventing dangerous configurations before they reach AWS
-- **Baseline SGs coupled to AFT**, turning an account factory into a policy deployment engine
+- **Custom SGs coupled to AFT**, turning an account factory into a policy deployment engine - a single SG template leaks identical rules to every account regardless of workload requirements
 - **No visibility** into what security groups exist, who owns them, or why they were created
 - **Drift** between what was intended and what's deployed, with no detection mechanism
 
@@ -102,6 +102,40 @@ Developer                    Platform                        AWS
    │                            │  10. SG attached to resource │
    │                            │                              │
 ```
+
+### Automatic TFC Workspace Provisioning
+
+When a team submits their first PR for a new account, the platform automatically provisions a TFC workspace:
+
+```
+New Account PR                Platform                        TFC
+   │                            │                              │
+   │  1. PR creates             │                              │
+   │  accounts/<new-id>/sg.yaml │                              │
+   │───────────────────────────►│                              │
+   │                            │                              │
+   │  2. GitHub Actions detects │                              │
+   │     new account directory  │                              │
+   │                            │  3. TFE API: create workspace│
+   │                            │  (per-account state isolation)│
+   │                            │────────────────────────────►│
+   │                            │                              │
+   │                            │  4. Configure VCS trigger,   │
+   │                            │     working directory,       │
+   │                            │     OIDC auth, variables     │
+   │                            │────────────────────────────►│
+   │                            │                              │
+   │  5. Validation runs as     │                              │
+   │     normal on the PR       │                              │
+   │◄───────────────────────────│                              │
+   │                            │                              │
+   │  6. On merge, new workspace│                              │
+   │     triggers first apply   │                              │
+   │                            │────────────────────────────►│
+   │                            │                              │
+```
+
+Each AWS account gets an isolated TFC workspace with its own state. Workspace creation is triggered by the presence of a new `accounts/<id>/` directory in the PR diff. No manual TFC setup required.
 
 ### Baseline Change Flow
 
@@ -193,14 +227,15 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Pros | Cons |
 |------|------|
-| Already in place, no migration needed | AFT is an account factory, not a policy engine |
-| Single pipeline for account provisioning | SG changes require full AFT pipeline run |
-| Familiar to the team | No PR-level validation or guardrails |
-| | No self-service - platform team bottleneck |
-| | No versioning of SG configurations |
-| | Blast radius of AFT changes is entire account |
+| Already in place, no migration needed | Custom SGs are coupled to the account factory lifecycle - SG changes require a full AFT customization pipeline run |
+| Single pipeline for account provisioning | Single SG template applied uniformly - the same rules leak to every account regardless of workload requirements |
+| Git-backed with PR reviews (inherits AFT workflow) | No per-account customization without forking the template or adding conditional logic |
+| Teams can submit customization requests (self-service exists) | No workload-level guardrails - AFT validates account structure, not SG rule quality |
+| Familiar to the team | Blast radius of template changes is every account using that customization |
+| | No separation between baseline (platform networking) and team (workload access) SGs - everything is one flat layer |
+| | Difficult to version and roll out SG changes independently of account provisioning |
 
-**Decision:** Rejected. AFT should provision accounts, not manage ongoing security policy.
+**Decision:** Rejected. AFT provides a functional delivery mechanism, but the single-template model cannot express per-account workload requirements. Custom SGs need their own lifecycle independent of account provisioning, and baseline networking SGs need independent versioning and rollout control that AFT customizations don't support. Baselines remain in AFT as a versioned module consumer; custom SGs move to a dedicated platform.
 
 ### Alternative 2: AWS Firewall Manager
 
@@ -208,28 +243,29 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Pros | Cons |
 |------|------|
-| AWS-native, no custom tooling | Coarse-grained - applies policies to all resources matching criteria |
-| Automatic remediation | Cannot express SG chaining (security group references) |
-| Built-in compliance reporting | Limited rule logic - no port-level guardrails |
-| Integrates with AWS Organizations | No GitOps workflow, ClickOps management |
-| | Cost: per-policy per-region pricing |
-| | Doesn't support the two-layer (baseline + team) model |
+| AWS-native, integrates with AWS Organizations | Cannot express SG chaining (security group references between SGs) |
+| Automatic remediation - can enforce and revert non-compliant SGs | Coarse-grained policy model - "common SG" policies apply uniformly to all matching resources, not per-workload |
+| Built-in compliance reporting and audit SG policies | Limited rule-level guardrails - policies operate at the SG level, not individual rule validation |
+| Can be managed via Terraform (`aws_fms_policy`) - GitOps is possible | "Audit" policies detect violations but cannot express complex rules like "block port ranges >1000" |
+| "Common security group" policies can deploy SGs to matching resources automatically | No separation of baseline vs team SGs - policies apply organization-wide by resource tag or type |
+| | Cost: per-policy per-region pricing scales with org complexity |
 
-**Decision:** Rejected. Firewall Manager cannot express the SG chaining model required for zero-trust EKS networking. It's designed for broad organizational policies, not precise per-cluster security group configurations.
+**Decision:** Rejected. Firewall Manager provides strong compliance auditing and can be IaC-managed, but its policy model is too coarse for our requirements. It cannot express security group references (SG chaining), which is foundational to our zero-trust EKS networking model. Its strength is enforcing uniform policies across the org - useful for guardrails, but insufficient as the primary SG management platform where per-workload customization is required.
 
-### Alternative 3: Service Catalog with CloudFormation
+### Alternative 3: Service Catalog
 
 **Description:** Publish security group products in AWS Service Catalog. Teams launch products to get pre-approved SGs.
 
 | Pros | Cons |
 |------|------|
-| AWS-native self-service with approval workflows | Products are CloudFormation under the hood - adds a CFN layer on top of Terraform |
-| Can be provisioned via Terraform (`aws_servicecatalog_provisioned_product`) | Limited validation - only what CFN constraints and launch constraints support natively |
-| Portfolio-level access control and governance | No SG chaining support in CF parameters - difficult to express security group references |
-| Built-in versioning of products | Product updates require maintaining both CFN templates and Terraform consumers |
-| | Self-service UX is the Service Catalog console, not a Git-native PR workflow |
+| AWS-native self-service with built-in approval workflows | Traditional products are CloudFormation - adds a CFN maintenance layer |
+| Portfolio-level access control and governance | Terraform Cloud Engine for Service Catalog exists but adds architectural complexity (SC → TFC → AWS) |
+| Can be managed via Terraform (`aws_servicecatalog_*`) for GitOps | Validation is limited to CFN constraints or launch constraints - no custom guardrail logic (blocked ports, naming, PCI warnings) |
+| Built-in product versioning and constraint management | Self-service UX defaults to the Service Catalog console - Git-native PR workflow requires additional tooling |
+| Can be provisioned by consumers via Terraform (`aws_servicecatalog_provisioned_product`) | Difficult to express SG chaining in product parameters without complex nested stacks |
+| | Adds an abstraction layer between the team and the SG - debugging requires tracing through SC → product → resources |
 
-**Decision:** Rejected. While Service Catalog products can be consumed via Terraform, the underlying products are still CloudFormation templates. This creates a dual-IaC maintenance burden (CFN for products, Terraform for consumers) without adding validation capabilities beyond what we achieve with the PR-based pipeline. The Git-native workflow provides better auditability, team familiarity, and guardrail flexibility.
+**Decision:** Rejected. Service Catalog provides governance and self-service capabilities, but adds an abstraction layer that increases complexity without meaningful benefit over a direct Git-to-Terraform pipeline. Custom validation logic (blocked ports, naming conventions, PCI DSS warnings, duplicate detection) would need to be reimplemented outside of SC's native constraints. The direct PR workflow provides equivalent self-service with better auditability and simpler debugging.
 
 ### Alternative 4: Centralized Transit Gateway with AWS Network Firewall
 
