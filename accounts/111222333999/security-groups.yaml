@@ -1,0 +1,30 @@
+account_id: "111222333999"
+enviroment: staging
+security_groups:
+  bad-sg-test:
+    description: "Bad SG"
+    ingresss:
+      - description: "Wide open SSH"
+        protocol: tcp
+        from_port: 22
+        to_port: 22
+        cidr_blocks:
+          - "0.0.0.0/0"
+    ingress:
+      - description: "HTTPS"
+        protocol: tcp
+        from_port: 443
+        to_port: 443
+        cidr_blocks: "10.0.0.0/8"
+      - description: "Duplicate"
+        protocol: tcp
+        from_port: 443
+        to_port: 443
+        cidr_blocks: "10.0.0.0/8"
+    egress:
+      - description: "Wide port range"
+        protocol: tcp
+        from_port: 1
+        to_port: 65535
+        cidr_blocks:
+          - "0.0.0.0/0"
