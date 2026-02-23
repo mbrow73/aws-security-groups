@@ -1,35 +1,29 @@
 account_id: "999888777666"
-environment: "production"
-baseline_profiles:
-  - eks-standard
+environment: prod
+
+tags:
+  ManagedBy: sg-platform
+  Team: platform-test
 
 security_groups:
-  eks-nodes-api:
-    description: "EKS worker nodes for API service cluster"
+  api-gateway-prod:
+    description: "API gateway ingress from corporate networks"
     tags:
-      Team: "api-team"
-      Environment: "production"
-      Application: "api-service"
-      ManagedBy: "sg-platform"
+      Application: api-gateway
+      Environment: prod
+      ManagedBy: sg-platform
+      Team: platform-test
     ingress:
-      - protocol: "tcp"
-        from_port: 10250
-        to_port: 10250
-        cidr_blocks: ["10.100.0.0/16"]
-        description: "Kubelet API from EKS control plane"
-      - protocol: "tcp"
+      - description: "HTTPS from corporate"
+        protocol: tcp
         from_port: 443
         to_port: 443
-        self: true
-        description: "Inter-node HTTPS communication"
+        prefix_list_ids:
+          - corporate-networks
     egress:
-      - protocol: "tcp"
+      - description: "HTTPS to backend services"
+        protocol: tcp
         from_port: 443
         to_port: 443
-        prefix_list_ids: ["aws-vpc-endpoints"]
-        description: "HTTPS to VPC endpoints for ECR and S3"
-      - protocol: "udp"
-        from_port: 53
-        to_port: 53
-        cidr_blocks: ["10.100.0.0/16"]
-        description: "DNS resolution within VPC"
+        cidr_blocks:
+          - "10.0.0.0/8"
