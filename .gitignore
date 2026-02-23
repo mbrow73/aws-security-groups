@@ -1,2 +1,4 @@
 baseline/.terraform*
 **/.terraform*
+tests/__pycache__/
+*.pyc
