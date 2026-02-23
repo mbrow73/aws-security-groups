@@ -1,5 +1,7 @@
 # Anti-Patterns, Risks & Mitigations
 
+
+> **Note:** Baseline SG code lives in [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs). This doc covers risks for both baselines and team SGs.
 ## Risk 1: SG Attachment is Out-of-Band
 
 **Risk:** The platform creates SGs but doesn't attach them to resources. A team could get an SG approved and attach it incorrectly, or not at all.

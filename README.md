@@ -11,7 +11,9 @@ Team YAML → GitHub PR → Validation (Actions) → Terraform Cloud → AWS Sec
 1. **Teams** edit `accounts/<account-id>/security-groups.yaml`
 2. **GitHub Actions** validates schema, guardrails, naming on PR
 3. **Terraform Cloud** runs speculative plan on PR, applies on merge
-4. **Baselines** deploy zero-trust EKS security groups with SG chaining
+
+> **Baseline SGs** (EKS zero-trust profiles) have moved to their own module:
+> [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) — published on TFC private registry.
 
 ## Quick Start
 
@@ -36,40 +38,21 @@ git push origin team/my-sg-request
 │   ├── _example/              # Template — copy this
 │   └── <account-id>/          # One dir per AWS account
 │       └── security-groups.yaml
-├── baseline/
-│   ├── main.tf                # Orchestrator — conditional profile deployment
-│   ├── profiles/
-│   │   ├── eks-standard/      # Intranet-only EKS (4 SGs)
-│   │   ├── eks-internet/      # Internet + intranet EKS (6 SGs)
-│   │   └── vpc-endpoints/     # VPC endpoint access (1 SG)
-│   ├── prefix-lists.tf        # Managed prefix lists
-│   └── tests/                 # Orchestrator-level terraform tests
 ├── modules/
 │   ├── security-group/        # Generic SG from YAML
-│   ├── account/               # Per-account wrapper
-│   └── vpc-discovery/         # Auto-discover VPC
+│   └── account/               # Per-account wrapper (yamldecode → SGs)
 ├── scripts/
 │   └── validate.py            # Schema + guardrail validation
 ├── tests/
 │   └── test_validate.py       # Pytest suite (25 cases)
 ├── guardrails.yaml            # Blocked ports, CIDR limits
-└── prefix-lists.yaml          # Org-wide prefix list definitions
+└── docs/
+    ├── team-guide.md
+    ├── operational-model.md
+    ├── anti-patterns-and-mitigations.md
+    ├── naming-conventions.md
+    └── tfc-setup.md
 ```
-
-## Baseline Profiles
-
-Pre-built zero-trust security group sets. Teams opt in via `baseline_profiles` in their YAML.
-
-| Profile | SGs | Description |
-|---|---|---|
-| `eks-standard` | 4 + vpc-endpoints | Intranet-only EKS with SG chaining |
-| `eks-internet` | 6 + vpc-endpoints | Internet + intranet EKS, WAF NAT IP ingress |
-| `vpc-endpoints` | 1 | VPC interface endpoint access |
-
-- `eks-standard` and `eks-internet` are **mutually exclusive**
-- Both auto-deploy `vpc-endpoints` as a dependency
-- All cross-SG rules use security group references — zero `0.0.0.0/0`
-- Full rule tables: [`baseline/profiles/BASELINE-PROFILES.md`](baseline/profiles/BASELINE-PROFILES.md)
 
 ## Validation
 
@@ -79,7 +62,6 @@ PR validation catches:
 - Naming convention enforcement
 - Duplicate rule detection
 - Tag compliance
-- Baseline profile conflicts
 
 ```bash
 # Run locally
@@ -92,5 +74,7 @@ pytest tests/test_validate.py -v
 ## Docs
 
 - [Team Guide](docs/team-guide.md) — How to request security groups
+- [Operational Model](docs/operational-model.md) — Two-layer SG model, baselines vs team SGs
+- [Anti-Patterns & Mitigations](docs/anti-patterns-and-mitigations.md) — Risks and layered defenses
 - [Naming Conventions](docs/naming-conventions.md) — Standards and patterns
 - [TFC Setup](docs/tfc-setup.md) — Terraform Cloud workspace configuration
