@@ -249,17 +249,19 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 **Description:** Route all inter-VPC and egress traffic through a centralized inspection VPC using Transit Gateway and AWS Network Firewall. Enforce security policy at the network layer rather than per-resource security groups.
 
+**Intended model:** Single-tenant application VPCs with open intra-VPC access (broad baseline SGs like 10.0.0.0/8) and Network Firewall at the TGW segmenting inter-application traffic. Each VPC is one app, so intra-VPC trust is acceptable. The firewall enforces app-to-app boundaries — "payments VPC can reach auth VPC on 443, nothing else."
+
 | Pros | Cons |
 |------|------|
-| Centralized policy enforcement — single chokepoint for all traffic | **NAT gateway dependency** — each spoke VPC still requires NAT gateways for internet-bound traffic, adding significant cost and operational complexity |
-| Deep packet inspection, IDS/IPS capabilities | Adds latency to every cross-VPC flow (TGW hop + firewall inspection) |
-| Stateful rule evaluation across the org | Does not eliminate the need for security groups — SGs are still required on resources for defense-in-depth |
-| Unified logging and traffic visibility | Firewall becomes a single point of failure for all network traffic |
-| | Scaling Network Firewall endpoints across AZs is expensive |
-| | Doesn't solve the self-service problem — teams still need per-resource SGs for workload-level access |
-| | TGW routing complexity increases with every new VPC and attachment |
+| Clean two-tier model: SGs for intra-VPC, firewall for inter-VPC | **NAT gateways destroy source identity** — traffic arrives at the firewall with the NAT gateway's private IP, not the originating workload's IP. Firewall rules degrade to "allow NAT IP" instead of "allow this service." |
+| Centralized inter-app segmentation at the VPC boundary | Loses the ability to write meaningful L4 rules based on source workload identity |
+| Deep packet inspection, IDS/IPS for cross-VPC flows | Intra-VPC security becomes entirely dependent on broad SGs with no chaining — acceptable for single-tenant, but loses defense-in-depth |
+| Single-tenant VPCs mean intra-VPC trust is a reasonable tradeoff | TGW routing complexity grows with every VPC and peering relationship |
+| Unified cross-VPC traffic logging and visibility | Firewall becomes a single point of failure for all inter-app communication |
 
-**Decision:** Rejected. This is architecturally the strongest centralized enforcement model available, and under different circumstances would be the preferred approach. However, the NAT gateway requirement in every spoke VPC makes this cost-prohibitive at our scale. Additionally, Network Firewall operates at the VPC perimeter — it does not replace security groups for intra-VPC traffic between pods, node groups, and NLBs. We would still need the SG platform for workload-level controls even with Network Firewall in place.
+**Decision:** Rejected. This would be the preferred architecture if NAT gateways did not obscure source identity. The model is sound — single-tenant VPCs with a centralized firewall segmenting inter-app traffic. However, NAT gateways rewrite the source IP on egress, making it impossible for Network Firewall to attribute traffic to specific workloads. Without source identity, firewall rules cannot express "workers in payments VPC can reach auth VPC" — only "the NAT IP in payments VPC can reach auth VPC." This eliminates the primary value of centralized inspection.
+
+The SG chaining approach preserves source identity at every hop (security group references, not CIDRs), which is why we chose per-VPC security group management over centralized firewall inspection.
 
 ## Consequences
 
