@@ -27,8 +27,8 @@ As we scale EKS adoption with strict mTLS via Istio service mesh, the need for p
 
 We will implement a **two-layer security group management platform** consisting of:
 
-1. **Baseline Security Groups** - platform-owned, immutable EKS networking SGs published as a versioned Terraform module on the TFC private registry
-2. **Team Security Groups** - self-service, PR-driven SG requests with automated validation, deployed via Terraform Cloud
+1. **Baseline Security Groups** - platform-owned, immutable EKS networking SGs published as a versioned Terraform module on the TFE private registry
+2. **Team Security Groups** - self-service, PR-driven SG requests with automated validation, deployed via Terraform Enterprise
 
 ### Architecture
 
@@ -37,7 +37,7 @@ We will implement a **two-layer security group management platform** consisting 
 │                    LAYER 1: BASELINES                       │
 │              (Platform Team Owned & Operated)               │
 │                                                             │
-│   terraform-aws-eks-baseline-sgs (TFC Private Registry)    │
+│   terraform-aws-eks-baseline-sgs (TFE Private Registry)    │
 │   ┌───────────────┐ ┌───────────────┐ ┌────────────────┐   │
 │   │ eks-standard  │ │ eks-internet  │ │ vpc-endpoints  │   │
 │   │ (4 SGs)       │ │ (6 SGs)       │ │ (1 SG)         │   │
@@ -56,12 +56,12 @@ We will implement a **two-layer security group management platform** consisting 
 │                                                             │
 │   aws-security-groups (GitHub)                              │
 │   ┌─────────┐    ┌──────────┐    ┌─────┐    ┌─────────┐   │
-│   │ Team    │───►│ GitHub   │───►│ TFC │───►│ AWS SGs │   │
+│   │ Team    │───►│ GitHub   │───►│ TFE │───►│ AWS SGs │   │
 │   │ YAML PR │    │ Actions  │    │     │    │         │   │
 │   └─────────┘    │Validation│    │Plan/│    └─────────┘   │
 │                  └──────────┘    │Apply│                   │
 │                                  └─────┘                   │
-│   Changed via: PR → Automated Validation → TFC Deploy      │
+│   Changed via: PR → Automated Validation → TFE Deploy      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -90,7 +90,7 @@ Developer                    Platform                        AWS
    │───────────────────────────►│                              │
    │                            │                              │
    │  5. Merge to main          │                              │
-   │───────────────────────────►│  6. TFC workspace triggered  │
+   │───────────────────────────►│  6. TFE workspace triggered  │
    │                            │────────────────────────────►│
    │                            │  7. terraform apply          │
    │                            │  8. SG created with rules    │
@@ -103,12 +103,12 @@ Developer                    Platform                        AWS
    │                            │                              │
 ```
 
-### Automatic TFC Workspace Provisioning
+### Automatic TFE Workspace Provisioning
 
-When a team submits their first PR for a new account, the platform automatically provisions a TFC workspace:
+When a team submits their first PR for a new account, the platform automatically provisions a TFE workspace:
 
 ```
-New Account PR                Platform                        TFC
+New Account PR                Platform                        TFE
    │                            │                              │
    │  1. PR creates             │                              │
    │  accounts/<new-id>/sg.yaml │                              │
@@ -135,21 +135,21 @@ New Account PR                Platform                        TFC
    │                            │                              │
 ```
 
-Each AWS account gets an isolated TFC workspace with its own state. Workspace creation is triggered by the presence of a new `accounts/<id>/` directory in the PR diff. No manual TFC setup required.
+Each AWS account gets an isolated TFE workspace with its own state. Workspace creation is triggered by the presence of a new `accounts/<id>/` directory in the PR diff. No manual TFE setup required.
 
 ### Baseline Change Flow
 
 ```
-Platform Engineer              Module Repo                    Registry
+Platform Engineer              Module Repo                    TFE / Registry
    │                              │                              │
    │  1. PR with rule changes     │                              │
    │────────────────────────────►│                              │
    │                              │                              │
-   │  2. Terraform test suite     │                              │
-   │     (mock_provider, no AWS)  │                              │
+   │  2. TFE speculative plan     │                              │
+   │     validates changes        │                              │
    │◄────────────────────────────│                              │
    │                              │                              │
-   │  3. Peer review + approval   │                              │
+   │  3. NetSec review + approval │                              │
    │────────────────────────────►│                              │
    │                              │                              │
    │  4. Merge + version tag      │                              │
@@ -259,7 +259,7 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 | Pros | Cons |
 |------|------|
 | AWS-native self-service with built-in approval workflows | Traditional products are CloudFormation - adds a CFN maintenance layer |
-| Portfolio-level access control and governance | Terraform Cloud Engine for Service Catalog exists but adds architectural complexity (SC → TFC → AWS) |
+| Portfolio-level access control and governance | Terraform Enterprise Engine for Service Catalog exists but adds architectural complexity (SC → TFE → AWS) |
 | Can be managed via Terraform (`aws_servicecatalog_*`) for GitOps | Validation is limited to CFN constraints or launch constraints - no custom guardrail logic (blocked ports, naming, PCI warnings) |
 | Built-in product versioning and constraint management | Self-service UX defaults to the Service Catalog console - Git-native PR workflow requires additional tooling |
 | Can be provisioned by consumers via Terraform (`aws_servicecatalog_provisioned_product`) | Difficult to express SG chaining in product parameters without complex nested stacks |
@@ -293,7 +293,7 @@ The SG chaining approach preserves source identity at every hop (security group 
 - **Self-service without sacrificing security** - teams get SGs in minutes via PR, not days via ticket. Guardrails prevent dangerous configs automatically.
 - **Immutable baselines** - platform team controls EKS networking SGs. Teams cannot modify them. Changes are versioned and rolled out via registry.
 - **Full audit trail** - every SG and every rule change is a Git commit with PR review, author attribution, and approval history.
-- **Testable without AWS credentials** - Terraform test suite uses `mock_provider`, enabling CI validation and local development without cloud access.
+- **Validated at every stage** - PR validation catches schema and guardrail violations, TFE speculative plans catch Terraform errors, and SCP enforcement prevents out-of-band changes.
 - **Separation of concerns** - baselines (platform) and team SGs (self-service) have independent lifecycles, repos, and deployment pipelines.
 
 ### Negative
@@ -309,9 +309,9 @@ The SG chaining approach preserves source identity at every hop (security group 
 |------|-----------|--------|------------|
 | Rogue SG attached alongside baseline widens access | Medium | High | SGs are additive (allow-only), but guardrails ensure team SGs are scoped. AWS Config detects unexpected attachments. |
 | Baseline change breaks clusters org-wide | Low | Critical | Version pinning, canary account rollout, terraform test suite, PR review requirement. |
-| Team bypasses platform, creates SGs directly | Medium | Medium | SCP restricts SG creation/modification to TFC workspace roles. Detective controls via AWS Config. |
+| Team bypasses platform, creates SGs directly | Medium | Medium | SCP restricts SG creation/modification to TFE workspace roles. Detective controls via AWS Config. |
 | Stale prefix list entries | Low | Medium | Centralized management ensures consistency. Periodic review process. |
-| TFC outage blocks SG deployments | Low | Medium | Break-glass procedure documented. Emergency changes via CLI with audit trail. |
+| TFE outage blocks SG deployments | Low | Medium | Break-glass procedure documented. Emergency changes via CLI with audit trail. |
 
 ## Implementation
 
@@ -319,7 +319,7 @@ The SG chaining approach preserves source identity at every hop (security group 
 
 | Repository | Purpose | Owner | CODEOWNERS |
 |------------|---------|-------|------------|
-| [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) | Baseline SG module (TFC private registry) | Platform Engineering | Network Security (policy review) |
+| [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) | Baseline SG module (TFE private registry) | Platform Engineering | Network Security (policy review) |
 | [`aws-security-groups`](https://github.com/mbrow73/aws-security-groups) | Team self-service SG platform | Network Security | Network Security |
 
 **Ownership model:**
@@ -345,11 +345,11 @@ The team SG platform includes automated validation that runs on every PR:
 
 | Phase | Scope | Timeline |
 |-------|-------|----------|
-| 1. Module publication | Publish baseline module to TFC private registry | Week 1 |
+| 1. Module publication | Publish baseline module to TFE private registry | Week 1 |
 | 2. Canary deployment | Deploy baselines to one non-production account via AFT | Week 2 |
 | 3. Production baselines | Roll out to all EKS accounts, replace AFT-managed SGs | Weeks 3-4 |
 | 4. Team onboarding | Enable self-service for first team, iterate on docs | Week 5 |
-| 5. SCP enforcement | Restrict direct SG creation to TFC workspace roles | Week 6 |
+| 5. SCP enforcement | Restrict direct SG creation to TFE workspace roles | Week 6 |
 | 6. Full rollout | All teams onboarded, AFT SG modules decommissioned | Weeks 7-8 |
 
 ## References
