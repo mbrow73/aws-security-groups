@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted |
+| **Status** | Proposed |
 | **Date** | 2026-02-23 |
 | **Proposed by** | Maximilian Browne |
 | **Stakeholders** | Cloud Platform Engineering, Security, Application Teams |
@@ -134,7 +134,7 @@ Platform Engineer              Module Repo                    Registry
 
 ### eks-standard — Intranet-Only EKS
 
-5 security groups, 38 rules. Zero `0.0.0.0/0`. All cross-SG traffic uses security group references (SG chaining).
+5 security groups, 38 rules. All cross-SG traffic uses security group references (SG chaining).
 
 | Security Group | Purpose | Attached To |
 |----------------|---------|-------------|
@@ -155,7 +155,7 @@ Corporate Network → Intranet NLB → Istio Nodes → Worker Pods (via envoy si
 
 ### eks-internet — Internet + Intranet EKS
 
-7 security groups, ~58 rules. Zero `0.0.0.0/0`. Client IP preservation enabled — istio sees WAF NAT IPs, not NLB private IPs.
+7 security groups, ~58 rules. Client IP preservation enabled — istio sees WAF NAT IPs, not NLB private IPs.
 
 | Security Group | Purpose | Attached To |
 |----------------|---------|-------------|
@@ -245,11 +245,27 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 **Decision:** Rejected. Circular dependency between EKS and SG management is a non-starter. Baseline SGs must exist before the cluster does.
 
+### Alternative 5: Centralized Transit Gateway with AWS Network Firewall
+
+**Description:** Route all inter-VPC and egress traffic through a centralized inspection VPC using Transit Gateway and AWS Network Firewall. Enforce security policy at the network layer rather than per-resource security groups.
+
+| Pros | Cons |
+|------|------|
+| Centralized policy enforcement — single chokepoint for all traffic | **NAT gateway dependency** — each spoke VPC still requires NAT gateways for internet-bound traffic, adding significant cost and operational complexity |
+| Deep packet inspection, IDS/IPS capabilities | Adds latency to every cross-VPC flow (TGW hop + firewall inspection) |
+| Stateful rule evaluation across the org | Does not eliminate the need for security groups — SGs are still required on resources for defense-in-depth |
+| Unified logging and traffic visibility | Firewall becomes a single point of failure for all network traffic |
+| | Scaling Network Firewall endpoints across AZs is expensive |
+| | Doesn't solve the self-service problem — teams still need per-resource SGs for workload-level access |
+| | TGW routing complexity increases with every new VPC and attachment |
+
+**Decision:** Rejected. This is architecturally the strongest centralized enforcement model available, and under different circumstances would be the preferred approach. However, the NAT gateway requirement in every spoke VPC makes this cost-prohibitive at our scale. Additionally, Network Firewall operates at the VPC perimeter — it does not replace security groups for intra-VPC traffic between pods, node groups, and NLBs. We would still need the SG platform for workload-level controls even with Network Firewall in place.
+
 ## Consequences
 
 ### Positive
 
-- **Zero-trust by default** — baseline SGs use SG chaining with no `0.0.0.0/0` rules. New EKS clusters start secure.
+- **Zero-trust by default** — baseline SGs use SG chaining exclusively. New EKS clusters start with least-privilege networking.
 - **Self-service without sacrificing security** — teams get SGs in minutes via PR, not days via ticket. Guardrails prevent dangerous configs automatically.
 - **Immutable baselines** — platform team controls EKS networking SGs. Teams cannot modify them. Changes are versioned and rolled out via registry.
 - **Full audit trail** — every SG and every rule change is a Git commit with PR review, author attribution, and approval history.
@@ -289,7 +305,7 @@ The team SG platform includes automated validation that runs on every PR:
 | Check | Description | Blocking |
 |-------|-------------|----------|
 | Schema validation | Required fields, correct types, unknown key detection | Yes |
-| Guardrails | Blocked ports (telnet, SMB, NetBIOS), 0.0.0.0/0 ingress, broad ranges | Yes |
+| Guardrails | Blocked ports (telnet, SMB, NetBIOS), overly permissive ingress, broad port ranges | Yes |
 | Naming conventions | Pattern enforcement for SG names | Yes |
 | Tag compliance | Required tags: ManagedBy, Team, Environment, Application | Yes |
 | Duplicate detection | Identical rules within the same SG | Yes |
