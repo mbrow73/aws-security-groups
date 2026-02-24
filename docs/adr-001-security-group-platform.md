@@ -340,7 +340,7 @@ The team SG platform includes automated validation that runs on every PR:
 | Schema validation | Required fields, correct types, unknown key detection, invalid character filtering | Yes |
 | Guardrails | Blocked ports (telnet, SMB, NetBIOS), overly permissive ingress, broad port ranges | Yes |
 | Naming conventions | Pattern enforcement for SG names | Yes |
-| Tag compliance | Required tags: ManagedBy, Team, Environment, Application | Yes |
+| Tag compliance | Corporate mandatory tags: app-env, data-classification, app-carid, ops-supportgroup, app-supportgroup, provisioner-repo, iam-access-control | Yes |
 | Duplicate detection | Identical rules within the same SG | Yes |
 | Environment validation | Must be prod, test, or dev | Yes |
 | PCI DSS warnings | Advisory warnings for relevant configurations | No (warning only) |
