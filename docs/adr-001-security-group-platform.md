@@ -15,8 +15,7 @@
 Security group management across our AWS organization has historically been fragmented. Teams either create security groups ad-hoc through ClickOps, embed them in application Terraform alongside business logic, or rely on AFT account customizations to deploy policy-layer SGs during provisioning. This has led to:
 
 - **Inconsistent naming and tagging** across accounts, making audit and inventory unreliable
-- **Overly permissive rules** that go unreviewed (e.g., `0.0.0.0/0` ingress, wide port ranges)
-- **No guardrails** preventing dangerous configurations before they reach AWS
+- **Overly permissive rules** that go unreviewed (wide port ranges, broad CIDR scopes)
 - **Custom SGs coupled to AFT**, turning an account factory into a policy deployment engine - a single SG template leaks identical rules to every account regardless of workload requirements
 - **No visibility** into what security groups exist, who owns them, or why they were created
 - **Drift** between what was intended and what's deployed, with no detection mechanism
@@ -105,7 +104,7 @@ Developer                    Platform                        AWS
 
 ### Automatic TFE Workspace Provisioning
 
-When a team submits their first PR for a new account, the platform automatically provisions a TFE workspace:
+When a PR introducing a new account is merged to main, the platform automatically provisions a TFE workspace:
 
 ```
 New Account PR                Platform                        TFE
@@ -114,28 +113,33 @@ New Account PR                Platform                        TFE
    │  accounts/<new-id>/sg.yaml │                              │
    │───────────────────────────►│                              │
    │                            │                              │
-   │  2. GitHub Actions detects │                              │
-   │     new account directory  │                              │
-   │                            │  3. TFE API: create workspace│
+   │  2. Validation runs on PR  │                              │
+   │     (schema, guardrails)   │                              │
+   │◄───────────────────────────│                              │
+   │                            │                              │
+   │  3. NetSec reviews,        │                              │
+   │     approves, merges       │                              │
+   │───────────────────────────►│                              │
+   │                            │                              │
+   │  4. Post-merge workflow    │                              │
+   │     detects new account    │                              │
+   │     directory in diff      │                              │
+   │                            │  5. TFE API: create workspace│
    │                            │  (per-account state isolation)│
    │                            │────────────────────────────►│
    │                            │                              │
-   │                            │  4. Configure VCS trigger,   │
+   │                            │  6. Configure VCS trigger,   │
    │                            │     working directory,       │
    │                            │     OIDC auth, variables     │
    │                            │────────────────────────────►│
    │                            │                              │
-   │  5. Validation runs as     │                              │
-   │     normal on the PR       │                              │
-   │◄───────────────────────────│                              │
-   │                            │                              │
-   │  6. On merge, new workspace│                              │
-   │     triggers first apply   │                              │
+   │                            │  7. New workspace triggers   │
+   │                            │     first apply              │
    │                            │────────────────────────────►│
    │                            │                              │
 ```
 
-Each AWS account gets an isolated TFE workspace with its own state. Workspace creation is triggered by the presence of a new `accounts/<id>/` directory in the PR diff. No manual TFE setup required.
+Each AWS account gets an isolated TFE workspace with its own state. Workspace creation is triggered post-merge by the presence of a new `accounts/<id>/` directory in the diff. No workspace is provisioned until NetSec has reviewed and approved the PR. No manual TFE setup required.
 
 ### Baseline Change Flow
 
@@ -174,8 +178,8 @@ Platform Engineer              Module Repo                    TFE / Registry
 |----------------|---------|-------------|
 | `baseline-eks-cluster` | Control plane ↔ node communication | EKS cluster |
 | `baseline-eks-workers` | Worker mesh, DNS, kubelet, VPC endpoints | Node group launch template |
-| `baseline-istio-nodes` | Istio gateway ↔ worker mesh, NLB ingress | Istio node group launch template |
-| `baseline-intranet-nlb` | Corporate/on-prem ingress | Intranet NLB |
+| `baseline-istio-nodes` | Istio gateway: ingress from NLB SG, egress to worker mesh SG | Istio node group launch template |
+| `baseline-intranet-nlb` | Ingress from corporate prefix list, forwarding to Istio nodes SG | Intranet NLB |
 | `baseline-vpc-endpoints` | VPC endpoint access from all nodes | VPC interface endpoints |
 
 **Traffic flow:**
@@ -217,7 +221,7 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Security Group | Purpose | Attached To |
 |----------------|---------|-------------|
-| `baseline-vpc-endpoints` | HTTPS/HTTP from VPC CIDR to endpoint ENIs | VPC interface endpoints |
+| `baseline-vpc-endpoints` | HTTPS (443) from VPC CIDR to interface endpoint ENIs. Requires `vpc_cidr` input variable. | VPC interface endpoints |
 
 ## Alternatives Considered
 
@@ -243,14 +247,14 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Pros | Cons |
 |------|------|
-| AWS-native, integrates with AWS Organizations | SG chaining requires dynamic, per-VPC security group ID references — FMS replicates SGs but cannot resolve cross-SG references to VPC-local IDs, making multi-SG relationship models impractical |
+| AWS-native, integrates with AWS Organizations | SG chaining requires dynamic, per-VPC security group ID references - FMS replicates SGs but cannot resolve cross-SG references to VPC-local IDs, making multi-SG relationship models impractical |
 | Automatic remediation - can enforce and revert non-compliant SGs | Coarse-grained policy model - "common SG" policies apply uniformly to all matching resources, not per-workload |
 | Built-in compliance reporting and audit SG policies | Limited rule-level guardrails - policies operate at the SG level, not individual rule validation |
 | Can be managed via Terraform (`aws_fms_policy`) - GitOps is possible | "Audit" policies detect violations but cannot express complex rules like "block port ranges >1000" |
 | "Common security group" policies can deploy SGs to matching resources automatically | No separation of baseline vs team SGs - policies apply organization-wide by resource tag or type |
 | | Cost: per-policy per-region pricing scales with org complexity |
 
-**Decision:** Rejected. Firewall Manager provides strong compliance auditing and can be IaC-managed, but its policy model is too coarse for our requirements. FMS can replicate SGs containing security group references, but those references are static SG IDs — they don't resolve to VPC-local SGs in each target account. Our baseline requires 5-7 SGs per VPC with cross-references that are unique per deployment, which is foundational to our zero-trust EKS networking model. Its strength is enforcing uniform policies across the org - useful for guardrails, but insufficient as the primary SG management platform where per-workload customization is required.
+**Decision:** Rejected. Firewall Manager provides strong compliance auditing and can be IaC-managed, but its policy model is too coarse for our requirements. FMS can replicate SGs containing security group references, but those references are static SG IDs - they don't resolve to VPC-local SGs in each target account. Our baseline requires 5-7 SGs per VPC with cross-references that are unique per deployment, which is foundational to our zero-trust EKS networking model. Its strength is enforcing uniform policies across the org - useful for guardrails, but insufficient as the primary SG management platform where per-workload customization is required.
 
 ### Alternative 3: Service Catalog
 
@@ -298,7 +302,7 @@ The SG chaining approach preserves source identity at every hop (security group 
 
 ### Negative
 
-- **Two repos to maintain** - baseline module and team SG platform are separate codebases. Increases surface area for maintenance.
+- **Two repos to maintain** - baseline module and team SG platform are separate codebases. Mitigated by clear ownership boundaries: Platform Engineering owns baselines, Network Security owns self-service.
 - **SG attachment is out-of-band** - the platform creates SGs but does not attach them to resources. Attachment is the consumer's responsibility. Mitigated by tagging and AWS Config detection.
 - **Prefix list management is centralized** - adding a new prefix list entry requires a baseline module PR. This is intentional (security control) but adds friction for urgent changes.
 - **Learning curve** - teams must learn the YAML schema and PR workflow. Mitigated by the team guide, example templates, and clear validation error messages.
@@ -319,8 +323,8 @@ The SG chaining approach preserves source identity at every hop (security group 
 
 | Repository | Purpose | Owner | CODEOWNERS |
 |------------|---------|-------|------------|
-| [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) | Baseline SG module (TFE private registry) | Platform Engineering | Network Security (policy review) |
-| [`aws-security-groups`](https://github.com/mbrow73/aws-security-groups) | Team self-service SG platform | Network Security | Network Security |
+| `terraform-aws-eks-baseline-sgs` | Baseline SG module (TFE private registry) | Platform Engineering | Network Security (policy review) |
+| `aws-security-groups` | Team self-service SG platform | Network Security | Network Security |
 
 **Ownership model:**
 - **Platform Engineering** owns baseline SG operations - they deploy, version, and are responsible for outages caused by rule changes.
@@ -333,7 +337,7 @@ The team SG platform includes automated validation that runs on every PR:
 
 | Check | Description | Blocking |
 |-------|-------------|----------|
-| Schema validation | Required fields, correct types, unknown key detection | Yes |
+| Schema validation | Required fields, correct types, unknown key detection, invalid character filtering | Yes |
 | Guardrails | Blocked ports (telnet, SMB, NetBIOS), overly permissive ingress, broad port ranges | Yes |
 | Naming conventions | Pattern enforcement for SG names | Yes |
 | Tag compliance | Required tags: ManagedBy, Team, Environment, Application | Yes |
@@ -357,4 +361,4 @@ The team SG platform includes automated validation that runs on every PR:
 - [Operational Model](./operational-model.md) - Detailed two-layer SG model documentation
 - [Anti-Patterns & Mitigations](./anti-patterns-and-mitigations.md) - Risk analysis and layered defenses
 - [Team Guide](./team-guide.md) - How to request security groups
-- [Baseline Profiles](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs/blob/main/BASELINE-PROFILES.md) - Complete SG rule tables
+- Baseline Profiles (BASELINE-PROFILES.md in baseline module repo) - Complete SG rule tables
