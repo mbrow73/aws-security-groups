@@ -172,7 +172,7 @@ Platform Engineer              Module Repo                    TFE / Registry
 
 ### eks-standard - Intranet-Only EKS
 
-5 security groups, 38 rules. All cross-SG traffic uses security group references (SG chaining).
+5 security groups, 37 rules. All cross-SG traffic uses security group references (SG chaining).
 
 | Security Group | Purpose | Attached To |
 |----------------|---------|-------------|
@@ -193,7 +193,7 @@ Corporate Network → Intranet NLB → Istio Nodes → Worker Pods (via envoy si
 
 ### eks-internet - Internet + Intranet EKS
 
-7 security groups, ~58 rules. NLB client IP preservation enabled - Istio targets see the WAF's outbound NAT IPs (the true upstream source) rather than the NLB's private IPs, enabling security group rules scoped to WAF origin.
+7 security groups, ~57 rules. NLB client IP preservation enabled - Istio targets see the WAF's outbound NAT IPs (the true upstream source) rather than the NLB's private IPs, enabling security group rules scoped to WAF origin.
 
 | Security Group | Purpose | Attached To |
 |----------------|---------|-------------|
@@ -217,7 +217,7 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 ### vpc-endpoints - Standalone
 
-1 security group, 2 rules. For non-EKS accounts needing VPC endpoint access.
+1 security group, 1 rule. For non-EKS accounts needing VPC endpoint access.
 
 | Security Group | Purpose | Attached To |
 |----------------|---------|-------------|
