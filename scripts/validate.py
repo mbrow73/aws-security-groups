@@ -197,6 +197,7 @@ class SecurityGroupValidator:
         self._validate_guardrails(data, summary)
         self._validate_naming_conventions(data, summary)
         self._validate_prefix_list_references(data, summary)
+        self._validate_unicode_characters(data, summary)
         
         return summary
     
@@ -840,7 +841,7 @@ class SecurityGroupValidator:
                 network = ipaddress.IPv6Network(cidr, strict=False)
             else:
                 network = ipaddress.IPv4Network(cidr, strict=False)
-        except ipaddress.AddressValueError as e:
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError) as e:
             summary.add_result(ValidationResult(
                 level='error',
                 message=f"Invalid CIDR block '{cidr}' in {sg_name} {rule_type}[{rule_index}]: {e}",
@@ -1060,6 +1061,71 @@ class SecurityGroupValidator:
                         context=f"security_group.{sg_name}"
                     ))
     
+
+    def _validate_unicode_characters(self, data: Dict[str, Any], summary: ValidationSummary):
+        """Validate that all string fields contain only ASCII-printable characters.
+        
+        Non-ASCII characters (unicode, emoji, zero-width chars, homoglyphs) in security
+        group names, descriptions, tags, and CIDR values can cause TFE/Terraform errors
+        or create confusing/misleading configurations.
+        """
+        import string
+        PRINTABLE = set(string.printable)
+        
+        def check_ascii(value: str, field_path: str):
+            """Check a string value for non-ASCII/non-printable characters."""
+            for i, ch in enumerate(value):
+                if ch not in PRINTABLE:
+                    # Get a readable representation of the offending character
+                    char_repr = repr(ch)
+                    cp = ord(ch)
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Non-ASCII character {char_repr} (U+{cp:04X}) found in {field_path} at position {i} — only ASCII-printable characters are allowed. Non-ASCII characters cause TFE/Terraform errors.",
+                        rule='unicode_character',
+                        context=field_path
+                    ))
+                    return  # One error per field is enough
+        
+        if 'security_groups' not in data or not isinstance(data['security_groups'], dict):
+            return
+        
+        for sg_name, sg_config in data['security_groups'].items():
+            # Check SG name
+            check_ascii(sg_name, f"security_group.{sg_name}.name")
+            
+            if not isinstance(sg_config, dict):
+                continue
+            
+            # Check description
+            if 'description' in sg_config and isinstance(sg_config['description'], str):
+                check_ascii(sg_config['description'], f"security_group.{sg_name}.description")
+            
+            # Check tags
+            if 'tags' in sg_config and isinstance(sg_config['tags'], dict):
+                for tag_key, tag_value in sg_config['tags'].items():
+                    if isinstance(tag_key, str):
+                        check_ascii(tag_key, f"security_group.{sg_name}.tags.key.{tag_key}")
+                    if isinstance(tag_value, str):
+                        check_ascii(tag_value, f"security_group.{sg_name}.tags.value.{tag_key}")
+            
+            # Check rules
+            for rule_type in ['ingress', 'egress']:
+                if rule_type not in sg_config or not isinstance(sg_config[rule_type], list):
+                    continue
+                for i, rule in enumerate(sg_config[rule_type]):
+                    if not isinstance(rule, dict):
+                        continue
+                    # Check rule description
+                    if 'description' in rule and isinstance(rule['description'], str):
+                        check_ascii(rule['description'], f"security_group.{sg_name}.{rule_type}[{i}].description")
+                    # Check CIDR blocks
+                    for cidr_field in ['cidr_blocks', 'ipv6_cidr_blocks']:
+                        if cidr_field in rule and isinstance(rule[cidr_field], list):
+                            for j, cidr in enumerate(rule[cidr_field]):
+                                if isinstance(cidr, str):
+                                    check_ascii(cidr, f"security_group.{sg_name}.{rule_type}[{i}].{cidr_field}[{j}]")
+
     def _validate_prefix_list_references(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate that all referenced prefix lists are defined"""
         if 'security_groups' not in data or not isinstance(data['security_groups'], dict):

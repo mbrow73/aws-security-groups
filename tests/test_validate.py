@@ -542,3 +542,137 @@ class TestGuardrails:
         summary = _validate(repo_root, '100000000001', data)
         warn_rules = [w.rule for w in summary.warnings]
         assert 'high_risk_pattern' in warn_rules
+
+
+# ============================================================
+# Unicode/special character validation tests
+# ============================================================
+
+class TestUnicodeCharacterValidation:
+    def test_ascii_values_pass(self, repo_root):
+        """Normal ASCII values should not trigger unicode errors."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'web-app-sg': {
+                    'description': 'Web application security group',
+                    'tags': {'ManagedBy': 'sg-platform', 'Application': 'web-app'},
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                        'description': 'HTTPS from app subnet',
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        unicode_errors = [e for e in summary.errors if e.rule == 'unicode_character']
+        assert len(unicode_errors) == 0
+
+    def test_unicode_in_sg_name(self, repo_root):
+        """Unicode characters in SG names should be rejected."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'wéb-app-sg': {  # accented e
+                    'description': 'test',
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        unicode_errors = [e for e in summary.errors if e.rule == 'unicode_character']
+        assert len(unicode_errors) >= 1
+        assert any('name' in e.context for e in unicode_errors)
+
+    def test_zero_width_chars_in_description(self, repo_root):
+        """Zero-width characters in descriptions should be caught."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'Web app \u200b security group',  # zero-width space
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        unicode_errors = [e for e in summary.errors if e.rule == 'unicode_character']
+        assert len(unicode_errors) >= 1
+        assert any('description' in e.context for e in unicode_errors)
+
+    def test_emoji_in_tag_values(self, repo_root):
+        """Emoji in tag values should be caught."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'tags': {'Application': 'web-app 🚀'},
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        unicode_errors = [e for e in summary.errors if e.rule == 'unicode_character']
+        assert len(unicode_errors) >= 1
+        assert any('tags' in e.context for e in unicode_errors)
+
+    def test_accented_chars_in_cidr(self, repo_root):
+        """Accented characters in CIDR values should be caught."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/²4'],  # superscript 2
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        unicode_errors = [e for e in summary.errors if e.rule == 'unicode_character']
+        assert len(unicode_errors) >= 1
+        assert any('cidr_blocks' in e.context for e in unicode_errors)
+
+    def test_unicode_in_rule_description(self, repo_root):
+        """Unicode in rule descriptions should be caught."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                        'description': 'Allow HTTPS — secure',  # em dash
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        unicode_errors = [e for e in summary.errors if e.rule == 'unicode_character']
+        assert len(unicode_errors) >= 1
