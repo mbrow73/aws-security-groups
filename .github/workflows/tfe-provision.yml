@@ -66,30 +66,24 @@ jobs:
       - name: Provision workspaces and trigger runs
         env:
           TFE_TOKEN: ${{ secrets.TFE_TOKEN }}
+          TFE_ORG: ${{ secrets.TFE_ORG }}
           TFE_ADDRESS: ${{ secrets.TFE_ADDRESS }}
           TFE_PROJECT_ID: ${{ secrets.TFE_PROJECT_ID }}
         run: |
+          CHANGED="${{ needs.detect-changes.outputs.changed-accounts }}"
+          VCS_REPO="${{ github.repository }}"
+
           # If no TFE token, run in plan-only mode
           if [ -z "$TFE_TOKEN" ]; then
             echo "⚠️ TFE_TOKEN not set — running in dry-run mode"
+            export TFE_ORG="${TFE_ORG:-placeholder}"
             # Exit code 2 = "plan has changes" (not an error in dry-run)
-            python scripts/tfe_workspace.py plan \
-              --org "${TFE_ORG:-placeholder}" \
-              --changed-accounts "${{ needs.detect-changes.outputs.changed-accounts }}" \
-              --repo-root . \
-              --vcs-repo "${{ github.repository }}" \
-              --format text || EXIT_CODE=$?
+            python scripts/tfe_workspace.py plan               --changed-accounts "$CHANGED"               --repo-root .               --vcs-repo "$VCS_REPO"               --format text || EXIT_CODE=$?
             if [ "${EXIT_CODE:-0}" -eq 1 ]; then
               echo "❌ Provisioner script error"
               exit 1
             fi
             echo "✅ Dry-run plan complete (exit code ${EXIT_CODE:-0})"
           else
-            python scripts/tfe_workspace.py apply \
-              --org "${{ secrets.TFE_ORG }}" \
-              --changed-accounts "${{ needs.detect-changes.outputs.changed-accounts }}" \
-              --repo-root . \
-              --vcs-repo "${{ github.repository }}" \
-              --vcs-oauth-token-id "${{ secrets.TFE_OAUTH_TOKEN_ID }}" \
-              --format text
+            python scripts/tfe_workspace.py apply               --changed-accounts "$CHANGED"               --repo-root .               --vcs-repo "$VCS_REPO"               --vcs-oauth-token-id "${{ secrets.TFE_OAUTH_TOKEN_ID }}"               --format text
           fi
