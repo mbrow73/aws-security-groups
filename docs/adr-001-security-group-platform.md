@@ -243,14 +243,14 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Pros | Cons |
 |------|------|
-| AWS-native, integrates with AWS Organizations | Cannot dynamically manage SG reference relationships as part of its policy model - SG chaining must be managed outside FMS policies |
+| AWS-native, integrates with AWS Organizations | SG chaining requires dynamic, per-VPC security group ID references — FMS replicates SGs but cannot resolve cross-SG references to VPC-local IDs, making multi-SG relationship models impractical |
 | Automatic remediation - can enforce and revert non-compliant SGs | Coarse-grained policy model - "common SG" policies apply uniformly to all matching resources, not per-workload |
 | Built-in compliance reporting and audit SG policies | Limited rule-level guardrails - policies operate at the SG level, not individual rule validation |
 | Can be managed via Terraform (`aws_fms_policy`) - GitOps is possible | "Audit" policies detect violations but cannot express complex rules like "block port ranges >1000" |
 | "Common security group" policies can deploy SGs to matching resources automatically | No separation of baseline vs team SGs - policies apply organization-wide by resource tag or type |
 | | Cost: per-policy per-region pricing scales with org complexity |
 
-**Decision:** Rejected. Firewall Manager provides strong compliance auditing and can be IaC-managed, but its policy model is too coarse for our requirements. While FMS can deploy SGs that contain security group references, it cannot dynamically manage SG chaining relationships as part of its policy framework - which is foundational to our zero-trust EKS networking model. Its strength is enforcing uniform policies across the org - useful for guardrails, but insufficient as the primary SG management platform where per-workload customization is required.
+**Decision:** Rejected. Firewall Manager provides strong compliance auditing and can be IaC-managed, but its policy model is too coarse for our requirements. FMS can replicate SGs containing security group references, but those references are static SG IDs — they don't resolve to VPC-local SGs in each target account. Our baseline requires 5-7 SGs per VPC with cross-references that are unique per deployment, which is foundational to our zero-trust EKS networking model. Its strength is enforcing uniform policies across the org - useful for guardrails, but insufficient as the primary SG management platform where per-workload customization is required.
 
 ### Alternative 3: Service Catalog
 
