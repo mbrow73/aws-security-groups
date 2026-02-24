@@ -53,7 +53,7 @@ variable "environment" {
 }
 
 variable "tags" {
-  description = "Additional tags from account-level config"
+  description = "Additional tags from account-level config (merged with corporate mandatory tags)"
   type        = map(string)
   default     = {}
 }

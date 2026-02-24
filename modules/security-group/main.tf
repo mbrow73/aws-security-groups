@@ -13,10 +13,14 @@ terraform {
 locals {
   tags = merge(
     {
-      ManagedBy   = "sg-platform"
-      Account     = var.account_id
-      Environment = var.environment
-      Repository  = "aws-security-groups"
+      "<company>-app-env"             = var.environment
+      "<company>-data-classification" = "internal"
+      "<company>-app-carid"           = "600001725"
+      "<company>-ops-supportgroup"    = "Security_Operations_Support"
+      "<company>-app-supportgroup"    = "Security_Operations_Support"
+      "<company>-provisioner-repo"    = "placeholder"
+      "<company>-iam-access-control"  = "netsec"
+      Account                         = var.account_id
     },
     var.tags,
     var.security_group_config.tags

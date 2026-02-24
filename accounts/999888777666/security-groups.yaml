@@ -7,10 +7,13 @@ security_groups:
   eks-nodes-api:
     description: "EKS worker nodes for API service cluster"
     tags:
-      Team: "api-team"
-      Environment: "prod"
-      Application: "api-service"
-      ManagedBy: "sg-platform"
+      "<company>-app-env": "prod"
+      "<company>-data-classification": "internal"
+      "<company>-app-carid": "600001725"
+      "<company>-ops-supportgroup": "Security_Operations_Support"
+      "<company>-app-supportgroup": "Security_Operations_Support"
+      "<company>-provisioner-repo": "placeholder"
+      "<company>-iam-access-control": "netsec"
     ingress:
       - protocol: "tcp"
         from_port: 10250

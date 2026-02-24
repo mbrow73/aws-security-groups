@@ -527,8 +527,8 @@ class SecurityGroupValidator:
         
         for required_tag in required_tags:
             if required_tag not in sg_tags:
-                message = (f"❌ Missing required tag '{required_tag}' — all security groups must include ManagedBy, Environment, and Application tags for compliance tracking.\n"
-                          f"   → Add to your YAML: tags: {{ ManagedBy: \"sg-platform\", Environment: \"production\", Application: \"your-app\" }}")
+                message = (f"❌ Missing required tag '{required_tag}' — all security groups must include corporate mandatory tags for compliance tracking.\n"
+                          f"   → Required tags: <company>-app-env, <company>-data-classification, <company>-app-carid, <company>-ops-supportgroup, <company>-app-supportgroup, <company>-provisioner-repo, <company>-iam-access-control")
                 summary.add_result(ValidationResult(
                     level='error',
                     message=message,

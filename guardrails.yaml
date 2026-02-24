@@ -40,10 +40,13 @@ validation:
     security_group_pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
     max_name_length: 63
     required_tags:
-      - ManagedBy
-      - Team
-      - Environment
-      - Application
+      - "<company>-app-env"
+      - "<company>-data-classification"
+      - "<company>-app-carid"
+      - "<company>-ops-supportgroup"
+      - "<company>-app-supportgroup"
+      - "<company>-provisioner-repo"
+      - "<company>-iam-access-control"
     
 # Security group type-specific overrides
 type_overrides:

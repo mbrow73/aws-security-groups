@@ -545,6 +545,7 @@ class TestGuardrails:
 
 
 # ============================================================
+# ============================================================
 # Unicode/special character validation tests
 # ============================================================
 
@@ -556,7 +557,15 @@ class TestUnicodeCharacterValidation:
             'security_groups': {
                 'web-app-sg': {
                     'description': 'Web application security group',
-                    'tags': {'ManagedBy': 'sg-platform', 'Application': 'web-app'},
+                    'tags': {
+                        '<company>-app-env': 'prod',
+                        '<company>-data-classification': 'internal',
+                        '<company>-app-carid': '600001725',
+                        '<company>-ops-supportgroup': 'Security_Operations_Support',
+                        '<company>-app-supportgroup': 'Security_Operations_Support',
+                        '<company>-provisioner-repo': 'placeholder',
+                        '<company>-iam-access-control': 'netsec',
+                    },
                     'ingress': [{
                         'protocol': 'tcp',
                         'from_port': 443,
@@ -576,7 +585,7 @@ class TestUnicodeCharacterValidation:
         data = {
             'account_id': '100000000001',
             'security_groups': {
-                'wéb-app-sg': {  # accented e
+                'wéb-app-sg': {
                     'description': 'test',
                     'ingress': [{
                         'protocol': 'tcp',
@@ -598,7 +607,7 @@ class TestUnicodeCharacterValidation:
             'account_id': '100000000001',
             'security_groups': {
                 'my-sg': {
-                    'description': 'Web app \u200b security group',  # zero-width space
+                    'description': 'Web app \u200b security group',
                     'ingress': [{
                         'protocol': 'tcp',
                         'from_port': 443,
@@ -620,7 +629,7 @@ class TestUnicodeCharacterValidation:
             'security_groups': {
                 'my-sg': {
                     'description': 'test',
-                    'tags': {'Application': 'web-app 🚀'},
+                    'tags': {'<company>-app-env': 'web-app 🚀'},
                     'ingress': [{
                         'protocol': 'tcp',
                         'from_port': 443,
@@ -646,7 +655,7 @@ class TestUnicodeCharacterValidation:
                         'protocol': 'tcp',
                         'from_port': 443,
                         'to_port': 443,
-                        'cidr_blocks': ['10.0.0.0/²4'],  # superscript 2
+                        'cidr_blocks': ['10.0.0.0/²4'],
                     }],
                 },
             },
@@ -668,7 +677,7 @@ class TestUnicodeCharacterValidation:
                         'from_port': 443,
                         'to_port': 443,
                         'cidr_blocks': ['10.0.0.0/24'],
-                        'description': 'Allow HTTPS — secure',  # em dash
+                        'description': 'Allow HTTPS \u2014 secure',
                     }],
                 },
             },
@@ -676,3 +685,127 @@ class TestUnicodeCharacterValidation:
         summary = _validate(repo_root, '100000000001', data)
         unicode_errors = [e for e in summary.errors if e.rule == 'unicode_character']
         assert len(unicode_errors) >= 1
+
+
+# ============================================================
+# Corporate mandatory tag tests
+# ============================================================
+
+NEW_CORPORATE_TAGS = {
+    "<company>-app-env": "prod",
+    "<company>-data-classification": "internal",
+    "<company>-app-carid": "600001725",
+    "<company>-ops-supportgroup": "Security_Operations_Support",
+    "<company>-app-supportgroup": "Security_Operations_Support",
+    "<company>-provisioner-repo": "placeholder",
+    "<company>-iam-access-control": "netsec",
+}
+
+CORPORATE_TAG_KEYS = list(NEW_CORPORATE_TAGS.keys())
+
+
+@pytest.fixture
+def repo_root_with_tags():
+    """Create a temporary repo root with corporate mandatory tag enforcement."""
+    tmpdir = tempfile.mkdtemp()
+
+    guardrails = {
+        'validation': {
+            'blocked_cidrs': ['0.0.0.0/0', '::/0'],
+            'blocked_ports': [23, 135, 139, 445],
+            'port_ranges': {'max_range_size': 1000},
+            'rules': {
+                'max_ingress_rules': 60,
+                'max_egress_rules': 60,
+            },
+            'naming': {
+                'security_group_pattern': r'^[a-z0-9][a-z0-9-]*[a-z0-9]$',
+                'max_name_length': 63,
+                'required_tags': CORPORATE_TAG_KEYS,
+            },
+        },
+        'type_overrides': {},
+    }
+
+    prefix_lists = {
+        'prefix_lists': {
+            'corporate-networks': {
+                'description': 'Corporate office CIDRs',
+                'entries': ['10.100.0.0/16'],
+            },
+        },
+    }
+
+    with open(os.path.join(tmpdir, 'guardrails.yaml'), 'w') as f:
+        yaml.dump(guardrails, f)
+    with open(os.path.join(tmpdir, 'prefix-lists.yaml'), 'w') as f:
+        yaml.dump(prefix_lists, f)
+
+    yield tmpdir
+    shutil.rmtree(tmpdir)
+
+
+class TestCorporateMandatoryTags:
+    def test_missing_all_tags_gives_errors(self, repo_root_with_tags):
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'tags': {},
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root_with_tags, '100000000001', data)
+        tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
+        assert len(tag_errors) == 7, f"Expected 7 missing tag errors, got {len(tag_errors)}"
+
+    def test_all_corporate_tags_present_passes(self, repo_root_with_tags):
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'tags': NEW_CORPORATE_TAGS,
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root_with_tags, '100000000001', data)
+        tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
+        assert len(tag_errors) == 0
+
+    def test_partial_corporate_tags_gives_errors(self, repo_root_with_tags):
+        partial_tags = {
+            "<company>-app-env": "prod",
+            "<company>-data-classification": "internal",
+        }
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'tags': partial_tags,
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root_with_tags, '100000000001', data)
+        tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
+        assert len(tag_errors) == 5

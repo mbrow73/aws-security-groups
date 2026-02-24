@@ -18,10 +18,13 @@
      my-app-db-access:
        description: "My app database connectivity"
        tags:
-         Team: "my-team"
-         Environment: "prod"
-         Application: "my-app"
-         ManagedBy: "sg-platform"
+         "<company>-app-env": "prod"
+         "<company>-data-classification": "internal"
+         "<company>-app-carid": "600001725"
+         "<company>-ops-supportgroup": "Security_Operations_Support"
+         "<company>-app-supportgroup": "Security_Operations_Support"
+         "<company>-provisioner-repo": "placeholder"
+         "<company>-iam-access-control": "netsec"
        egress:
          - protocol: "tcp"
            from_port: 5432
@@ -50,10 +53,13 @@ security_groups:
   sg-name:                           # Name becomes the SG name prefix
     description: "What this SG is for"
     tags:
-      Team: "your-team"              # Required
-      Environment: "prod"      # Required
-      Application: "your-app"        # Required
-      ManagedBy: "sg-platform"       # Required
+      "<company>-app-env": "prod"                                    # Required - from environment field
+      "<company>-data-classification": "internal"                    # Required
+      "<company>-app-carid": "600001725"                             # Required
+      "<company>-ops-supportgroup": "Security_Operations_Support"    # Required
+      "<company>-app-supportgroup": "Security_Operations_Support"    # Required
+      "<company>-provisioner-repo": "placeholder"                    # Required
+      "<company>-iam-access-control": "netsec"                       # Required
     ingress:                         # Inbound rules
       - protocol: "tcp"
         from_port: 443
