@@ -10,7 +10,7 @@
 2. Edit `accounts/<your-account-id>/security-groups.yaml`:
    ```yaml
    account_id: "123456789012"
-   environment: "production"
+   environment: "prod"
    baseline_profiles:
      - eks-standard
 
@@ -19,7 +19,7 @@
        description: "My app database connectivity"
        tags:
          Team: "my-team"
-         Environment: "production"
+         Environment: "prod"
          Application: "my-app"
          ManagedBy: "sg-platform"
        egress:
@@ -34,13 +34,13 @@
 
 4. Validation runs automatically — fix any errors and push.
 
-5. Once approved and merged, Terraform Cloud deploys your SGs.
+5. Once approved and merged, Terraform Enterprise deploys your SGs.
 
 ## YAML Schema
 
 ```yaml
 account_id: "123456789012"          # Required: 12-digit AWS account ID
-environment: "production"            # Required: prod | test | dev
+environment: "prod"            # Required: prod | test | dev
 
 baseline_profiles:                   # Optional: pre-built SG sets
   - eks-standard                     # Intranet-only EKS (auto-includes vpc-endpoints)
@@ -51,7 +51,7 @@ security_groups:
     description: "What this SG is for"
     tags:
       Team: "your-team"              # Required
-      Environment: "production"      # Required
+      Environment: "prod"      # Required
       Application: "your-app"        # Required
       ManagedBy: "sg-platform"       # Required
     ingress:                         # Inbound rules
@@ -85,7 +85,7 @@ security_groups:
 
 ## Baseline Profiles
 
-See [BASELINE-PROFILES.md](../baseline/profiles/BASELINE-PROFILES.md) for full SG/rule tables.
+See [BASELINE-PROFILES.md](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs/blob/main/BASELINE-PROFILES.md) for full SG/rule tables.
 
 | Profile | What You Get |
 |---|---|

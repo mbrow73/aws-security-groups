@@ -1,12 +1,12 @@
 account_id: "999888777666"
-environment: "production"
+environment: "prod"
 
 security_groups:
   app-backend:
     description: "Backend API service"
     tags:
       Team: "backend"
-      Environment: "production"
+      Environment: "prod"
       Application: "order-service"
       ManagedBy: "sg-platform"
     ingress:

@@ -19,7 +19,7 @@
 | Tag | Description | Example |
 |---|---|---|
 | `Team` | Owning team | `payments` |
-| `Environment` | Deployment environment | `production` |
+| `Environment` | Deployment environment | `prod` |
 | `Application` | Application name | `order-service` |
 | `ManagedBy` | Always `sg-platform` | `sg-platform` |
 
@@ -36,7 +36,7 @@ aws-security-groups/
 ├── accounts/
 │   └── {account-id}/
 │       └── security-groups.yaml
-├── baseline/
+# Baselines: see terraform-aws-eks-baseline-sgs repo
 │   ├── main.tf                  # Orchestrator
 │   ├── profiles/                # Baseline SG definitions
 │   ├── prefix-lists.tf          # Org-wide prefix lists
@@ -53,9 +53,11 @@ aws-security-groups/
 └── prefix-lists.yaml            # Prefix list definitions
 ```
 
-## TFC Workspace Names
+## TFE Workspace Names
+
+> Workspaces are auto-provisioned via CloudIaC API. See [TFE Setup](tfe-setup.md).
 
 | Pattern | Example |
 |---|---|
-| `sg-baseline-{account_id}` | `sg-baseline-111222333444` |
+| `sg-{account_id}` | `sg-111222333444` |
 | `sg-account-{account_id}` | `sg-account-111222333444` |

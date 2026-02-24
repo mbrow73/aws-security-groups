@@ -93,7 +93,7 @@ jobs:
           
           # If everything passed, generate a success summary
           if [ $EXIT_CODE -eq 0 ]; then
-            VALIDATION_OUTPUT="## ✅ Security Group Validation Results"$'\n\n'"**Status:** All schema, guardrails, and naming checks passed!"$'\n\n'"🚀 Once approved and merged, Terraform Cloud will handle deployment."
+            VALIDATION_OUTPUT="## ✅ Security Group Validation Results"$'\n\n'"**Status:** All schema, guardrails, and naming checks passed!"$'\n\n'"🚀 Once approved and merged, Terraform Enterprise will handle deployment."
           fi
           
           # Write summary to file for artifact upload and job output

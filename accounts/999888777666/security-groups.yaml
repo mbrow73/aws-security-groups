@@ -8,7 +8,7 @@ security_groups:
     description: "EKS worker nodes for API service cluster"
     tags:
       Team: "api-team"
-      Environment: "production"
+      Environment: "prod"
       Application: "api-service"
       ManagedBy: "sg-platform"
     ingress:

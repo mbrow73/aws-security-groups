@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-> **Note:** Baseline SG code lives in [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) (TFC private registry). This repo manages team SGs only.
+> **Note:** Baseline SG code lives in [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) (TFE private registry). This repo manages team SGs only.
 
 - **Baselines are immutable.** Platform team owns them. Teams don't touch them.
 - **Teams create new SGs** for their workloads via PR.
@@ -41,7 +41,7 @@ security_groups:
     description: "Payments service database connectivity"
     tags:
       Team: "payments"
-      Environment: "production"
+      Environment: "prod"
       Application: "payments-api"
       ManagedBy: "sg-platform"
     egress:
@@ -149,19 +149,19 @@ This is a **platform PR**, reviewed by the platform/security team. Never a team 
 ```
 Account Onboarding:
   1. Team selects baseline profile (eks-standard or eks-internet)
-  2. Platform team deploys baselines via TFC
+  2. Platform team deploys baselines via TFE
   3. Baselines attach to node groups in launch templates
 
 Day-to-Day Operations:
   1. Team needs new access (database, external API, cross-service)
   2. Team opens PR adding SG to their account YAML
   3. Validation runs, platform team reviews
-  4. Merge → TFC creates the SG
+  4. Merge → TFE creates the SG
   5. Team attaches SG to their resources (node group, RDS, ALB, etc.)
 
 Baseline Updates (Rare):
   1. Platform team identifies networking change needed
   2. Platform PR updates baseline profile code
   3. Orchestrator tests validate the change
-  4. Merge → TFC applies across all accounts using that profile
+  4. Merge → TFE applies across all accounts using that profile
 ```

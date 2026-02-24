@@ -68,15 +68,15 @@ These two layers together provide defense in depth. SGs don't need pod-level gra
 
 ## Risk 5: Drift Between YAML and Reality
 
-**Risk:** Console changes to SGs (ClickOps) cause drift from Terraform state. Next TFC apply reverts the manual change.
+**Risk:** Console changes to SGs (ClickOps) cause drift from Terraform state. Next TFE apply reverts the manual change.
 
 **Mitigation:**
 
 This is actually **desired behavior** — Terraform auto-heals drift on every apply. The only scenario where this is a problem is break-glass incident response:
 
 1. **Normal operations:** All SG changes go through Terraform. Console access for SG modification is blocked by SCP (Risk 2).
-2. **Break-glass:** During a Terraform outage or critical incident, an engineer uses emergency console access to modify an SG. CloudTrail alerts fire. After the incident, the team PRs the change into YAML so the next TFC run preserves it instead of reverting it.
-3. **Post-incident:** TFC apply reconciles desired state. If the emergency rule wasn't PR'd, it gets reverted — which is the correct behavior (temporary emergency access should be temporary).
+2. **Break-glass:** During a Terraform outage or critical incident, an engineer uses emergency console access to modify an SG. CloudTrail alerts fire. After the incident, the team PRs the change into YAML so the next TFE run preserves it instead of reverting it.
+3. **Post-incident:** TFE apply reconciles desired state. If the emergency rule wasn't PR'd, it gets reverted — which is the correct behavior (temporary emergency access should be temporary).
 
 **Status:** Mitigated by SCP (prevents casual drift) + CloudTrail (catches break-glass). No additional work needed.
 

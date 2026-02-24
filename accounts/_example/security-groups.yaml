@@ -20,7 +20,7 @@ security_groups:
     description: "Backend API service"
     tags:
       Team: "backend"
-      Environment: "production"
+      Environment: "prod"
       Application: "order-service"
       ManagedBy: "sg-platform"
     ingress:
@@ -56,7 +56,7 @@ security_groups:
     description: "PostgreSQL RDS"
     tags:
       Team: "data"
-      Environment: "production"
+      Environment: "prod"
       Application: "postgres"
       ManagedBy: "sg-platform"
     ingress:
