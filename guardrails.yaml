@@ -47,6 +47,7 @@ validation:
       - "<company>-app-supportgroup"
       - "<company>-provisioner-repo"
       - "<company>-iam-access-control"
+      - "<company>-provisioner-workspace"
     
 # Security group type-specific overrides
 type_overrides:

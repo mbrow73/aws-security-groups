@@ -528,7 +528,7 @@ class SecurityGroupValidator:
         for required_tag in required_tags:
             if required_tag not in sg_tags:
                 message = (f"❌ Missing required tag '{required_tag}' — all security groups must include corporate mandatory tags for compliance tracking.\n"
-                          f"   → Required tags: <company>-app-env, <company>-data-classification, <company>-app-carid, <company>-ops-supportgroup, <company>-app-supportgroup, <company>-provisioner-repo, <company>-iam-access-control")
+                          f"   → Required tags: <company>-app-env, <company>-data-classification, <company>-app-carid, <company>-ops-supportgroup, <company>-app-supportgroup, <company>-provisioner-repo, <company>-iam-access-control, <company>-provisioner-workspace")
                 summary.add_result(ValidationResult(
                     level='error',
                     message=message,

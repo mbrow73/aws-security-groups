@@ -565,6 +565,7 @@ class TestUnicodeCharacterValidation:
                         '<company>-app-supportgroup': 'Security_Operations_Support',
                         '<company>-provisioner-repo': 'placeholder',
                         '<company>-iam-access-control': 'netsec',
+                        '<company>-provisioner-workspace': '600001725-prod-sg-100000000001',
                     },
                     'ingress': [{
                         'protocol': 'tcp',
@@ -699,6 +700,7 @@ NEW_CORPORATE_TAGS = {
     "<company>-app-supportgroup": "Security_Operations_Support",
     "<company>-provisioner-repo": "placeholder",
     "<company>-iam-access-control": "netsec",
+    "<company>-provisioner-workspace": "600001725-prod-sg-100000000001",
 }
 
 CORPORATE_TAG_KEYS = list(NEW_CORPORATE_TAGS.keys())
@@ -764,7 +766,7 @@ class TestCorporateMandatoryTags:
         }
         summary = _validate(repo_root_with_tags, '100000000001', data)
         tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
-        assert len(tag_errors) == 7, f"Expected 7 missing tag errors, got {len(tag_errors)}"
+        assert len(tag_errors) == 8, f"Expected 8 missing tag errors, got {len(tag_errors)}"
 
     def test_all_corporate_tags_present_passes(self, repo_root_with_tags):
         data = {
@@ -808,4 +810,4 @@ class TestCorporateMandatoryTags:
         }
         summary = _validate(repo_root_with_tags, '100000000001', data)
         tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
-        assert len(tag_errors) == 5
+        assert len(tag_errors) == 6

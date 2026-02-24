@@ -25,6 +25,7 @@
          "<company>-app-supportgroup": "Security_Operations_Support"
          "<company>-provisioner-repo": "placeholder"
          "<company>-iam-access-control": "netsec"
+         "<company>-provisioner-workspace": "600001725-prod-sg-123456789012"
        egress:
          - protocol: "tcp"
            from_port: 5432
@@ -60,6 +61,7 @@ security_groups:
       "<company>-app-supportgroup": "Security_Operations_Support"    # Required
       "<company>-provisioner-repo": "placeholder"                    # Required
       "<company>-iam-access-control": "netsec"                       # Required
+      "<company>-provisioner-workspace": "600001725-prod-sg-123456789012" # Required
     ingress:                         # Inbound rules
       - protocol: "tcp"
         from_port: 443
