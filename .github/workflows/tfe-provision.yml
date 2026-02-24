@@ -72,12 +72,18 @@ jobs:
           # If no TFE token, run in plan-only mode
           if [ -z "$TFE_TOKEN" ]; then
             echo "⚠️ TFE_TOKEN not set — running in dry-run mode"
+            # Exit code 2 = "plan has changes" (not an error in dry-run)
             python scripts/tfe_workspace.py plan \
-              --org "${{ secrets.TFE_ORG }}" \
+              --org "${TFE_ORG:-placeholder}" \
               --changed-accounts "${{ needs.detect-changes.outputs.changed-accounts }}" \
               --repo-root . \
               --vcs-repo "${{ github.repository }}" \
-              --format text
+              --format text || EXIT_CODE=$?
+            if [ "${EXIT_CODE:-0}" -eq 1 ]; then
+              echo "❌ Provisioner script error"
+              exit 1
+            fi
+            echo "✅ Dry-run plan complete (exit code ${EXIT_CODE:-0})"
           else
             python scripts/tfe_workspace.py apply \
               --org "${{ secrets.TFE_ORG }}" \
