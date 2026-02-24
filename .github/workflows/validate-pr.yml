@@ -7,7 +7,6 @@ on:
       - 'accounts/**'
       - 'guardrails.yaml'
       - 'prefix-lists.yaml'
-      - 'baseline/**'
       - 'modules/**'
       - 'scripts/**'
 
@@ -17,7 +16,6 @@ permissions:
   pull-requests: write
 
 env:
-  AWS_REGION: us-east-1
   PYTHON_VERSION: '3.11'
 
 jobs:
@@ -26,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed-accounts: ${{ steps.detect.outputs.accounts }}
-      baseline-changed: ${{ steps.detect.outputs.baseline_changed }}
+      has-accounts: ${{ steps.detect.outputs.has_accounts }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,19 +37,24 @@ jobs:
           CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
           echo "Changed files:"
           echo "$CHANGED_FILES"
+          
           ACCOUNTS=$(echo "$CHANGED_FILES" | grep -E '^accounts/[0-9]+/' | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//')
-          BASELINE_CHANGED="false"
-          if echo "$CHANGED_FILES" | grep -qE '^(baseline/|guardrails\.yaml|prefix-lists\.yaml)'; then
-            BASELINE_CHANGED="true"
+          
+          if [ -n "$ACCOUNTS" ]; then
+            echo "accounts=$ACCOUNTS" >> $GITHUB_OUTPUT
+            echo "has_accounts=true" >> $GITHUB_OUTPUT
+          else
+            echo "accounts=" >> $GITHUB_OUTPUT
+            echo "has_accounts=false" >> $GITHUB_OUTPUT
           fi
-          echo "accounts=$ACCOUNTS" >> $GITHUB_OUTPUT
-          echo "baseline_changed=$BASELINE_CHANGED" >> $GITHUB_OUTPUT
 
   validate:
     name: "Validate Security Groups"
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: needs.detect-changes.outputs.changed-accounts != ''
+    if: needs.detect-changes.outputs.has-accounts == 'true'
+    outputs:
+      summary: ${{ steps.validate.outputs.summary }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,72 +79,61 @@ jobs:
             echo "Validating account: $account"
             echo "========================================="
             
-            # Run validation and capture output
-            if ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown  2>&1); then
-              VALIDATION_OUTPUT="$VALIDATION_OUTPUT$ACCOUNT_OUTPUT"$'\n\n'
-            else
-              ACCOUNT_EXIT_CODE=$?
-              VALIDATION_OUTPUT="$VALIDATION_OUTPUT$ACCOUNT_OUTPUT"$'\n\n'
-              if [ $ACCOUNT_EXIT_CODE -eq 1 ]; then
-                EXIT_CODE=1  # Errors found
-              elif [ $ACCOUNT_EXIT_CODE -eq 2 ] && [ $EXIT_CODE -eq 0 ]; then
-                EXIT_CODE=2  # Warnings only
-              fi
+            ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown 2>&1) || ACCOUNT_EXIT_CODE=$?
+            ACCOUNT_EXIT_CODE=${ACCOUNT_EXIT_CODE:-0}
+            
+            VALIDATION_OUTPUT="${VALIDATION_OUTPUT}${ACCOUNT_OUTPUT}"$'\n\n'
+            
+            if [ $ACCOUNT_EXIT_CODE -eq 1 ]; then
+              EXIT_CODE=1
+            elif [ $ACCOUNT_EXIT_CODE -eq 2 ] && [ $EXIT_CODE -eq 0 ]; then
+              EXIT_CODE=2
             fi
           done
           
-          # Save validation output for the comment step
-          echo "VALIDATION_OUTPUT<<EOF" >> $GITHUB_ENV
-          echo "$VALIDATION_OUTPUT" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          # If everything passed, generate a success summary
+          if [ $EXIT_CODE -eq 0 ]; then
+            VALIDATION_OUTPUT="## ✅ Security Group Validation Results"$'\n\n'"**Status:** All schema, guardrails, and naming checks passed!"$'\n\n'"🚀 Once approved and merged, Terraform Cloud will handle deployment."
+          fi
           
-          echo "EXIT_CODE=$EXIT_CODE" >> $GITHUB_ENV
+          # Write summary to file for artifact upload and job output
+          echo "$VALIDATION_OUTPUT" > /tmp/validation-summary.md
+          
+          # Also set as job output (truncated to 1MB GitHub limit)
+          {
+            echo "summary<<SUMMARY_EOF"
+            head -c 1000000 /tmp/validation-summary.md
+            echo "SUMMARY_EOF"
+          } >> $GITHUB_OUTPUT
+          
           exit $EXIT_CODE
+
+      - name: Upload validation summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-summary
+          path: /tmp/validation-summary.md
+          retention-days: 5
 
   post-summary:
     name: "Post Validation Summary"
     runs-on: ubuntu-latest
     needs: [detect-changes, validate]
-    if: always() && needs.detect-changes.outputs.changed-accounts != ''
+    if: always() && needs.detect-changes.outputs.has-accounts == 'true'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: pip install pyyaml
-        
-      - name: Generate validation summary
-        id: generate-summary
-        run: |
-          IFS=',' read -ra ACCOUNTS <<< "${{ needs.detect-changes.outputs.changed-accounts }}"
-          VALIDATION_OUTPUT=""
-          
-          for account in "${ACCOUNTS[@]}"; do
-            # Run validation with markdown output (ignore exit code for summary)
-            if ACCOUNT_OUTPUT=$(python scripts/validate.py "accounts/$account" --format markdown  2>/dev/null || true); then
-              VALIDATION_OUTPUT="$VALIDATION_OUTPUT$ACCOUNT_OUTPUT"$'\n\n'
-            fi
-          done
-          
-          # If no markdown output was generated (all passed), create a success message
-          if [ -z "$VALIDATION_OUTPUT" ] || echo "$VALIDATION_OUTPUT" | grep -q "All checks passed"; then
-            VALIDATION_OUTPUT="## ✅ Security Group Validation Results"$'\n\n'"**Status:** All schema, guardrails, and naming checks passed!"$'\n\n'"🚀 Once approved and merged, Terraform Cloud will handle deployment."
-          fi
-          
-          # Save to environment variable for the comment step
-          echo "VALIDATION_SUMMARY<<EOF" >> $GITHUB_ENV
-          echo "$VALIDATION_OUTPUT" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-      
       - name: Post summary comment
         uses: actions/github-script@v7
         with:
           script: |
+            // Get the summary from the validate job output
+            const summary = `${{ needs.validate.outputs.summary }}`;
+            
+            if (!summary || summary.trim() === '') {
+              console.log('No validation summary to post');
+              return;
+            }
+            
             // Delete previous validation comments from this workflow
             const comments = await github.rest.issues.listComments({
               issue_number: context.issue.number,
@@ -161,7 +153,6 @@ jobs:
             }
             
             // Post new summary
-            const summary = process.env.VALIDATION_SUMMARY;
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,

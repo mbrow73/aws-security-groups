@@ -2,7 +2,7 @@
 # Copy to accounts/<your-account-id>/security-groups.yaml
 
 account_id: "123456789012"
-environment: "production"  # prod | test | dev
+environment: "prod"  # prod | test | dev
 
 # Baseline profiles (optional) — pre-built zero-trust SG sets
 # eks-standard:  Intranet-only EKS (auto-deploys vpc-endpoints)
