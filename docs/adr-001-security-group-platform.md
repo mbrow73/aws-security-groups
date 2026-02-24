@@ -40,7 +40,7 @@ We will implement a **two-layer security group management platform** consisting 
 │   terraform-aws-eks-baseline-sgs (TFE Private Registry)    │
 │   ┌───────────────┐ ┌───────────────┐ ┌────────────────┐   │
 │   │ eks-standard  │ │ eks-internet  │ │ vpc-endpoints  │   │
-│   │ (4 SGs)       │ │ (6 SGs)       │ │ (1 SG)         │   │
+│   │ (5 SGs)       │ │ (7 SGs)       │ │ (1 SG)         │   │
 │   │ Intranet EKS  │ │ Internet EKS  │ │ Standalone     │   │
 │   └───────┬───────┘ └───────┬───────┘ └───────┬────────┘   │
 │           │  auto-includes  │  auto-includes   │            │
@@ -189,7 +189,7 @@ Corporate Network → Intranet NLB → Istio Nodes → Worker Pods (via envoy si
 
 ### eks-internet - Internet + Intranet EKS
 
-7 security groups, ~58 rules. Client IP preservation enabled - istio sees WAF NAT IPs, not NLB private IPs.
+7 security groups, ~58 rules. NLB client IP preservation enabled - Istio targets see the WAF's outbound NAT IPs (the true upstream source) rather than the NLB's private IPs, enabling security group rules scoped to WAF origin.
 
 | Security Group | Purpose | Attached To |
 |----------------|---------|-------------|
@@ -243,14 +243,14 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Pros | Cons |
 |------|------|
-| AWS-native, integrates with AWS Organizations | Cannot express SG chaining (security group references between SGs) |
+| AWS-native, integrates with AWS Organizations | Cannot dynamically manage SG reference relationships as part of its policy model - SG chaining must be managed outside FMS policies |
 | Automatic remediation - can enforce and revert non-compliant SGs | Coarse-grained policy model - "common SG" policies apply uniformly to all matching resources, not per-workload |
 | Built-in compliance reporting and audit SG policies | Limited rule-level guardrails - policies operate at the SG level, not individual rule validation |
 | Can be managed via Terraform (`aws_fms_policy`) - GitOps is possible | "Audit" policies detect violations but cannot express complex rules like "block port ranges >1000" |
 | "Common security group" policies can deploy SGs to matching resources automatically | No separation of baseline vs team SGs - policies apply organization-wide by resource tag or type |
 | | Cost: per-policy per-region pricing scales with org complexity |
 
-**Decision:** Rejected. Firewall Manager provides strong compliance auditing and can be IaC-managed, but its policy model is too coarse for our requirements. It cannot express security group references (SG chaining), which is foundational to our zero-trust EKS networking model. Its strength is enforcing uniform policies across the org - useful for guardrails, but insufficient as the primary SG management platform where per-workload customization is required.
+**Decision:** Rejected. Firewall Manager provides strong compliance auditing and can be IaC-managed, but its policy model is too coarse for our requirements. While FMS can deploy SGs that contain security group references, it cannot dynamically manage SG chaining relationships as part of its policy framework - which is foundational to our zero-trust EKS networking model. Its strength is enforcing uniform policies across the org - useful for guardrails, but insufficient as the primary SG management platform where per-workload customization is required.
 
 ### Alternative 3: Service Catalog
 
@@ -275,13 +275,13 @@ Corporate → Intranet NLB → Istio Intranet Nodes ─────────�
 
 | Pros | Cons |
 |------|------|
-| Clean two-tier model: SGs for intra-VPC, firewall for inter-VPC | **NAT gateways destroy source identity** - traffic arrives at the firewall with the NAT gateway's private IP, not the originating workload's IP. Firewall rules degrade to "allow NAT IP" instead of "allow this service." |
-| Centralized inter-app segmentation at the VPC boundary | Loses the ability to write meaningful L4 rules based on source workload identity |
+| Clean two-tier model: SGs for intra-VPC, firewall for inter-VPC | **NAT gateways obscure source identity** - traffic arrives at the firewall with the NAT gateway's private IP, not the originating workload's IP. Workload-level attribution becomes impractical without significant additional complexity (e.g., per-workload NAT pools). |
+| Centralized inter-app segmentation at the VPC boundary | Loses practical ability to write meaningful L4 rules based on source workload identity without additional architectural workarounds |
 | Deep packet inspection, IDS/IPS for cross-VPC flows | Intra-VPC security becomes entirely dependent on broad SGs with no chaining - acceptable for single-tenant, but loses defense-in-depth |
 | Single-tenant VPCs mean intra-VPC trust is a reasonable tradeoff | TGW routing complexity grows with every VPC and peering relationship |
 | Unified cross-VPC traffic logging and visibility | Firewall becomes a single point of failure for all inter-app communication |
 
-**Decision:** Rejected. This would be the preferred architecture if NAT gateways did not obscure source identity. The model is sound - single-tenant VPCs with a centralized firewall segmenting inter-app traffic. However, NAT gateways rewrite the source IP on egress, making it impossible for Network Firewall to attribute traffic to specific workloads. Without source identity, firewall rules cannot express "workers in payments VPC can reach auth VPC" - only "the NAT IP in payments VPC can reach auth VPC." This eliminates the primary value of centralized inspection.
+**Decision:** Rejected. This would be the preferred architecture if NAT gateways did not obscure source identity. The model is sound - single-tenant VPCs with a centralized firewall segmenting inter-app traffic. However, NAT gateways rewrite the source IP on egress, making it impractical for Network Firewall to attribute traffic to specific workloads without additional complexity (per-workload NAT pools, custom routing). Without source identity, firewall rules degrade from "workers in payments VPC can reach auth VPC" to "the NAT IP in payments VPC can reach auth VPC" - significantly reducing the value of centralized inspection.
 
 The SG chaining approach preserves source identity at every hop (security group references, not CIDRs), which is why we chose per-VPC security group management over centralized firewall inspection.
 
