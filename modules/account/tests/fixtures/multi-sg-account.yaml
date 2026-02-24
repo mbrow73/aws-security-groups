@@ -1,12 +1,12 @@
 account_id: "111222333444"
-environment: "production"
+environment: "prod"
 
 security_groups:
   api-backend:
     description: "API backend service"
     tags:
       Team: "backend"
-      Environment: "production"
+      Environment: "prod"
       Application: "api"
       ManagedBy: "sg-platform"
     ingress:
@@ -26,7 +26,7 @@ security_groups:
     description: "PostgreSQL database"
     tags:
       Team: "data"
-      Environment: "production"
+      Environment: "prod"
       Application: "postgres"
       ManagedBy: "sg-platform"
     ingress:
@@ -41,7 +41,7 @@ security_groups:
     description: "Redis cache cluster"
     tags:
       Team: "backend"
-      Environment: "production"
+      Environment: "prod"
       Application: "redis"
       ManagedBy: "sg-platform"
     ingress:

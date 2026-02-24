@@ -90,18 +90,18 @@ type_overrides:
 
 # Environment-specific rules
 environments:
-  production:
-    # Production has stricter rules
+  prod:
+    # Prod has stricter rules
     require_description: true
     max_cidr_size: 24  # No larger than /24 CIDR blocks
     require_approval: true
     
-  staging:
+  test:
     max_cidr_size: 16
     require_approval: true
     
-  development:
-    # Dev can be more permissive but still secure
+  dev:
+    # Dev is more permissive but still secure
     max_cidr_size: 8
     require_approval: false
     allowed_test_ports:

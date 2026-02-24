@@ -322,15 +322,8 @@ class SecurityGroupValidator:
             ))
             return
         
-        # Valid profile names (these should match the directories in baseline/profiles/)
-        valid_profiles = ['vpc-endpoints', 'internet-ingress', 'eks-standard']
-        
-        # Auto-discover available profiles from the repository structure
-        baseline_profiles_dir = self.repo_root / "baseline" / "profiles"
-        if baseline_profiles_dir.exists():
-            discovered_profiles = [d.name for d in baseline_profiles_dir.iterdir() if d.is_dir()]
-            if discovered_profiles:
-                valid_profiles = discovered_profiles
+        # Valid profile names — must match profiles in terraform-aws-eks-baseline-sgs
+        valid_profiles = ['vpc-endpoints', 'eks-internet', 'eks-standard']
         
         # Validate each profile name
         for i, profile in enumerate(baseline_profiles):
@@ -344,7 +337,7 @@ class SecurityGroupValidator:
             
             if profile not in valid_profiles:
                 message = (f"❌ Baseline profile '{profile}' does not exist. Available profiles: {', '.join(valid_profiles)}\n"
-                          f"   → Check baseline/profiles/ for available options.")
+                          f"   → See terraform-aws-eks-baseline-sgs repo for profile details.")
                 summary.add_result(ValidationResult(
                     level='error',
                     message=message,

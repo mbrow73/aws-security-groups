@@ -5,15 +5,15 @@ Self-service security group management across AWS accounts via GitOps. Teams wri
 ## How It Works
 
 ```
-Team YAML → GitHub PR → Validation (Actions) → Terraform Cloud → AWS Security Groups
+Team YAML → GitHub PR → Validation (Actions) → Terraform Enterprise → AWS Security Groups
 ```
 
 1. **Teams** edit `accounts/<account-id>/security-groups.yaml`
 2. **GitHub Actions** validates schema, guardrails, naming on PR
-3. **Terraform Cloud** runs speculative plan on PR, applies on merge
+3. **Terraform Enterprise** runs speculative plan on PR, applies on merge
 
 > **Baseline SGs** (EKS zero-trust profiles) have moved to their own module:
-> [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) — published on TFC private registry.
+> [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) — published on TFE private registry.
 
 ## Quick Start
 
@@ -77,4 +77,4 @@ pytest tests/test_validate.py -v
 - [Operational Model](docs/operational-model.md) — Two-layer SG model, baselines vs team SGs
 - [Anti-Patterns & Mitigations](docs/anti-patterns-and-mitigations.md) — Risks and layered defenses
 - [Naming Conventions](docs/naming-conventions.md) — Standards and patterns
-- [TFC Setup](docs/tfc-setup.md) — Terraform Cloud workspace configuration
+- [TFE Setup](docs/tfe-setup.md) — Terraform Enterprise workspace configuration

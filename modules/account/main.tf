@@ -1,6 +1,6 @@
 # Account Module — reads security-groups.yaml and creates team SGs
 #
-# Baselines are deployed separately via baseline/ orchestrator.
+# Baselines are deployed separately via terraform-aws-eks-baseline-sgs module.
 # This module handles team-requested custom security groups only.
 #
 # Note: Cross-references between SGs in the same YAML use raw SG IDs
