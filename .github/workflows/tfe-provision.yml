@@ -1,0 +1,89 @@
+name: "TFE Workspace Provisioning"
+
+# Runs on merge to main — provisions workspaces and triggers runs
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'accounts/**'
+      - 'modules/**'
+      - 'prefix-lists.yaml'
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  detect-changes:
+    name: "Detect Changed Accounts"
+    runs-on: ubuntu-latest
+    outputs:
+      changed-accounts: ${{ steps.detect.outputs.accounts }}
+      has-accounts: ${{ steps.detect.outputs.has_accounts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed accounts
+        id: detect
+        run: |
+          # Compare with parent commit (squash merge = single commit)
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          ACCOUNTS=$(echo "$CHANGED_FILES" | grep -E '^accounts/[0-9]+/' | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//')
+
+          if [ -n "$ACCOUNTS" ]; then
+            echo "accounts=$ACCOUNTS" >> $GITHUB_OUTPUT
+            echo "has_accounts=true" >> $GITHUB_OUTPUT
+          else
+            echo "accounts=" >> $GITHUB_OUTPUT
+            echo "has_accounts=false" >> $GITHUB_OUTPUT
+          fi
+
+  provision:
+    name: "Provision TFE Workspaces"
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has-accounts == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Provision workspaces and trigger runs
+        env:
+          TFE_TOKEN: ${{ secrets.TFE_TOKEN }}
+          TFE_ADDRESS: ${{ secrets.TFE_ADDRESS }}
+          TFE_PROJECT_ID: ${{ secrets.TFE_PROJECT_ID }}
+        run: |
+          # If no TFE token, run in plan-only mode
+          if [ -z "$TFE_TOKEN" ]; then
+            echo "⚠️ TFE_TOKEN not set — running in dry-run mode"
+            python scripts/tfe_workspace.py plan \
+              --org "${{ secrets.TFE_ORG }}" \
+              --changed-accounts "${{ needs.detect-changes.outputs.changed-accounts }}" \
+              --repo-root . \
+              --vcs-repo "${{ github.repository }}" \
+              --format text
+          else
+            python scripts/tfe_workspace.py apply \
+              --org "${{ secrets.TFE_ORG }}" \
+              --changed-accounts "${{ needs.detect-changes.outputs.changed-accounts }}" \
+              --repo-root . \
+              --vcs-repo "${{ github.repository }}" \
+              --vcs-oauth-token-id "${{ secrets.TFE_OAUTH_TOKEN_ID }}" \
+              --format text
+          fi
