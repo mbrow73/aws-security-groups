@@ -1,0 +1,32 @@
+# Managed Prefix Lists
+# Referenced by name in security-groups.yaml rules via prefix_list_ids
+# Platform creates these as AWS Managed Prefix Lists and shares via RAM
+
+prefix_lists:
+  aws-vpc-endpoints:
+    description: "VPC endpoint subnet ranges for ECR, S3, STS, etc."
+    max_entries: 20
+    entries:
+      - cidr: "10.0.0.0/16"
+        description: "VPC endpoint subnets"
+
+  monitoring-services:
+    description: "Monitoring infrastructure subnets (Prometheus, Grafana, Datadog agents)"
+    max_entries: 10
+    entries:
+      - cidr: "10.10.0.0/24"
+        description: "Monitoring cluster subnet"
+
+  database-subnets:
+    description: "Database tier subnet ranges (RDS, ElastiCache)"
+    max_entries: 20
+    entries:
+      - cidr: "10.20.0.0/24"
+        description: "Database subnet AZ-a"
+
+  corporate-networks:
+    description: "Corporate office and VPN egress CIDR ranges"
+    max_entries: 50
+    entries:
+      - cidr: "203.0.113.0/24"
+        description: "Corporate office NAT gateway"

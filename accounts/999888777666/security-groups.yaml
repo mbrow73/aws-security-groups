@@ -1,5 +1,5 @@
 account_id: "999888777666"
-environment: "production"
+environment: "prod"
 baseline_profiles:
   - eks-standard
 
