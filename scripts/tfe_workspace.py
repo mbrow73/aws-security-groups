@@ -19,7 +19,8 @@ Usage:
     python tfe_workspace.py sync --org ORGNAME
 
 Environment:
-    TFE_TOKEN        - TFE API token (team or user token with workspace admin)
+    TFE_TOKEN         - TFE API token (team or user token with workspace admin)
+    TFE_ORG           - TFE organization name (or use --org)
     TFE_ADDRESS       - TFE hostname (default: app.terraform.io)
     TFE_PROJECT_ID    - Optional TFE project ID to group workspaces
 
@@ -583,7 +584,7 @@ def main():
     )
     parser.add_argument("command", choices=["plan", "apply", "sync"],
                         help="plan: dry-run | apply: execute | sync: reconcile all")
-    parser.add_argument("--org", required=True, help="TFE organization name")
+    parser.add_argument("--org", default=None, help="TFE organization name (default: TFE_ORG env var)")
     parser.add_argument("--changed-accounts", default="",
                         help="Comma-separated list of changed account IDs")
     parser.add_argument("--repo-root", default=".",
@@ -603,7 +604,12 @@ def main():
     # Parse changed accounts
     changed_accounts = [a.strip() for a in args.changed_accounts.split(",") if a.strip()]
 
-    # Build TFE client if token is available
+    # Resolve config from CLI args or environment variables
+    org = args.org or os.environ.get("TFE_ORG")
+    if not org:
+        logger.error("Organization required. Set TFE_ORG env var or pass --org.")
+        sys.exit(1)
+
     tfe_token = os.environ.get("TFE_TOKEN")
     tfe_address = os.environ.get("TFE_ADDRESS", DEFAULT_TFE_ADDRESS)
     project_id = args.project_id or os.environ.get("TFE_PROJECT_ID")
@@ -617,7 +623,7 @@ def main():
 
     provisioner = WorkspaceProvisioner(
         repo_root=args.repo_root,
-        org=args.org,
+        org=org,
         client=client,
         vcs_repo=args.vcs_repo,
         vcs_oauth_token_id=args.vcs_oauth_token_id,
