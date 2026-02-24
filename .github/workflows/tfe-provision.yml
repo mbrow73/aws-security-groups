@@ -1,6 +1,5 @@
 name: "TFE Workspace Provisioning"
 
-# Runs on merge to main — provisions workspaces and triggers runs
 on:
   push:
     branches: [main]
@@ -31,7 +30,6 @@ jobs:
       - name: Detect changed accounts
         id: detect
         run: |
-          # Compare with parent commit (squash merge = single commit)
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
           echo "Changed files:"
           echo "$CHANGED_FILES"
@@ -63,27 +61,35 @@ jobs:
       - name: Install dependencies
         run: pip install pyyaml
 
-      - name: Provision workspaces and trigger runs
+      - name: Provision workspaces
         env:
-          TFE_TOKEN: ${{ secrets.TFE_TOKEN }}
-          TFE_ORG: ${{ secrets.TFE_ORG }}
-          TFE_ADDRESS: ${{ secrets.TFE_ADDRESS }}
-          TFE_PROJECT_ID: ${{ secrets.TFE_PROJECT_ID }}
+          CLDIAC_URL: ${{ secrets.CLDIAC_URL }}
+          CLDIAC_AUTH_URL: ${{ secrets.CLDIAC_AUTH_URL }}
+          CLDIAC_AUTH_ENV: ${{ secrets.CLDIAC_AUTH_ENV }}
+          CLDIAC_USER: ${{ secrets.CLDIAC_USER }}
+          CLDIAC_PASSWORD: ${{ secrets.CLDIAC_PASSWORD }}
+          CLDIAC_CAR_ID: ${{ secrets.CLDIAC_CAR_ID }}
+          CLDIAC_PROJECT_ID: ${{ secrets.CLDIAC_PROJECT_ID }}
+          CLDIAC_REPOSITORY: ${{ secrets.CLDIAC_REPOSITORY }}
+          CLDIAC_CREDS_PROVIDER: ${{ secrets.CLDIAC_CREDS_PROVIDER }}
+          CLDIAC_CREDS_AUTH: ${{ secrets.CLDIAC_CREDS_AUTH }}
         run: |
           CHANGED="${{ needs.detect-changes.outputs.changed-accounts }}"
-          VCS_REPO="${{ github.repository }}"
 
-          # If no TFE token, run in plan-only mode
-          if [ -z "$TFE_TOKEN" ]; then
-            echo "⚠️ TFE_TOKEN not set — running in dry-run mode"
-            export TFE_ORG="${TFE_ORG:-placeholder}"
-            # Exit code 2 = "plan has changes" (not an error in dry-run)
-            python scripts/tfe_workspace.py plan               --changed-accounts "$CHANGED"               --repo-root .               --vcs-repo "$VCS_REPO"               --format text || EXIT_CODE=$?
+          if [ -z "$CLDIAC_URL" ]; then
+            echo "⚠️ CLDIAC_URL not set — running in dry-run mode"
+            python scripts/tfe_workspace.py plan \
+              --changed-accounts "$CHANGED" \
+              --repo-root . \
+              --format text || EXIT_CODE=$?
             if [ "${EXIT_CODE:-0}" -eq 1 ]; then
               echo "❌ Provisioner script error"
               exit 1
             fi
             echo "✅ Dry-run plan complete (exit code ${EXIT_CODE:-0})"
           else
-            python scripts/tfe_workspace.py apply               --changed-accounts "$CHANGED"               --repo-root .               --vcs-repo "$VCS_REPO"               --vcs-oauth-token-id "${{ secrets.TFE_OAUTH_TOKEN_ID }}"               --format text
+            python scripts/tfe_workspace.py apply \
+              --changed-accounts "$CHANGED" \
+              --repo-root . \
+              --format text
           fi

@@ -1,27 +1,27 @@
 """
-Tests for TFE Workspace Provisioner
+Tests for TFE Workspace Provisioner (CloudIaC API)
 
-Tests the provisioner logic without hitting real TFE — mocks the API client
-and validates plan generation, drift detection, and action sequencing.
+Tests provisioner logic without hitting real CloudIaC — mocks the API client
+and validates plan generation, auth flow, and action sequencing.
 """
 
 import json
 import os
 import sys
-import tempfile
-import shutil
+import base64
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, PropertyMock
 from dataclasses import asdict
+from urllib.error import HTTPError
+from io import BytesIO
 
 import pytest
 
-# Add scripts/ to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from tfe_workspace import (
-    WorkspaceConfig, WorkspaceProvisioner, TFEClient, PlanAction,
-    WORKSPACE_PREFIX, format_plan_text, format_plan_markdown,
+    WorkspaceRequest, WorkspaceProvisioner, CloudIaCClient, PlanAction,
+    WORKSPACE_SUFFIX_PREFIX, format_plan_text, format_plan_markdown,
 )
 
 
@@ -35,53 +35,46 @@ def repo_root(tmp_path):
     accounts = tmp_path / "accounts"
     accounts.mkdir()
 
-    # Valid account
     acc1 = accounts / "111222333444"
     acc1.mkdir()
     (acc1 / "security-groups.yaml").write_text(
         'account_id: "111222333444"\nenvironment: "prod"\nsecurity_groups:\n  web-app:\n    description: "Web"\n'
     )
 
-    # Another valid account
     acc2 = accounts / "555666777888"
     acc2.mkdir()
     (acc2 / "security-groups.yaml").write_text(
         'account_id: "555666777888"\nenvironment: "dev"\nsecurity_groups:\n  api-svc:\n    description: "API"\n'
     )
 
-    # Example dir (should be ignored — not 12 digits)
+    # Should be ignored
     example = accounts / "_example"
     example.mkdir()
     (example / "security-groups.yaml").write_text('account_id: "123456789012"\n')
 
-    # Dir without yaml (should be ignored)
     empty = accounts / "999999999999"
     empty.mkdir()
 
-    # Guardrails (needed by validator, not by provisioner — but keep repo realistic)
     (tmp_path / "guardrails.yaml").write_text("validation:\n  blocked_cidrs:\n    - '0.0.0.0/0'\n")
-
     return tmp_path
 
 
 @pytest.fixture
 def mock_client():
-    """Create a mock TFE client."""
-    client = MagicMock(spec=TFEClient)
-    client.org = "test-org"
+    client = MagicMock(spec=CloudIaCClient)
     return client
 
 
 @pytest.fixture
 def provisioner(repo_root, mock_client):
-    """Create a provisioner with mocked client."""
     return WorkspaceProvisioner(
         repo_root=str(repo_root),
-        org="test-org",
         client=mock_client,
-        vcs_repo="mbrow73/aws-security-groups",
-        vcs_oauth_token_id="ot-abc123",
-        terraform_version="1.6.0",
+        car_id="car-test-123",
+        project_id="prj-test-456",
+        repository="org-eng/aws-security-groups",
+        creds_provider="aws",
+        creds_auth="arn:aws:iam::123456789012:role/tfe-sg-platform",
     )
 
 
@@ -91,56 +84,80 @@ def provisioner(repo_root, mock_client):
 
 class TestAccountDiscovery:
     def test_discovers_valid_accounts(self, provisioner):
-        accounts = provisioner.discover_accounts()
-        assert accounts == ["111222333444", "555666777888"]
+        assert provisioner.discover_accounts() == ["111222333444", "555666777888"]
 
     def test_ignores_non_numeric_dirs(self, provisioner):
-        accounts = provisioner.discover_accounts()
-        assert "_example" not in accounts
+        assert "_example" not in provisioner.discover_accounts()
 
     def test_ignores_dirs_without_yaml(self, provisioner):
-        accounts = provisioner.discover_accounts()
-        assert "999999999999" not in accounts
+        assert "999999999999" not in provisioner.discover_accounts()
 
     def test_empty_accounts_dir(self, tmp_path):
         (tmp_path / "accounts").mkdir()
-        p = WorkspaceProvisioner(repo_root=str(tmp_path), org="test")
+        p = WorkspaceProvisioner(repo_root=str(tmp_path))
         assert p.discover_accounts() == []
 
     def test_no_accounts_dir(self, tmp_path):
-        p = WorkspaceProvisioner(repo_root=str(tmp_path), org="test")
+        p = WorkspaceProvisioner(repo_root=str(tmp_path))
         assert p.discover_accounts() == []
 
 
 # ---------------------------------------------------------------------------
-# Workspace Config Generation
+# Workspace Request Generation
 # ---------------------------------------------------------------------------
 
-class TestWorkspaceConfig:
-    def test_workspace_naming(self, provisioner):
-        config = provisioner.build_workspace_config("111222333444")
-        assert config.name == "sg-111222333444"
+class TestWorkspaceRequest:
+    def test_suffix_naming(self, provisioner):
+        req = provisioner.build_workspace_request("111222333444")
+        assert req.suffix == "sg-111222333444"
 
-    def test_working_directory(self, provisioner):
-        config = provisioner.build_workspace_config("111222333444")
-        assert config.working_directory == "accounts/111222333444"
+    def test_env_from_yaml(self, provisioner):
+        req = provisioner.build_workspace_request("111222333444")
+        assert req.env == "prod"
 
-    def test_trigger_patterns(self, provisioner):
-        config = provisioner.build_workspace_config("111222333444")
-        assert "accounts/111222333444/**/*" in config.trigger_patterns
-        assert "modules/**/*" in config.trigger_patterns
-        assert "prefix-lists.yaml" in config.trigger_patterns
-        assert "guardrails.yaml" in config.trigger_patterns
+    def test_dev_env_from_yaml(self, provisioner):
+        req = provisioner.build_workspace_request("555666777888")
+        assert req.env == "dev"
 
-    def test_vcs_config_passthrough(self, provisioner):
-        config = provisioner.build_workspace_config("111222333444")
-        assert config.vcs_repo == "mbrow73/aws-security-groups"
-        assert config.vcs_oauth_token_id == "ot-abc123"
+    def test_car_id_passthrough(self, provisioner):
+        req = provisioner.build_workspace_request("111222333444")
+        assert req.car_id == "car-test-123"
 
-    def test_tags_include_managed_tags(self, provisioner):
-        config = provisioner.build_workspace_config("111222333444")
-        assert "sg-platform" in config.tags
-        assert "managed-by:sg-pipeline" in config.tags
+    def test_project_id_passthrough(self, provisioner):
+        req = provisioner.build_workspace_request("111222333444")
+        assert req.project_id == "prj-test-456"
+
+    def test_repository_passthrough(self, provisioner):
+        req = provisioner.build_workspace_request("111222333444")
+        assert req.attach_repository == "org-eng/aws-security-groups"
+
+    def test_creds_provider(self, provisioner):
+        req = provisioner.build_workspace_request("111222333444")
+        assert req.dynamic_credentials_provider == "aws"
+
+    def test_creds_auth(self, provisioner):
+        req = provisioner.build_workspace_request("111222333444")
+        assert req.dynamic_credentials_auth == "arn:aws:iam::123456789012:role/tfe-sg-platform"
+
+    def test_to_dict(self, provisioner):
+        req = provisioner.build_workspace_request("111222333444")
+        d = req.to_dict()
+        assert d["car_id"] == "car-test-123"
+        assert d["env"] == "prod"
+        assert d["suffix"] == "sg-111222333444"
+        assert d["project_id"] == "prj-test-456"
+        assert d["attach_repository"] == "org-eng/aws-security-groups"
+        assert d["dynamic_credentials_provider"] == "aws"
+
+    def test_default_env_when_yaml_missing_env(self, tmp_path):
+        accounts = tmp_path / "accounts"
+        accounts.mkdir()
+        acc = accounts / "111111111111"
+        acc.mkdir()
+        (acc / "security-groups.yaml").write_text('account_id: "111111111111"\nsecurity_groups: {}\n')
+        p = WorkspaceProvisioner(repo_root=str(tmp_path), car_id="x", project_id="y", repository="z")
+        req = p.build_workspace_request("111111111111")
+        assert req.env == "dev"
 
 
 # ---------------------------------------------------------------------------
@@ -148,101 +165,27 @@ class TestWorkspaceConfig:
 # ---------------------------------------------------------------------------
 
 class TestPlanNewWorkspaces:
-    def test_plan_new_workspace_no_client(self, repo_root):
-        """Without TFE client, plan assumes all workspaces need creation."""
-        p = WorkspaceProvisioner(repo_root=str(repo_root), org="test", client=None)
+    def test_plan_without_client(self, repo_root):
+        p = WorkspaceProvisioner(repo_root=str(repo_root), client=None,
+                                 car_id="car-1", project_id="prj-1", repository="org/repo")
         actions = p.plan(changed_accounts=["111222333444"])
         creates = [a for a in actions if a.action == "create"]
-        triggers = [a for a in actions if a.action == "trigger_run"]
         assert len(creates) == 1
         assert creates[0].workspace == "sg-111222333444"
-        assert len(triggers) == 1
+        assert "dry-run" in creates[0].reason.lower()
 
-    def test_plan_new_workspace_with_client(self, provisioner, mock_client):
-        """With TFE client that returns 404, plan creates workspace."""
-        mock_client.get_workspace.return_value = None
+    def test_plan_with_client(self, provisioner, mock_client):
         actions = provisioner.plan(changed_accounts=["111222333444"])
         creates = [a for a in actions if a.action == "create"]
         assert len(creates) == 1
         assert creates[0].account_id == "111222333444"
-        mock_client.get_workspace.assert_called_with("sg-111222333444")
 
-    def test_plan_creates_trigger_for_new_workspace(self, provisioner, mock_client):
-        """New workspace should also get a run trigger."""
-        mock_client.get_workspace.return_value = None
+    def test_plan_includes_request_details(self, provisioner, mock_client):
         actions = provisioner.plan(changed_accounts=["111222333444"])
-        triggers = [a for a in actions if a.action == "trigger_run"]
-        assert len(triggers) == 1
-        assert triggers[0].reason == "New workspace — initial run"
-
-
-# ---------------------------------------------------------------------------
-# Plan: Existing Workspaces
-# ---------------------------------------------------------------------------
-
-class TestPlanExistingWorkspaces:
-    def _make_existing_workspace(self, account_id, **overrides):
-        """Build a fake TFE workspace response."""
-        defaults = {
-            "working-directory": f"accounts/{account_id}",
-            "terraform-version": "1.6.0",
-            "auto-apply": False,
-            "trigger-patterns": [
-                f"accounts/{account_id}/**/*",
-                "modules/**/*",
-                "prefix-lists.yaml",
-                "guardrails.yaml",
-            ],
-        }
-        defaults.update(overrides)
-        return {
-            "data": {
-                "id": f"ws-{account_id[:8]}",
-                "attributes": defaults,
-            }
-        }
-
-    def test_existing_workspace_no_drift(self, provisioner, mock_client):
-        """Existing workspace in sync — only trigger run for changed account."""
-        mock_client.get_workspace.return_value = self._make_existing_workspace("111222333444")
-        actions = provisioner.plan(changed_accounts=["111222333444"])
-        creates = [a for a in actions if a.action == "create"]
-        updates = [a for a in actions if a.action == "update"]
-        triggers = [a for a in actions if a.action == "trigger_run"]
-        assert len(creates) == 0
-        assert len(updates) == 0
-        assert len(triggers) == 1
-        assert triggers[0].workspace == "sg-111222333444"
-
-    def test_existing_workspace_with_drift(self, provisioner, mock_client):
-        """Existing workspace with drifted terraform version — update + trigger."""
-        mock_client.get_workspace.return_value = self._make_existing_workspace(
-            "111222333444", **{"terraform-version": "1.5.0"}
-        )
-        actions = provisioner.plan(changed_accounts=["111222333444"])
-        updates = [a for a in actions if a.action == "update"]
-        triggers = [a for a in actions if a.action == "trigger_run"]
-        assert len(updates) == 1
-        assert "terraform-version" in updates[0].details["drift"]
-        assert len(triggers) == 1
-
-    def test_existing_workspace_trigger_pattern_drift(self, provisioner, mock_client):
-        """Drifted trigger patterns get caught."""
-        mock_client.get_workspace.return_value = self._make_existing_workspace(
-            "111222333444", **{"trigger-patterns": ["old/pattern"]}
-        )
-        actions = provisioner.plan(changed_accounts=["111222333444"])
-        updates = [a for a in actions if a.action == "update"]
-        assert len(updates) == 1
-        assert "trigger-patterns" in updates[0].details["drift"]
-
-    def test_no_trigger_when_account_not_changed(self, provisioner, mock_client):
-        """Existing workspace with no changes — no trigger (sync mode)."""
-        mock_client.get_workspace.return_value = self._make_existing_workspace("111222333444")
-        # Plan all accounts without specifying changed
-        actions = provisioner.plan(changed_accounts=None)
-        triggers = [a for a in actions if a.action == "trigger_run"]
-        assert len(triggers) == 0
+        req = actions[0].details.get("request", {})
+        assert req["car_id"] == "car-test-123"
+        assert req["env"] == "prod"
+        assert req["suffix"] == "sg-111222333444"
 
 
 # ---------------------------------------------------------------------------
@@ -250,16 +193,13 @@ class TestPlanExistingWorkspaces:
 # ---------------------------------------------------------------------------
 
 class TestPlanEdgeCases:
-    def test_skip_nonexistent_account(self, provisioner, mock_client):
-        """Changed account that doesn't have a directory is skipped."""
+    def test_skip_nonexistent_account(self, provisioner):
         actions = provisioner.plan(changed_accounts=["000000000000"])
         skips = [a for a in actions if a.action == "skip"]
         assert len(skips) == 1
         assert "not found" in skips[0].reason
 
     def test_multiple_accounts(self, provisioner, mock_client):
-        """Multiple changed accounts generate independent actions."""
-        mock_client.get_workspace.return_value = None
         actions = provisioner.plan(changed_accounts=["111222333444", "555666777888"])
         creates = [a for a in actions if a.action == "create"]
         assert len(creates) == 2
@@ -267,11 +207,9 @@ class TestPlanEdgeCases:
         assert workspaces == {"sg-111222333444", "sg-555666777888"}
 
     def test_sync_all_accounts(self, provisioner, mock_client):
-        """Sync mode plans all discovered accounts."""
-        mock_client.get_workspace.return_value = None
         actions = provisioner.plan(changed_accounts=None)
         creates = [a for a in actions if a.action == "create"]
-        assert len(creates) == 2  # both valid accounts
+        assert len(creates) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -280,79 +218,134 @@ class TestPlanEdgeCases:
 
 class TestApply:
     def test_apply_create(self, provisioner, mock_client):
-        """Apply creates workspace and sets yaml_file variable."""
-        mock_client.create_workspace.return_value = {
-            "data": {"id": "ws-new123", "attributes": {}}
-        }
+        mock_client.create_workspace.return_value = {"id": "ws-new123"}
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="new",
-            details={"config": {}},
+            details={"request": {}},
         )]
         results = provisioner.apply(actions)
         assert results[0]["status"] == "created"
         mock_client.create_workspace.assert_called_once()
-        mock_client.set_variable.assert_called_once_with(
-            "ws-new123", "yaml_file",
-            "accounts/111222333444/security-groups.yaml",
-            category="terraform"
-        )
 
-    def test_apply_trigger_run(self, provisioner, mock_client):
-        """Apply triggers a run on existing workspace."""
-        mock_client.create_run.return_value = {
-            "data": {"id": "run-abc123", "attributes": {}}
-        }
+    def test_apply_conflict_409(self, provisioner, mock_client):
+        """409 = workspace already exists, not an error."""
+        error = HTTPError(
+            url="http://test", code=409, msg="Conflict",
+            hdrs={}, fp=BytesIO(b"already exists")
+        )
+        mock_client.create_workspace.side_effect = error
         actions = [PlanAction(
-            action="trigger_run", workspace="sg-111222333444",
-            account_id="111222333444", reason="changed",
-            details={"workspace_id": "ws-existing"},
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new",
+            details={"request": {}},
         )]
         results = provisioner.apply(actions)
-        assert results[0]["status"] == "triggered"
-        assert results[0]["run_id"] == "run-abc123"
-
-    def test_apply_create_then_trigger(self, provisioner, mock_client):
-        """Create + trigger in sequence — trigger uses the newly created workspace ID."""
-        mock_client.create_workspace.return_value = {
-            "data": {"id": "ws-brand-new", "attributes": {}}
-        }
-        mock_client.create_run.return_value = {
-            "data": {"id": "run-xyz789", "attributes": {}}
-        }
-        actions = [
-            PlanAction(action="create", workspace="sg-111222333444",
-                       account_id="111222333444", reason="new",
-                       details={"config": {}}),
-            PlanAction(action="trigger_run", workspace="sg-111222333444",
-                       account_id="111222333444", reason="initial run",
-                       details={}),  # no workspace_id — should use cached ID from create
-        ]
-        results = provisioner.apply(actions)
-        assert results[0]["status"] == "created"
-        assert results[1]["status"] == "triggered"
-        # Verify the run was triggered on the newly created workspace
-        mock_client.create_run.assert_called_once()
-        call_args = mock_client.create_run.call_args
-        assert call_args[0][0] == "ws-brand-new"
+        assert results[0]["status"] == "exists"
 
     def test_apply_error_handling(self, provisioner, mock_client):
-        """Apply continues on error and reports failures."""
         mock_client.create_workspace.side_effect = Exception("API timeout")
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="new",
-            details={"config": {}},
+            details={"request": {}},
         )]
         results = provisioner.apply(actions)
         assert results[0]["status"] == "error"
         assert "API timeout" in results[0]["error"]
 
+    def test_apply_http_error(self, provisioner, mock_client):
+        error = HTTPError(
+            url="http://test", code=500, msg="Server Error",
+            hdrs={}, fp=BytesIO(b"internal error")
+        )
+        mock_client.create_workspace.side_effect = error
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new",
+            details={"request": {}},
+        )]
+        results = provisioner.apply(actions)
+        assert results[0]["status"] == "error"
+
     def test_apply_without_client_raises(self, repo_root):
-        """Apply without TFE client raises RuntimeError."""
-        p = WorkspaceProvisioner(repo_root=str(repo_root), org="test", client=None)
+        p = WorkspaceProvisioner(repo_root=str(repo_root), client=None)
         with pytest.raises(RuntimeError, match="Cannot apply without"):
             p.apply([])
+
+    def test_apply_skip(self, provisioner, mock_client):
+        actions = [PlanAction(
+            action="skip", workspace="sg-000000000000",
+            account_id="000000000000", reason="not found",
+        )]
+        results = provisioner.apply(actions)
+        assert results[0]["status"] == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# CloudIaC Client Auth
+# ---------------------------------------------------------------------------
+
+class TestCloudIaCAuth:
+    def test_auth_requires_credentials(self):
+        client = CloudIaCClient(
+            base_url="https://cldiac.example.com",
+            auth_url="https://auth.example.com",
+        )
+        with pytest.raises(RuntimeError, match="CLDIAC_USER and CLDIAC_PASSWORD required"):
+            client.authenticate()
+
+    def test_auth_uses_cached_token(self):
+        client = CloudIaCClient(
+            base_url="https://cldiac.example.com",
+            auth_url="https://auth.example.com",
+            token="pre-existing-token",
+        )
+        assert client.authenticate() == "pre-existing-token"
+
+    @patch("tfe_workspace.urlopen")
+    def test_auth_basic_auth_header(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = json.dumps({"id_token": "tok-123"}).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        client = CloudIaCClient(
+            base_url="https://cldiac.example.com",
+            auth_url="https://auth.example.com",
+            auth_env="E1",
+            username="svc-sg-platform",
+            password="secret123",
+        )
+        token = client.authenticate()
+        assert token == "tok-123"
+
+        # Verify the request
+        call_args = mock_urlopen.call_args[0][0]
+        expected_creds = base64.b64encode(b"svc-sg-platform:secret123").decode()
+        assert call_args.get_header("Authorization") == f"Basic {expected_creds}"
+        assert call_args.get_header("Environment") == "E1"
+        assert "/api/v1/login" in call_args.full_url
+
+    @patch("tfe_workspace.urlopen")
+    def test_auth_missing_id_token(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = json.dumps({"access_token": "wrong"}).encode()
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        client = CloudIaCClient(
+            base_url="https://cldiac.example.com",
+            auth_url="https://auth.example.com",
+            username="user",
+            password="pass",
+        )
+        with pytest.raises(RuntimeError, match="missing id_token"):
+            client.authenticate()
 
 
 # ---------------------------------------------------------------------------
@@ -367,36 +360,126 @@ class TestFormatting:
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="New",
-            details={"config": {"working_directory": "accounts/111222333444"}},
+            details={"request": {
+                "car_id": "car-1", "env": "prod", "project_id": "prj-1",
+                "attach_repository": "org/repo",
+                "dynamic_credentials_provider": "aws",
+                "dynamic_credentials_auth": "arn:aws:iam::1:role/x",
+            }},
         )]
         output = format_plan_text(actions)
-        assert "Workspaces to create: 1" in output
         assert "sg-111222333444" in output
+        assert "car-1" in output
+        assert "prod" in output
 
     def test_markdown_no_actions(self):
-        output = format_plan_markdown([])
-        assert "No changes needed" in output
+        assert "in sync" in format_plan_markdown([])
 
     def test_markdown_with_create(self):
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="New",
-            details={"config": {
-                "working_directory": "accounts/111222333444",
-                "terraform_version": "1.6.0",
-                "auto_apply": False,
-                "trigger_patterns": ["accounts/111222333444/**/*"],
+            details={"request": {
+                "car_id": "car-1", "env": "prod", "project_id": "prj-1",
+                "attach_repository": "org/repo",
+                "dynamic_credentials_provider": "aws",
+                "dynamic_credentials_auth": "",
             }},
         )]
         output = format_plan_markdown(actions)
-        assert "Create 1 workspace" in output
+        assert "Create 1" in output
         assert "sg-111222333444" in output
 
     def test_json_serializable(self):
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="New",
-            details={"config": {}},
+            details={"request": {}},
         )]
-        # Should not raise
-        json.dumps([asdict(a) for a in actions])
+        json.dumps([asdict(a) for a in actions])  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# Threading / Parallel Apply
+# ---------------------------------------------------------------------------
+
+class TestParallelApply:
+    def test_apply_multiple_accounts_parallel(self, provisioner, mock_client):
+        """Multiple creates execute and all return results."""
+        mock_client.authenticate.return_value = "tok-123"
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        actions = [
+            PlanAction(action="create", workspace=f"sg-{i}11222333444",
+                       account_id=f"{i}11222333444", reason="new", details={})
+            for i in range(5)
+        ]
+        results = provisioner.apply(actions, max_workers=3)
+        assert len(results) == 5
+        assert all(r["status"] == "created" for r in results)
+        assert mock_client.create_workspace.call_count == 5
+
+    def test_pre_authenticates_before_threads(self, provisioner, mock_client):
+        """Auth happens once before threads fan out."""
+        mock_client.authenticate.return_value = "tok-123"
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        actions = [
+            PlanAction(action="create", workspace="sg-111222333444",
+                       account_id="111222333444", reason="new", details={}),
+            PlanAction(action="create", workspace="sg-555666777888",
+                       account_id="555666777888", reason="new", details={}),
+        ]
+        provisioner.apply(actions, max_workers=2)
+        mock_client.authenticate.assert_called_once()
+
+    def test_partial_failure_doesnt_block_others(self, provisioner, mock_client):
+        """One failure doesn't prevent other workspaces from being created."""
+        mock_client.authenticate.return_value = "tok-123"
+        call_count = [0]
+        def side_effect(req):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("API timeout")
+            return {"id": "ws-ok"}
+        mock_client.create_workspace.side_effect = side_effect
+        actions = [
+            PlanAction(action="create", workspace="sg-111222333444",
+                       account_id="111222333444", reason="new", details={}),
+            PlanAction(action="create", workspace="sg-555666777888",
+                       account_id="555666777888", reason="new", details={}),
+        ]
+        results = provisioner.apply(actions, max_workers=1)  # sequential to control order
+        statuses = {r["status"] for r in results}
+        assert "error" in statuses
+        assert "created" in statuses
+
+    def test_skips_not_threaded(self, provisioner, mock_client):
+        """Skip actions execute inline, not in thread pool."""
+        mock_client.authenticate.return_value = "tok-123"
+        actions = [
+            PlanAction(action="skip", workspace="sg-000", account_id="000",
+                       reason="not found"),
+        ]
+        results = provisioner.apply(actions, max_workers=3)
+        assert len(results) == 1
+        assert results[0]["status"] == "skipped"
+        mock_client.create_workspace.assert_not_called()
+
+    def test_empty_actions(self, provisioner, mock_client):
+        """Empty action list returns empty results without auth."""
+        results = provisioner.apply([], max_workers=3)
+        assert results == []
+        mock_client.authenticate.assert_not_called()
+
+    def test_results_sorted_by_account_id(self, provisioner, mock_client):
+        """Results come back sorted by account_id regardless of completion order."""
+        mock_client.authenticate.return_value = "tok-123"
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        actions = [
+            PlanAction(action="create", workspace="sg-999888777666",
+                       account_id="999888777666", reason="new", details={}),
+            PlanAction(action="create", workspace="sg-111222333444",
+                       account_id="111222333444", reason="new", details={}),
+        ]
+        results = provisioner.apply(actions, max_workers=2)
+        account_ids = [r["account_id"] for r in results]
+        assert account_ids == sorted(account_ids)
