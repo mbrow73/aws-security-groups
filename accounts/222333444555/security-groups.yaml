@@ -1,0 +1,23 @@
+account_id: "222333444555"
+environment: "dev"
+
+security_groups:
+  dev-api:
+    description: "Dev API service"
+    tags:
+      Team: "platform"
+      Environment: "dev"
+      Application: "api"
+      ManagedBy: "sg-platform"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.100.0.0/16"]
+        description: "HTTPS from VPC"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["aws-vpc-endpoints"]
+        description: "HTTPS to VPC endpoints"
