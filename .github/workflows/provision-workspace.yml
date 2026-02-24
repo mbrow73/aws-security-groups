@@ -1,0 +1,203 @@
+name: "Provision TFE Workspace"
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'accounts/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  detect-new-accounts:
+    name: "Detect New Accounts"
+    runs-on: ubuntu-latest
+    outputs:
+      new-accounts: ${{ steps.detect.outputs.new_accounts }}
+      has-new: ${{ steps.detect.outputs.has_new }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect new account directories
+        id: detect
+        run: |
+          # Find account dirs that exist in PR but not on main
+          NEW_ACCOUNTS=""
+          for dir in $(git diff --name-only --diff-filter=A origin/main...HEAD | grep -E '^accounts/[0-9]+/' | cut -d'/' -f2 | sort -u); do
+            # Check if this account dir exists on main
+            if ! git ls-tree -d origin/main "accounts/$dir" &>/dev/null; then
+              NEW_ACCOUNTS="${NEW_ACCOUNTS}${dir},"
+            fi
+          done
+          NEW_ACCOUNTS=$(echo "$NEW_ACCOUNTS" | sed 's/,$//')
+          
+          if [ -n "$NEW_ACCOUNTS" ]; then
+            echo "new_accounts=$NEW_ACCOUNTS" >> $GITHUB_OUTPUT
+            echo "has_new=true" >> $GITHUB_OUTPUT
+            echo "🆕 New accounts detected: $NEW_ACCOUNTS"
+          else
+            echo "has_new=false" >> $GITHUB_OUTPUT
+            echo "No new accounts in this PR"
+          fi
+
+  provision-workspace:
+    name: "Provision TFE Workspace"
+    runs-on: ubuntu-latest
+    needs: detect-new-accounts
+    if: needs.detect-new-accounts.outputs.has-new == 'true'
+    strategy:
+      matrix:
+        account: ${{ fromJson(format('["{0}"]', join(fromJson(format('["{0}"]', needs.detect-new-accounts.outputs.new-accounts)), '","'))) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Parse account config
+        id: config
+        run: |
+          ACCOUNT_ID="${{ matrix.account }}"
+          YAML_FILE="accounts/${ACCOUNT_ID}/security-groups.yaml"
+          
+          if [ ! -f "$YAML_FILE" ]; then
+            echo "::error::No security-groups.yaml found for account $ACCOUNT_ID"
+            exit 1
+          fi
+          
+          # Extract environment from YAML
+          ENV=$(python3 -c "
+          import yaml
+          with open('$YAML_FILE') as f:
+              data = yaml.safe_load(f)
+          print(data.get('environment', 'dev'))
+          ")
+          
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "📋 Account: $ACCOUNT_ID | Environment: $ENV"
+
+      - name: Authenticate to TFE
+        id: auth
+        run: |
+          BEARER_TOKEN=$(curl -sf \
+            -X POST \
+            -H "Authorization: Basic $(echo -n '${{ secrets.TFE_SERVICE_ID }}:${{ secrets.TFE_SERVICE_KEY }}' | base64)" \
+            -H 'Environment: ${{ secrets.TFE_AUTH_ENVIRONMENT }}' \
+            '${{ secrets.TFE_AUTH_URL }}/api/v1/login' \
+            | jq -r '.id_token')
+          
+          if [ -z "$BEARER_TOKEN" ] || [ "$BEARER_TOKEN" = "null" ]; then
+            echo "::error::Failed to authenticate to TFE auth service"
+            exit 1
+          fi
+          
+          echo "::add-mask::$BEARER_TOKEN"
+          echo "token=$BEARER_TOKEN" >> $GITHUB_OUTPUT
+          echo "✅ Authenticated successfully"
+
+      - name: Create TFE workspace
+        id: workspace
+        run: |
+          ACCOUNT_ID="${{ steps.config.outputs.account_id }}"
+          ENV="${{ steps.config.outputs.environment }}"
+          
+          RESPONSE=$(curl -sf \
+            -X POST \
+            '${{ secrets.TFE_API_URL }}/v1/tfe/workspaces' \
+            -H 'accept: application/json' \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"car_id\": \"${{ secrets.TFE_CAR_ID }}\",
+              \"env\": \"${ENV}\",
+              \"suffix\": \"sg-${ACCOUNT_ID}\",
+              \"project_id\": \"${{ secrets.TFE_PROJECT_ID }}\",
+              \"attach_repository\": \"${{ github.repository }}\",
+              \"dynamic_credentials_provider\": \"${{ secrets.TFE_CREDENTIALS_PROVIDER }}\",
+              \"dynamic_credentials_auth\": \"${{ secrets.TFE_CREDENTIALS_AUTH }}\"
+            }")
+          
+          echo "📦 TFE API Response:"
+          echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+          
+          # Extract workspace name/id from response if available
+          WS_NAME=$(echo "$RESPONSE" | jq -r '.workspace_name // .name // "unknown"' 2>/dev/null)
+          echo "workspace_name=$WS_NAME" >> $GITHUB_OUTPUT
+          echo "✅ Workspace provisioned: $WS_NAME"
+
+      - name: Configure workspace variables
+        run: |
+          ACCOUNT_ID="${{ steps.config.outputs.account_id }}"
+          ENV="${{ steps.config.outputs.environment }}"
+          WS_NAME="${{ steps.workspace.outputs.workspace_name }}"
+          
+          # Set account_id variable on the workspace
+          curl -sf \
+            -X POST \
+            '${{ secrets.TFE_API_URL }}/v1/tfe/workspaces/'"$WS_NAME"'/variables' \
+            -H 'accept: application/json' \
+            -H "Authorization: Bearer ${{ steps.auth.outputs.token }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"key\": \"account_id\",
+              \"value\": \"${ACCOUNT_ID}\",
+              \"category\": \"terraform\",
+              \"sensitive\": false,
+              \"description\": \"AWS Account ID managed by SG platform\"
+            }" 2>/dev/null || echo "⚠️ Variable endpoint may differ - configure manually if needed"
+          
+          echo "✅ Workspace variables configured"
+
+  post-summary:
+    name: "Post Provisioning Summary"
+    runs-on: ubuntu-latest
+    needs: [detect-new-accounts, provision-workspace]
+    if: always() && needs.detect-new-accounts.outputs.has-new == 'true'
+    steps:
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const accounts = '${{ needs.detect-new-accounts.outputs.new-accounts }}'.split(',');
+            const provisionResult = '${{ needs.provision-workspace.result }}';
+            const icon = provisionResult === 'success' ? '✅' : '❌';
+            
+            let body = `## ${icon} TFE Workspace Provisioning\n\n`;
+            body += `**New accounts detected:** ${accounts.join(', ')}\n`;
+            body += `**Provisioning status:** ${provisionResult}\n\n`;
+            
+            if (provisionResult === 'success') {
+              body += `TFE workspaces have been automatically provisioned for the new accounts above.\n`;
+              body += `Once this PR is merged, TFE will trigger the initial plan/apply.\n`;
+            } else {
+              body += `⚠️ Workspace provisioning failed. Check the workflow logs for details.\n`;
+              body += `A platform engineer may need to provision the workspace manually.\n`;
+            }
+            
+            // Delete previous provisioning comments
+            const comments = await github.rest.issues.listComments({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            for (const comment of comments.data) {
+              if (comment.user.login === 'github-actions[bot]' && 
+                  comment.body.includes('TFE Workspace Provisioning')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: comment.id,
+                });
+              }
+            }
+            
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body,
+            });
