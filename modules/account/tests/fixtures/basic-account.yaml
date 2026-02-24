@@ -5,10 +5,13 @@ security_groups:
   app-backend:
     description: "Backend API service"
     tags:
-      Team: "backend"
-      Environment: "prod"
-      Application: "order-service"
-      ManagedBy: "sg-platform"
+      "<company>-app-env": "prod"
+      "<company>-data-classification": "internal"
+      "<company>-app-carid": "600001725"
+      "<company>-ops-supportgroup": "Security_Operations_Support"
+      "<company>-app-supportgroup": "Security_Operations_Support"
+      "<company>-provisioner-repo": "placeholder"
+      "<company>-iam-access-control": "netsec"
     ingress:
       - protocol: "tcp"
         from_port: 8080
