@@ -51,7 +51,7 @@ git push origin team/my-sg-request
     ├── operational-model.md
     ├── anti-patterns-and-mitigations.md
     ├── naming-conventions.md
-    └── tfc-setup.md
+    └── tfe-setup.md
 ```
 
 ## Validation

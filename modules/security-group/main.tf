@@ -11,18 +11,19 @@ terraform {
 }
 
 locals {
+  mandatory_tags = {
+    "<company>-app-env"                = var.environment
+    "<company>-data-classification"    = "internal"
+    "<company>-app-carid"              = "600001725"
+    "<company>-ops-supportgroup"       = "Security_Operations_Support"
+    "<company>-app-supportgroup"       = "Security_Operations_Support"
+    "<company>-provisioner-repo"       = "placeholder"
+    "<company>-iam-access-control"     = "netsec"
+    "<company>-provisioner-workspace"  = "600001725-${var.environment}-sg-${var.account_id}"
+  }
+
   tags = merge(
-    {
-      "<company>-app-env"             = var.environment
-      "<company>-data-classification" = "internal"
-      "<company>-app-carid"           = "600001725"
-      "<company>-ops-supportgroup"    = "Security_Operations_Support"
-      "<company>-app-supportgroup"    = "Security_Operations_Support"
-      "<company>-provisioner-repo"    = "placeholder"
-      "<company>-iam-access-control"  = "netsec"
-      "<company>-provisioner-workspace" = "600001725-${var.environment}-sg-${var.account_id}"
-      Account                         = var.account_id
-    },
+    local.mandatory_tags,
     var.tags,
     var.security_group_config.tags
   )
