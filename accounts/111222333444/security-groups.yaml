@@ -1,0 +1,60 @@
+account_id: "111222333444"
+environment: "dev"
+
+security_groups:
+  app-frontend:
+    description: "Web frontend service behind ALB"
+    tags:
+      "<company>-app-env": "dev"
+      "<company>-data-classification": "internal"
+      "<company>-app-carid": "600001725"
+      "<company>-ops-supportgroup": "Security_Operations_Support"
+      "<company>-app-supportgroup": "Security_Operations_Support"
+      "<company>-provisioner-repo": "placeholder"
+      "<company>-iam-access-control": "netsec"
+      "<company>-provisioner-workspace": "600001725-dev-sg-111222333444"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups: ["sg-0abc123def456789"]
+        description: "HTTPS from ALB security group"
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Health checks from monitoring subnet"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["aws-vpc-endpoints"]
+        description: "ECR and S3 via VPC endpoints"
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["redis-cache"]
+        description: "Redis cache access"
+      - protocol: "udp"
+        from_port: 53
+        to_port: 53
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "DNS resolution"
+
+  redis-cache:
+    description: "ElastiCache Redis cluster"
+    tags:
+      "<company>-app-env": "dev"
+      "<company>-data-classification": "internal"
+      "<company>-app-carid": "600001725"
+      "<company>-ops-supportgroup": "Security_Operations_Support"
+      "<company>-app-supportgroup": "Security_Operations_Support"
+      "<company>-provisioner-repo": "placeholder"
+      "<company>-iam-access-control": "netsec"
+      "<company>-provisioner-workspace": "600001725-dev-sg-111222333444"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["app-frontend"]
+        description: "Redis from web frontend only"

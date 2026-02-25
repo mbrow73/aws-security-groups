@@ -1,7 +1,5 @@
 account_id: "999888777666"
 environment: "prod"
-baseline_profiles:
-  - eks-standard
 
 security_groups:
   eks-nodes-api:
