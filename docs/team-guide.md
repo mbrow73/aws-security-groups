@@ -30,7 +30,7 @@
          - protocol: "tcp"
            from_port: 5432
            to_port: 5432
-           prefix_list_ids: ["database-subnets"]
+           security_groups: ["rds-postgres"]
            description: "PostgreSQL access"
    ```
 
@@ -75,8 +75,8 @@ security_groups:
       - protocol: "tcp"
         from_port: 443
         to_port: 443
-        prefix_list_ids: ["aws-vpc-endpoints"]
-        description: "VPC endpoint access"
+        prefix_list_ids: ["corporate-networks"]
+        description: "On-prem services via TGW"
 ```
 
 ## Available Prefix Lists
@@ -85,11 +85,6 @@ security_groups:
 |---|---|
 | `corporate-networks` | Corporate offices + VPN |
 | `waf-saas-providers` | Cloudflare, Fastly ranges |
-| `aws-vpc-endpoints` | AWS service endpoint ranges |
-| `database-subnets` | RDS subnet CIDRs |
-| `alb-subnets` | ALB subnet CIDRs |
-| `ci-cd-systems` | GitHub Actions, Jenkins runners |
-| `monitoring-services` | DataDog, New Relic |
 
 ## Baseline Profiles
 

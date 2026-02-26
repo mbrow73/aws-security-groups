@@ -11,7 +11,7 @@
 
 | Pattern | Example |
 |---|---|
-| `{category}-{scope}` | `corporate-networks`, `database-subnets` |
+| `{category}-{scope}` | `corporate-networks`, `waf-saas-providers` |
 | `waf-{provider}` | `waf-saas-providers`, `waf-nat-ips` |
 
 ## Tags (Required)
