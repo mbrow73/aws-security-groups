@@ -29,7 +29,9 @@ Environment:
     CLDIAC_PROJECT_ID     - TFE project ID (prj-xxx)
     CLDIAC_REPOSITORY     - Repository to attach (e.g. org-eng/aws-security-groups)
     CLDIAC_CREDS_PROVIDER - Dynamic credentials provider (aws, gcp)
-    CLDIAC_CREDS_AUTH     - Dynamic credentials auth (IAM role ARN, service account)
+    CLDIAC_CREDS_AUTH     - Dynamic credentials auth role name (e.g. TfcSgPlatformRole).
+                            Combined with account ID to form full ARN per workspace:
+                            arn:aws:iam::<account_id>:role/<CLDIAC_CREDS_AUTH>
     CLDIAC_SID            - Security ID for ABAC (3-9 char alphanumeric, static)
 
 Exit codes:
@@ -281,6 +283,20 @@ class WorkspaceProvisioner:
         except Exception:
             return "dev"
 
+    def _build_creds_auth(self, account_id: str) -> str:
+        """Build the dynamic credentials auth ARN for a target account.
+
+        If creds_auth is already a full ARN, returns it as-is.
+        Otherwise treats it as a role name and builds:
+            arn:aws:iam::<account_id>:role/<creds_auth>
+        """
+        if not self.creds_auth:
+            return ""
+        if self.creds_auth.startswith("arn:"):
+            # Already a full ARN — use as-is (legacy/override behavior)
+            return self.creds_auth
+        return f"arn:aws:iam::{account_id}:role/{self.creds_auth}"
+
     def build_workspace_request(self, account_id: str) -> WorkspaceRequest:
         """Build a CloudIaC workspace creation request for an account."""
         env = self._read_account_env(account_id)
@@ -291,7 +307,7 @@ class WorkspaceProvisioner:
             project_id=self.project_id,
             attach_repository=self.repository,
             dynamic_credentials_provider=self.creds_provider,
-            dynamic_credentials_auth=self.creds_auth,
+            dynamic_credentials_auth=self._build_creds_auth(account_id),
         )
 
     def plan(self, changed_accounts: Optional[List[str]] = None) -> List[PlanAction]:

@@ -163,6 +163,51 @@ class TestWorkspaceRequest:
 
 
 # ---------------------------------------------------------------------------
+# Dynamic Credentials Auth
+# ---------------------------------------------------------------------------
+
+class TestDynamicCredsAuth:
+    def test_role_name_builds_arn(self, repo_root):
+        """Role name (no arn: prefix) gets templated into full ARN with account ID."""
+        p = WorkspaceProvisioner(
+            repo_root=str(repo_root), car_id="x", project_id="y",
+            repository="z", creds_auth="TfcSgPlatformRole",
+        )
+        req = p.build_workspace_request("111222333444")
+        assert req.dynamic_credentials_auth == "arn:aws:iam::111222333444:role/TfcSgPlatformRole"
+
+    def test_role_name_different_accounts(self, repo_root):
+        """Each account gets its own ARN from the same role name."""
+        p = WorkspaceProvisioner(
+            repo_root=str(repo_root), car_id="x", project_id="y",
+            repository="z", creds_auth="TfcSgPlatformRole",
+        )
+        req1 = p.build_workspace_request("111222333444")
+        req2 = p.build_workspace_request("555666777888")
+        assert "111222333444" in req1.dynamic_credentials_auth
+        assert "555666777888" in req2.dynamic_credentials_auth
+        assert req1.dynamic_credentials_auth != req2.dynamic_credentials_auth
+
+    def test_full_arn_passthrough(self, repo_root):
+        """Full ARN passed as-is (backward compat / override)."""
+        p = WorkspaceProvisioner(
+            repo_root=str(repo_root), car_id="x", project_id="y",
+            repository="z", creds_auth="arn:aws:iam::999999999999:role/CustomRole",
+        )
+        req = p.build_workspace_request("111222333444")
+        assert req.dynamic_credentials_auth == "arn:aws:iam::999999999999:role/CustomRole"
+
+    def test_empty_creds_auth(self, repo_root):
+        """Empty creds_auth returns empty string."""
+        p = WorkspaceProvisioner(
+            repo_root=str(repo_root), car_id="x", project_id="y",
+            repository="z", creds_auth="",
+        )
+        req = p.build_workspace_request("111222333444")
+        assert req.dynamic_credentials_auth == ""
+
+
+# ---------------------------------------------------------------------------
 # Plan: New Workspaces
 # ---------------------------------------------------------------------------
 
