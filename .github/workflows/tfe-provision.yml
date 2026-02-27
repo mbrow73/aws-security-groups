@@ -73,6 +73,7 @@ jobs:
           CLDIAC_REPOSITORY: ${{ secrets.CLDIAC_REPOSITORY }}
           CLDIAC_CREDS_PROVIDER: ${{ secrets.CLDIAC_CREDS_PROVIDER }}
           CLDIAC_CREDS_AUTH: ${{ secrets.CLDIAC_CREDS_AUTH }}
+          CLDIAC_SID: ${{ secrets.CLDIAC_SID }}
         run: |
           CHANGED="${{ needs.detect-changes.outputs.changed-accounts }}"
 
