@@ -20,7 +20,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from tfe_workspace import (
-    WorkspaceRequest, WorkspaceProvisioner, CloudIaCClient, PlanAction,
+    WorkspaceRequest, VariableSetRequest, VariableSetKeyRequest,
+    VariableSetAttachRequest, WorkspaceProvisioner, CloudIaCClient, PlanAction,
     WORKSPACE_SUFFIX_PREFIX, format_plan_text, format_plan_markdown,
 )
 
@@ -75,6 +76,7 @@ def provisioner(repo_root, mock_client):
         repository="org-eng/aws-security-groups",
         creds_provider="aws",
         creds_auth="arn:aws:iam::123456789012:role/tfe-sg-platform",
+        sid="sgplat01",
     )
 
 
@@ -161,6 +163,51 @@ class TestWorkspaceRequest:
 
 
 # ---------------------------------------------------------------------------
+# Dynamic Credentials Auth
+# ---------------------------------------------------------------------------
+
+class TestDynamicCredsAuth:
+    def test_role_name_builds_arn(self, repo_root):
+        """Role name (no arn: prefix) gets templated into full ARN with account ID."""
+        p = WorkspaceProvisioner(
+            repo_root=str(repo_root), car_id="x", project_id="y",
+            repository="z", creds_auth="TfcSgPlatformRole",
+        )
+        req = p.build_workspace_request("111222333444")
+        assert req.dynamic_credentials_auth == "arn:aws:iam::111222333444:role/TfcSgPlatformRole"
+
+    def test_role_name_different_accounts(self, repo_root):
+        """Each account gets its own ARN from the same role name."""
+        p = WorkspaceProvisioner(
+            repo_root=str(repo_root), car_id="x", project_id="y",
+            repository="z", creds_auth="TfcSgPlatformRole",
+        )
+        req1 = p.build_workspace_request("111222333444")
+        req2 = p.build_workspace_request("555666777888")
+        assert "111222333444" in req1.dynamic_credentials_auth
+        assert "555666777888" in req2.dynamic_credentials_auth
+        assert req1.dynamic_credentials_auth != req2.dynamic_credentials_auth
+
+    def test_full_arn_passthrough(self, repo_root):
+        """Full ARN passed as-is (backward compat / override)."""
+        p = WorkspaceProvisioner(
+            repo_root=str(repo_root), car_id="x", project_id="y",
+            repository="z", creds_auth="arn:aws:iam::999999999999:role/CustomRole",
+        )
+        req = p.build_workspace_request("111222333444")
+        assert req.dynamic_credentials_auth == "arn:aws:iam::999999999999:role/CustomRole"
+
+    def test_empty_creds_auth(self, repo_root):
+        """Empty creds_auth returns empty string."""
+        p = WorkspaceProvisioner(
+            repo_root=str(repo_root), car_id="x", project_id="y",
+            repository="z", creds_auth="",
+        )
+        req = p.build_workspace_request("111222333444")
+        assert req.dynamic_credentials_auth == ""
+
+
+# ---------------------------------------------------------------------------
 # Plan: New Workspaces
 # ---------------------------------------------------------------------------
 
@@ -217,8 +264,13 @@ class TestPlanEdgeCases:
 # ---------------------------------------------------------------------------
 
 class TestApply:
-    def test_apply_create(self, provisioner, mock_client):
+    def test_apply_full_provisioning_flow(self, provisioner, mock_client):
+        """Full 4-step flow: workspace → varset → key → attach."""
         mock_client.create_workspace.return_value = {"id": "ws-new123"}
+        mock_client.create_variable_set.return_value = {"id": "vs-abc123"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
+
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="new",
@@ -226,29 +278,77 @@ class TestApply:
         )]
         results = provisioner.apply(actions)
         assert results[0]["status"] == "created"
-        mock_client.create_workspace.assert_called_once()
+        assert len(results[0]["steps"]) == 4
 
-    def test_apply_conflict_409(self, provisioner, mock_client):
-        """409 = workspace already exists, not an error."""
-        error = HTTPError(
+        mock_client.create_workspace.assert_called_once()
+        mock_client.create_variable_set.assert_called_once()
+        mock_client.create_variable_set_key.assert_called_once_with(
+            "vs-abc123", mock_client.create_variable_set_key.call_args[0][1]
+        )
+        mock_client.attach_variable_set.assert_called_once()
+
+    def test_apply_varset_key_has_correct_values(self, provisioner, mock_client):
+        """Variable set key should be account_id, not sensitive, terraform var (not env)."""
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_client.create_variable_set.return_value = {"id": "vs-123"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
+
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        provisioner.apply(actions)
+
+        key_request = mock_client.create_variable_set_key.call_args[0][1]
+        assert key_request.key == "account_id"
+        assert key_request.value == "111222333444"
+        assert key_request.sensitive is False
+        assert key_request.env is False
+
+    def test_apply_workspace_exists_continues(self, provisioner, mock_client):
+        """409 on workspace create should continue with varset flow."""
+        ws_error = HTTPError(
             url="http://test", code=409, msg="Conflict",
             hdrs={}, fp=BytesIO(b"already exists")
         )
-        mock_client.create_workspace.side_effect = error
+        mock_client.create_workspace.side_effect = ws_error
+        mock_client.create_variable_set.return_value = {"id": "vs-abc123"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
+
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
-            account_id="111222333444", reason="new",
-            details={"request": {}},
+            account_id="111222333444", reason="new", details={},
         )]
         results = provisioner.apply(actions)
-        assert results[0]["status"] == "exists"
+        assert results[0]["status"] == "created"
+        assert results[0]["steps"][0]["status"] == "exists"
+        mock_client.create_variable_set.assert_called_once()
+
+    def test_apply_varset_exists_returns_partial(self, provisioner, mock_client):
+        """409 on varset create returns partial since we can't get the ID."""
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        varset_error = HTTPError(
+            url="http://test", code=409, msg="Conflict",
+            hdrs={}, fp=BytesIO(b"already exists")
+        )
+        mock_client.create_variable_set.side_effect = varset_error
+
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        results = provisioner.apply(actions)
+        assert results[0]["status"] == "partial"
+        mock_client.create_variable_set_key.assert_not_called()
+        mock_client.attach_variable_set.assert_not_called()
 
     def test_apply_error_handling(self, provisioner, mock_client):
         mock_client.create_workspace.side_effect = Exception("API timeout")
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
-            account_id="111222333444", reason="new",
-            details={"request": {}},
+            account_id="111222333444", reason="new", details={},
         )]
         results = provisioner.apply(actions)
         assert results[0]["status"] == "error"
@@ -262,8 +362,7 @@ class TestApply:
         mock_client.create_workspace.side_effect = error
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
-            account_id="111222333444", reason="new",
-            details={"request": {}},
+            account_id="111222333444", reason="new", details={},
         )]
         results = provisioner.apply(actions)
         assert results[0]["status"] == "error"
@@ -280,6 +379,38 @@ class TestApply:
         )]
         results = provisioner.apply(actions)
         assert results[0]["status"] == "skipped"
+
+    def test_apply_varset_uses_correct_sid(self, provisioner, mock_client):
+        """Variable set request should use the static SID."""
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_client.create_variable_set.return_value = {"id": "vs-123"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
+
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        provisioner.apply(actions)
+
+        varset_request = mock_client.create_variable_set.call_args[0][0]
+        assert varset_request.sid == "sgplat01"
+
+    def test_apply_attach_uses_workspace_name(self, provisioner, mock_client):
+        """Attach request should use the workspace name (sg-<account_id>)."""
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_client.create_variable_set.return_value = {"id": "vs-123"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
+
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        provisioner.apply(actions)
+
+        attach_request = mock_client.attach_variable_set.call_args[0][1]
+        assert attach_request.workspace_name == "sg-111222333444"
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +539,9 @@ class TestParallelApply:
         """Multiple creates execute and all return results."""
         mock_client.authenticate.return_value = "tok-123"
         mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_client.create_variable_set.return_value = {"id": "vs-new"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
         actions = [
             PlanAction(action="create", workspace=f"sg-{i}11222333444",
                        account_id=f"{i}11222333444", reason="new", details={})
@@ -417,11 +551,15 @@ class TestParallelApply:
         assert len(results) == 5
         assert all(r["status"] == "created" for r in results)
         assert mock_client.create_workspace.call_count == 5
+        assert mock_client.create_variable_set.call_count == 5
 
     def test_pre_authenticates_before_threads(self, provisioner, mock_client):
         """Auth happens once before threads fan out."""
         mock_client.authenticate.return_value = "tok-123"
         mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_client.create_variable_set.return_value = {"id": "vs-new"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
         actions = [
             PlanAction(action="create", workspace="sg-111222333444",
                        account_id="111222333444", reason="new", details={}),
@@ -434,6 +572,9 @@ class TestParallelApply:
     def test_partial_failure_doesnt_block_others(self, provisioner, mock_client):
         """One failure doesn't prevent other workspaces from being created."""
         mock_client.authenticate.return_value = "tok-123"
+        mock_client.create_variable_set.return_value = {"id": "vs-ok"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
         call_count = [0]
         def side_effect(req):
             call_count[0] += 1
@@ -474,6 +615,9 @@ class TestParallelApply:
         """Results come back sorted by account_id regardless of completion order."""
         mock_client.authenticate.return_value = "tok-123"
         mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_client.create_variable_set.return_value = {"id": "vs-new"}
+        mock_client.create_variable_set_key.return_value = {}
+        mock_client.attach_variable_set.return_value = {}
         actions = [
             PlanAction(action="create", workspace="sg-999888777666",
                        account_id="999888777666", reason="new", details={}),
