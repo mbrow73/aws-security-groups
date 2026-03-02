@@ -859,7 +859,7 @@ class SecurityGroupValidator:
                           f"   → Example: prefix_list_ids: [\"corporate-networks\"]")
             else:
                 message = (f"❌ {cidr} egress detected — unrestricted outbound access. Consider scoping to specific CIDRs or prefix lists.\n"
-                          f"   → For AWS services, use: prefix_list_ids: [\"aws-vpc-endpoints\"]")
+                          f"   → Use security group references or prefix_list_ids: [\"corporate-networks\"]")
             
             summary.add_result(ValidationResult(
                 level='error',

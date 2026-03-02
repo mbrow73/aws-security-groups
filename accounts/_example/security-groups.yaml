@@ -36,19 +36,19 @@ security_groups:
       - protocol: "tcp"
         from_port: 9090
         to_port: 9090
-        prefix_list_ids: ["monitoring-services"]
+        cidr_blocks: ["10.160.0.0/16"]
         description: "Prometheus scraping"
     egress:
       - protocol: "tcp"
         from_port: 5432
         to_port: 5432
-        prefix_list_ids: ["database-subnets"]
+        security_groups: ["rds-postgres"]
         description: "PostgreSQL access"
       - protocol: "tcp"
         from_port: 443
         to_port: 443
-        prefix_list_ids: ["aws-vpc-endpoints"]
-        description: "ECR, S3 via VPC endpoints"
+        prefix_list_ids: ["corporate-networks"]
+        description: "On-prem services via TGW"
       - protocol: "udp"
         from_port: 53
         to_port: 53

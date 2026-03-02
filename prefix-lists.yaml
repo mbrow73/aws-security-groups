@@ -1,32 +1,66 @@
-# Managed Prefix Lists
-# Referenced by name in security-groups.yaml rules via prefix_list_ids
-# Platform creates these as AWS Managed Prefix Lists and shares via RAM
+# AWS Security Group Platform - Managed Prefix Lists
+# Name resolution for validate.py — must stay in sync with baseline repo
+# Only lists that are valid SG rule sources belong here
 
 prefix_lists:
-  aws-vpc-endpoints:
-    description: "VPC endpoint subnet ranges for ECR, S3, STS, etc."
-    max_entries: 20
-    entries:
-      - cidr: "10.0.0.0/16"
-        description: "VPC endpoint subnets"
-
-  monitoring-services:
-    description: "Monitoring infrastructure subnets (Prometheus, Grafana, Datadog agents)"
-    max_entries: 10
-    entries:
-      - cidr: "10.10.0.0/24"
-        description: "Monitoring cluster subnet"
-
-  database-subnets:
-    description: "Database tier subnet ranges (RDS, ElastiCache)"
-    max_entries: 20
-    entries:
-      - cidr: "10.20.0.0/24"
-        description: "Database subnet AZ-a"
-
+  # Corporate network ranges
   corporate-networks:
-    description: "Corporate office and VPN egress CIDR ranges"
-    max_entries: 50
+    name: "corporate-networks"
+    description: "Corporate office and VPN CIDR blocks"
+    max_entries: 20
+    address_family: "IPv4"
     entries:
-      - cidr: "203.0.113.0/24"
-        description: "Corporate office NAT gateway"
+      - cidr: "10.1.0.0/16"
+        description: "Corporate HQ network"
+      - cidr: "10.2.0.0/16"
+        description: "Corporate branch offices"
+      - cidr: "10.10.0.0/16"
+        description: "Corporate VPN pool"
+      - cidr: "192.168.1.0/24"
+        description: "Corporate remote access"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "corporate"
+
+  # WAF and CDN service IPs
+  waf-saas-providers:
+    name: "waf-saas-providers"
+    description: "WAF SaaS provider IP ranges"
+    max_entries: 100
+    address_family: "IPv4"
+    entries:
+      # Cloudflare IP ranges (commonly used WAF/CDN)
+      - cidr: "173.245.48.0/20"
+        description: "Cloudflare range 1"
+      - cidr: "103.21.244.0/22"
+        description: "Cloudflare range 2"
+      - cidr: "103.22.200.0/22"
+        description: "Cloudflare range 3"
+      - cidr: "103.31.4.0/22"
+        description: "Cloudflare range 4"
+      - cidr: "141.101.64.0/18"
+        description: "Cloudflare range 5"
+      - cidr: "108.162.192.0/18"
+        description: "Cloudflare range 6"
+      - cidr: "190.93.240.0/20"
+        description: "Cloudflare range 7"
+      - cidr: "188.114.96.0/20"
+        description: "Cloudflare range 8"
+      - cidr: "197.234.240.0/22"
+        description: "Cloudflare range 9"
+      - cidr: "198.41.128.0/17"
+        description: "Cloudflare range 10"
+      # Fastly IP ranges (another common CDN/WAF)
+      - cidr: "23.235.32.0/20"
+        description: "Fastly range 1"
+      - cidr: "43.249.72.0/22"
+        description: "Fastly range 2"
+      - cidr: "103.244.50.0/24"
+        description: "Fastly range 3"
+      - cidr: "103.245.222.0/23"
+        description: "Fastly range 4"
+      - cidr: "103.245.224.0/24"
+        description: "Fastly range 5"
+    tags:
+      ManagedBy: "sg-platform"
+      Type: "waf-cdn"

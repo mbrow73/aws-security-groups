@@ -30,8 +30,8 @@ security_groups:
       - protocol: "tcp"
         from_port: 443
         to_port: 443
-        prefix_list_ids: ["aws-vpc-endpoints"]
-        description: "HTTPS to VPC endpoints for ECR and S3"
+        cidr_blocks: ["10.100.0.0/16"]
+        description: "HTTPS to VPC endpoints (VPC CIDR scoped)"
       - protocol: "udp"
         from_port: 53
         to_port: 53
