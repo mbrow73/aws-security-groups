@@ -870,17 +870,6 @@ class SecurityGroupValidator:
         
         # Special handling for 0.0.0.0/0 and ::/0
         if (not is_ipv6 and cidr == '0.0.0.0/0') or (is_ipv6 and cidr == '::/0'):
-            # Check if this is allowed for this security group type
-            sg_type = self._get_security_group_type(sg_name)
-            type_overrides = self.guardrails.get('type_overrides', {}).get(sg_type, {})
-            
-            if 'required_egress' in type_overrides and rule_type == 'egress':
-                # Check if this matches a required egress rule
-                for required_rule in type_overrides['required_egress']:
-                    if required_rule.get('cidr_blocks', []) == ['0.0.0.0/0']:
-                        # This is an allowed exception
-                        return
-            
             if rule_type == 'ingress':
                 message = (f"❌ {cidr} ingress is not allowed — this opens the port to the entire internet.\n"
                           f"   → Use a specific CIDR, security group reference, or prefix list instead.\n"
@@ -992,15 +981,6 @@ class SecurityGroupValidator:
                                 context=context
                             ))
         
-        # Check required egress rules (e.g., for EKS nodes)
-        if 'required_egress' in type_overrides:
-            required_rules = type_overrides['required_egress']
-            egress_rules = sg_config.get('egress', [])
-            
-            # Removed: "missing recommended rule" warnings — teams define their own egress.
-            # Re-enable if org wants to enforce mandatory egress patterns per SG type.
-            pass
-        
         # Check rule count overrides
         if 'max_rules' in type_overrides:
             total_rules = len(sg_config.get('ingress', [])) + len(sg_config.get('egress', []))
@@ -1011,16 +991,6 @@ class SecurityGroupValidator:
                     rule='type_rule_count_override',
                     context=context
                 ))
-    
-    def _has_matching_rule(self, rules: List[Dict[str, Any]], required_rule: Dict[str, Any]) -> bool:
-        """Check if a required rule exists in the rule list"""
-        for rule in rules:
-            if (rule.get('protocol') == required_rule.get('protocol') and
-                rule.get('from_port') == required_rule.get('from_port') and
-                rule.get('to_port') == required_rule.get('to_port') and
-                rule.get('cidr_blocks') == required_rule.get('cidr_blocks')):
-                return True
-        return False
     
     def _validate_naming_conventions(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate naming conventions for security groups"""
