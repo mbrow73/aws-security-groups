@@ -73,6 +73,9 @@ jobs:
           CLDIAC_REPOSITORY: ${{ secrets.CLDIAC_REPOSITORY }}
           CLDIAC_CREDS_PROVIDER: ${{ secrets.CLDIAC_CREDS_PROVIDER }}
           CLDIAC_CREDS_AUTH: ${{ secrets.CLDIAC_CREDS_AUTH }}
+          TFE_ADDRESS: ${{ secrets.TFE_ADDRESS }}
+          TFE_TOKEN: ${{ secrets.TFE_TOKEN }}
+          TFE_ORG: ${{ secrets.TFE_ORG }}
         run: |
           CHANGED="${{ needs.detect-changes.outputs.changed-accounts }}"
 

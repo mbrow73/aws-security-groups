@@ -32,6 +32,9 @@ Environment:
     CLDIAC_CREDS_AUTH     - Dynamic credentials auth role name (e.g. TfcSgPlatformRole).
                             Combined with account ID to form full ARN per workspace:
                             arn:aws:iam::<account_id>:role/<CLDIAC_CREDS_AUTH>
+    TFE_ADDRESS           - TFE instance URL (e.g. https://app.terraform.io)
+    TFE_TOKEN             - TFE team/user token for triggering runs
+    TFE_ORG               - TFE organization name
 
 Exit codes:
     0 - Success / no changes
@@ -181,6 +184,70 @@ class CloudIaCClient:
 
 
 # ---------------------------------------------------------------------------
+# Native TFE API Client
+# ---------------------------------------------------------------------------
+
+class TFEClient:
+    """Client for the native Terraform Enterprise JSON:API."""
+
+    def __init__(self, address: str, token: str, org: str):
+        self.address = address.rstrip("/")
+        self.token = token
+        self.org = org
+
+    def _request(self, method: str, path: str, body: Optional[dict] = None) -> dict:
+        """Make an authenticated TFE API request."""
+        url = f"{self.address}/api/v2{path}"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/vnd.api+json",
+        }
+
+        data = json.dumps(body).encode() if body else None
+        req = Request(url, data=data, headers=headers, method=method)
+
+        try:
+            with urlopen(req) as resp:
+                if resp.status == 204:
+                    return {}
+                return json.loads(resp.read().decode())
+        except HTTPError as e:
+            error_body = e.read().decode() if e.fp else ""
+            logger.error(f"TFE API {method} {path} -> {e.code}: {error_body}")
+            raise
+
+    def get_workspace_id(self, workspace_name: str) -> Optional[str]:
+        """Look up a workspace ID by name. Returns None if not found."""
+        try:
+            resp = self._request("GET", f"/organizations/{self.org}/workspaces/{workspace_name}")
+            return resp.get("data", {}).get("id")
+        except HTTPError as e:
+            if e.code == 404:
+                return None
+            raise
+
+    def trigger_run(self, workspace_id: str, message: str = "Triggered by SG provisioner") -> dict:
+        """Trigger a new run on a workspace."""
+        body = {
+            "data": {
+                "attributes": {
+                    "message": message,
+                },
+                "type": "runs",
+                "relationships": {
+                    "workspace": {
+                        "data": {
+                            "type": "workspaces",
+                            "id": workspace_id,
+                        }
+                    }
+                }
+            }
+        }
+        return self._request("POST", "/runs", body)
+
+
+# ---------------------------------------------------------------------------
 # Workspace Provisioner
 # ---------------------------------------------------------------------------
 
@@ -188,10 +255,12 @@ class WorkspaceProvisioner:
     """Orchestrates workspace provisioning through CloudIaC."""
 
     def __init__(self, repo_root: str, client: Optional[CloudIaCClient] = None,
+                 tfe_client: Optional['TFEClient'] = None,
                  car_id: str = "", project_id: str = "", repository: str = "",
                  creds_provider: str = "aws", creds_auth: str = ""):
         self.repo_root = Path(repo_root)
         self.client = client
+        self.tfe_client = tfe_client
         self.car_id = car_id
         self.project_id = project_id
         self.repository = repository
@@ -274,15 +343,22 @@ class WorkspaceProvisioner:
         return actions
 
     def _execute_action(self, action: PlanAction) -> Dict[str, Any]:
-        """Execute a single action. Thread-safe — client auth is cached."""
+        """Execute a single action. Thread-safe — client auth is cached.
+
+        For new workspaces, triggers an initial TFE run via native API
+        since the VCS commit that triggered provisioning already happened
+        before the workspace existed.
+        """
         result = {"action": action.action, "workspace": action.workspace,
                   "account_id": action.account_id, "status": "pending"}
 
         try:
             if action.action == "create":
                 ws_request = self.build_workspace_request(action.account_id)
+                is_new = False
                 try:
                     self.client.create_workspace(ws_request)
+                    is_new = True
                     result["status"] = "created"
                     logger.info(f"✅ Created workspace {action.workspace}")
                 except HTTPError as e:
@@ -291,6 +367,26 @@ class WorkspaceProvisioner:
                         logger.info(f"ℹ️  Workspace {action.workspace} already exists")
                     else:
                         raise
+
+                # Trigger initial run for new workspaces only
+                if is_new and self.tfe_client:
+                    try:
+                        ws_id = self.tfe_client.get_workspace_id(action.workspace)
+                        if ws_id:
+                            self.tfe_client.trigger_run(
+                                ws_id,
+                                message=f"Initial run — workspace provisioned for account {action.account_id}",
+                            )
+                            result["run_triggered"] = True
+                            logger.info(f"🚀 Triggered initial run on {action.workspace}")
+                        else:
+                            result["run_triggered"] = False
+                            result["run_warning"] = "Workspace created but not found in TFE — run not triggered"
+                            logger.warning(f"⚠️  Workspace {action.workspace} not found in TFE after creation")
+                    except Exception as e:
+                        result["run_triggered"] = False
+                        result["run_error"] = str(e)
+                        logger.warning(f"⚠️  Failed to trigger run on {action.workspace}: {e}")
 
             elif action.action == "skip":
                 result["status"] = "skipped"
@@ -359,6 +455,7 @@ def format_plan_text(actions: List[PlanAction]) -> str:
             req = a.details.get("request", {})
             lines.append(f"   + {a.workspace} (account {a.account_id}, env: {req.get('env', '?')})")
             lines.append(f"     Dynamic creds: {req.get('dynamic_credentials_auth', 'N/A')}")
+            lines.append(f"     → Initial TFE run will be triggered after creation")
         lines.append("")
 
     if skips:
@@ -444,6 +541,10 @@ def main():
     creds_provider = os.environ.get("CLDIAC_CREDS_PROVIDER", "aws")
     creds_auth = os.environ.get("CLDIAC_CREDS_AUTH", "")
 
+    tfe_address = os.environ.get("TFE_ADDRESS", "")
+    tfe_token = os.environ.get("TFE_TOKEN", "")
+    tfe_org = os.environ.get("TFE_ORG", "")
+
     if args.command in ("apply", "sync"):
         missing = []
         if not cldiac_url:
@@ -474,9 +575,20 @@ def main():
             password=password,
         )
 
+    tfe_client = None
+    if tfe_address and tfe_token and tfe_org:
+        tfe_client = TFEClient(
+            address=tfe_address,
+            token=tfe_token,
+            org=tfe_org,
+        )
+    elif args.command in ("apply", "sync") and not tfe_address:
+        logger.warning("TFE_ADDRESS/TFE_TOKEN/TFE_ORG not set — initial runs will not be triggered")
+
     provisioner = WorkspaceProvisioner(
         repo_root=args.repo_root,
         client=client,
+        tfe_client=tfe_client,
         car_id=car_id,
         project_id=project_id,
         repository=repository,

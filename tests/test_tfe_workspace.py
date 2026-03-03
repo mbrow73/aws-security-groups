@@ -20,8 +20,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from tfe_workspace import (
-    WorkspaceRequest, WorkspaceProvisioner, CloudIaCClient, PlanAction,
-    WORKSPACE_SUFFIX_PREFIX, format_plan_text, format_plan_markdown,
+    WorkspaceRequest, WorkspaceProvisioner, CloudIaCClient, TFEClient,
+    PlanAction, WORKSPACE_SUFFIX_PREFIX, format_plan_text, format_plan_markdown,
 )
 
 
@@ -66,10 +66,17 @@ def mock_client():
 
 
 @pytest.fixture
-def provisioner(repo_root, mock_client):
+def mock_tfe_client():
+    client = MagicMock(spec=TFEClient)
+    return client
+
+
+@pytest.fixture
+def provisioner(repo_root, mock_client, mock_tfe_client):
     return WorkspaceProvisioner(
         repo_root=str(repo_root),
         client=mock_client,
+        tfe_client=mock_tfe_client,
         car_id="car-test-123",
         project_id="prj-test-456",
         repository="org-eng/aws-security-groups",
@@ -347,6 +354,92 @@ class TestApply:
         arns = {call[0][0].dynamic_credentials_auth for call in calls}
         assert "arn:aws:iam::111222333444:role/TfcSgPlatformRole" in arns
         assert "arn:aws:iam::555666777888:role/TfcSgPlatformRole" in arns
+
+
+# ---------------------------------------------------------------------------
+# Run Trigger (TFE Native API)
+# ---------------------------------------------------------------------------
+
+class TestRunTrigger:
+    def test_new_workspace_triggers_run(self, provisioner, mock_client, mock_tfe_client):
+        """New workspace creation should trigger an initial TFE run."""
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_tfe_client.get_workspace_id.return_value = "ws-abc123"
+        mock_tfe_client.trigger_run.return_value = {"data": {"id": "run-xyz"}}
+
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        results = provisioner.apply(actions)
+        assert results[0]["status"] == "created"
+        assert results[0]["run_triggered"] is True
+        mock_tfe_client.get_workspace_id.assert_called_once_with("sg-111222333444")
+        mock_tfe_client.trigger_run.assert_called_once_with(
+            "ws-abc123",
+            message="Initial run — workspace provisioned for account 111222333444",
+        )
+
+    def test_existing_workspace_does_not_trigger_run(self, provisioner, mock_client, mock_tfe_client):
+        """409 (workspace exists) should NOT trigger a run."""
+        ws_error = HTTPError(
+            url="http://test", code=409, msg="Conflict",
+            hdrs={}, fp=BytesIO(b"already exists")
+        )
+        mock_client.create_workspace.side_effect = ws_error
+
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        results = provisioner.apply(actions)
+        assert results[0]["status"] == "exists"
+        mock_tfe_client.trigger_run.assert_not_called()
+
+    def test_run_trigger_failure_is_warning_not_error(self, provisioner, mock_client, mock_tfe_client):
+        """Failed run trigger shouldn't fail the whole provisioning."""
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_tfe_client.get_workspace_id.return_value = "ws-abc123"
+        mock_tfe_client.trigger_run.side_effect = Exception("TFE unreachable")
+
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        results = provisioner.apply(actions)
+        assert results[0]["status"] == "created"  # workspace still created
+        assert results[0]["run_triggered"] is False
+        assert "TFE unreachable" in results[0]["run_error"]
+
+    def test_workspace_not_found_in_tfe_after_creation(self, provisioner, mock_client, mock_tfe_client):
+        """If TFE can't find the workspace after CloudIaC creates it, warn."""
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+        mock_tfe_client.get_workspace_id.return_value = None
+
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        results = provisioner.apply(actions)
+        assert results[0]["status"] == "created"
+        assert results[0]["run_triggered"] is False
+        assert "not found" in results[0]["run_warning"]
+
+    def test_no_tfe_client_skips_run_trigger(self, repo_root, mock_client):
+        """Without TFE client, workspace is created but no run triggered."""
+        mock_client.create_workspace.return_value = {"id": "ws-new"}
+
+        provisioner = WorkspaceProvisioner(
+            repo_root=str(repo_root), client=mock_client, tfe_client=None,
+            car_id="x", project_id="y", repository="z", creds_auth="Role",
+        )
+        actions = [PlanAction(
+            action="create", workspace="sg-111222333444",
+            account_id="111222333444", reason="new", details={},
+        )]
+        results = provisioner.apply(actions)
+        assert results[0]["status"] == "created"
+        assert "run_triggered" not in results[0]
 
 
 # ---------------------------------------------------------------------------
