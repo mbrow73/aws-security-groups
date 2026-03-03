@@ -11,19 +11,16 @@ terraform {
 }
 
 locals {
-  mandatory_tags = {
-    "<company>-app-env"                = var.environment
-    "<company>-data-classification"    = "internal"
-    "<company>-app-carid"              = "600001725"
-    "<company>-ops-supportgroup"       = "Security_Operations_Support"
-    "<company>-app-supportgroup"       = "Security_Operations_Support"
-    "<company>-provisioner-repo"       = "placeholder"
-    "<company>-iam-access-control"     = "netsec"
-    "<company>-provisioner-workspace"  = "sg-${var.account_id}"
+  # Platform-managed tags — always applied, not team-configurable
+  platform_tags = {
+    ManagedBy = "sg-platform"
+    Account   = var.account_id
   }
 
+  # Merge order: platform tags (base) → account-level tags → SG-level tags from YAML (wins)
+  # Corporate mandatory tags come from the YAML and are enforced by guardrails validation
   tags = merge(
-    local.mandatory_tags,
+    local.platform_tags,
     var.tags,
     var.security_group_config.tags
   )

@@ -62,7 +62,6 @@ module "security_groups" {
   security_group_config = merge(each.value, { name = each.key })
   vpc_id                = lookup(each.value, "vpc_id", local.vpc_id)
   account_id            = local.account_id
-  environment           = lookup(local.config, "environment", "")
   tags                  = local.common_tags
   prefix_list_mappings  = var.prefix_list_mappings
 

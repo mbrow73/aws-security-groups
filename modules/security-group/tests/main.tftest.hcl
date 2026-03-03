@@ -12,7 +12,6 @@ run "basic_sg_with_rules" {
   variables {
     vpc_id     = "vpc-0123456789abcdef0"
     account_id = "123456789012"
-    environment = "test"
     security_group_config = {
       name        = "payments-db-access"
       description = "Payments service database connectivity"
@@ -68,7 +67,6 @@ run "sg_with_self_reference" {
   variables {
     vpc_id     = "vpc-0123456789abcdef0"
     account_id = "123456789012"
-    environment = "test"
     security_group_config = {
       name        = "mesh-internal"
       description = "Service mesh internal communication"
@@ -111,7 +109,6 @@ run "sg_with_prefix_list" {
   variables {
     vpc_id     = "vpc-0123456789abcdef0"
     account_id = "123456789012"
-    environment = "production"
     prefix_list_mappings = {
       "corporate-networks" = "pl-0123456789abcdef0"
       "database-subnets"   = "pl-0987654321fedcba0"
@@ -158,7 +155,6 @@ run "sg_with_sg_reference" {
   variables {
     vpc_id     = "vpc-0123456789abcdef0"
     account_id = "123456789012"
-    environment = "test"
     security_group_mappings = {
       "alb-frontend" = "sg-alb0123456789abc"
     }
@@ -196,7 +192,6 @@ run "sg_no_egress_no_default" {
   variables {
     vpc_id     = "vpc-0123456789abcdef0"
     account_id = "123456789012"
-    environment = "test"
     security_group_config = {
       name        = "ingress-only-sg"
       description = "RDS - ingress only, no egress needed"
@@ -231,7 +226,6 @@ run "tags_applied_correctly" {
   variables {
     vpc_id     = "vpc-0123456789abcdef0"
     account_id = "123456789012"
-    environment = "production"
     tags = {
       CostCenter = "engineering"
     }

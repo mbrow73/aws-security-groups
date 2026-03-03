@@ -46,12 +46,6 @@ variable "account_id" {
   type        = string
 }
 
-variable "environment" {
-  description = "Environment name for tagging"
-  type        = string
-  default     = ""
-}
-
 variable "tags" {
   description = "Additional tags from account-level config (merged with corporate mandatory tags)"
   type        = map(string)
