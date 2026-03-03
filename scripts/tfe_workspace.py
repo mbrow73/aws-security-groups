@@ -2,18 +2,18 @@
 """
 TFE Workspace Provisioning via CloudIaC API
 
-Manages TFE workspace lifecycle through the organization's CloudIaC wrapper API:
-  - Authenticates via AD service account (basic auth -> bearer token)
-  - Creates workspaces through CloudIaC's /v1/tfe/workspaces endpoint
-  - Creates variable sets with account_id key for workspace scoping
-  - Attaches variable sets to workspaces
-  - Each workspace only plans/applies its own account via the account_id variable
+Creates TFE workspaces through the organization's CloudIaC wrapper API.
+CloudIaC handles dynamic credential provisioning — each workspace gets
+credentials scoped to its target AWS account via the role ARN.
+
+No variable sets needed — account_id is derived from the workspace name
+(sg-<account_id>) in the root Terraform config.
 
 Usage:
-    # Dry-run: show what would be created/triggered
+    # Dry-run: show what would be created
     python tfe_workspace.py plan --changed-accounts 111222333444,555666777888
 
-    # Apply: create workspaces and trigger runs
+    # Apply: create workspaces
     python tfe_workspace.py apply --changed-accounts 111222333444
 
     # Sync: ensure all account dirs have workspaces
@@ -32,7 +32,6 @@ Environment:
     CLDIAC_CREDS_AUTH     - Dynamic credentials auth role name (e.g. TfcSgPlatformRole).
                             Combined with account ID to form full ARN per workspace:
                             arn:aws:iam::<account_id>:role/<CLDIAC_CREDS_AUTH>
-    CLDIAC_SID            - Security ID for ABAC (3-9 char alphanumeric, static)
 
 Exit codes:
     0 - Success / no changes
@@ -89,58 +88,9 @@ class WorkspaceRequest:
 
 
 @dataclass
-class VariableSetRequest:
-    """Payload for CloudIaC variable set creation."""
-    car_id: str
-    suffix: str
-    sid: str
-    project_id: str
-    description: str = ""
-
-    def to_dict(self) -> dict:
-        return {
-            "car_id": self.car_id,
-            "suffix": self.suffix,
-            "sid": self.sid,
-            "project_id": self.project_id,
-            "description": self.description,
-        }
-
-
-@dataclass
-class VariableSetKeyRequest:
-    """Payload for creating a key in a variable set."""
-    key: str
-    value: str
-    description: str = ""
-    sensitive: bool = False
-    env: bool = False
-
-    def to_dict(self) -> dict:
-        return {
-            "key": self.key,
-            "value": self.value,
-            "description": self.description,
-            "sensitive": self.sensitive,
-            "env": self.env,
-        }
-
-
-@dataclass
-class VariableSetAttachRequest:
-    """Payload for attaching a variable set to a workspace."""
-    workspace_name: str
-
-    def to_dict(self) -> dict:
-        return {
-            "workspace_name": self.workspace_name,
-        }
-
-
-@dataclass
 class PlanAction:
     """A planned action to take."""
-    action: str       # create, trigger_run, skip
+    action: str       # create, skip
     workspace: str
     account_id: str
     reason: str
@@ -229,18 +179,6 @@ class CloudIaCClient:
             path += f"?project_id={project_id}"
         return self._request("GET", path)
 
-    def create_variable_set(self, request: 'VariableSetRequest') -> dict:
-        """Create a variable set via CloudIaC API. Returns response with variableSetId."""
-        return self._request("POST", "/v1/tfe/variable-sets", request.to_dict())
-
-    def create_variable_set_key(self, variable_set_id: str, request: 'VariableSetKeyRequest') -> dict:
-        """Create a key in a variable set."""
-        return self._request("POST", f"/v1/tfe/variable-sets/{variable_set_id}/keys", request.to_dict())
-
-    def attach_variable_set(self, variable_set_id: str, request: 'VariableSetAttachRequest') -> dict:
-        """Attach a variable set to a workspace."""
-        return self._request("POST", f"/v1/tfe/variable-sets/{variable_set_id}/attachment", request.to_dict())
-
 
 # ---------------------------------------------------------------------------
 # Workspace Provisioner
@@ -251,7 +189,7 @@ class WorkspaceProvisioner:
 
     def __init__(self, repo_root: str, client: Optional[CloudIaCClient] = None,
                  car_id: str = "", project_id: str = "", repository: str = "",
-                 creds_provider: str = "aws", creds_auth: str = "", sid: str = ""):
+                 creds_provider: str = "aws", creds_auth: str = ""):
         self.repo_root = Path(repo_root)
         self.client = client
         self.car_id = car_id
@@ -259,7 +197,6 @@ class WorkspaceProvisioner:
         self.repository = repository
         self.creds_provider = creds_provider
         self.creds_auth = creds_auth
-        self.sid = sid
 
     def discover_accounts(self) -> List[str]:
         """Find all 12-digit account directories under accounts/."""
@@ -293,7 +230,6 @@ class WorkspaceProvisioner:
         if not self.creds_auth:
             return ""
         if self.creds_auth.startswith("arn:"):
-            # Already a full ARN — use as-is (legacy/override behavior)
             return self.creds_auth
         return f"arn:aws:iam::{account_id}:role/{self.creds_auth}"
 
@@ -327,21 +263,6 @@ class WorkspaceProvisioner:
                 continue
 
             ws_request = self.build_workspace_request(account_id)
-
-            # Without a client, assume workspace needs creation
-            if not self.client:
-                actions.append(PlanAction(
-                    action="create",
-                    workspace=ws_request.suffix,
-                    account_id=account_id,
-                    reason="Workspace needed (dry-run — no CloudIaC connection)",
-                    details={"request": ws_request.to_dict()},
-                ))
-                continue
-
-            # With client, check if workspace exists
-            # CloudIaC may not have a direct "get by name" — plan create regardless
-            # The API should be idempotent or return conflict if exists
             actions.append(PlanAction(
                 action="create",
                 workspace=ws_request.suffix,
@@ -353,114 +274,23 @@ class WorkspaceProvisioner:
         return actions
 
     def _execute_action(self, action: PlanAction) -> Dict[str, Any]:
-        """Execute a single action. Thread-safe — client auth is cached.
-
-        For 'create' actions, runs the full 4-step provisioning flow:
-          1. Create workspace
-          2. Create variable set
-          3. Create variable set key (account_id)
-          4. Attach variable set to workspace
-        """
+        """Execute a single action. Thread-safe — client auth is cached."""
         result = {"action": action.action, "workspace": action.workspace,
-                  "account_id": action.account_id, "status": "pending",
-                  "steps": []}
+                  "account_id": action.account_id, "status": "pending"}
 
         try:
             if action.action == "create":
-                account_id = action.account_id
-                workspace_name = action.workspace
-
-                # Step 1: Create workspace
-                ws_request = self.build_workspace_request(account_id)
-                ws_created = False
+                ws_request = self.build_workspace_request(action.account_id)
                 try:
-                    ws_resp = self.client.create_workspace(ws_request)
-                    result["steps"].append({"step": "create_workspace", "status": "created"})
-                    ws_created = True
-                    logger.info(f"  ✅ Created workspace {workspace_name}")
+                    self.client.create_workspace(ws_request)
+                    result["status"] = "created"
+                    logger.info(f"✅ Created workspace {action.workspace}")
                 except HTTPError as e:
                     if e.code == 409:
-                        result["steps"].append({"step": "create_workspace", "status": "exists"})
-                        ws_created = True
-                        logger.info(f"  ℹ️  Workspace {workspace_name} already exists")
+                        result["status"] = "exists"
+                        logger.info(f"ℹ️  Workspace {action.workspace} already exists")
                     else:
                         raise
-
-                if not ws_created:
-                    result["status"] = "error"
-                    result["error"] = "Workspace creation failed"
-                    return result
-
-                # Step 2: Create variable set
-                varset_request = VariableSetRequest(
-                    car_id=self.car_id,
-                    suffix=f"{WORKSPACE_SUFFIX_PREFIX}{account_id}",
-                    sid=self.sid,
-                    project_id=self.project_id,
-                    description=f"Variables for SG workspace sg-{account_id}",
-                )
-                varset_id = None
-                try:
-                    varset_resp = self.client.create_variable_set(varset_request)
-                    varset_id = varset_resp.get("id") or varset_resp.get("variableSetId") or varset_resp.get("variable_set_id")
-                    result["steps"].append({"step": "create_variable_set", "status": "created", "id": varset_id})
-                    logger.info(f"  ✅ Created variable set for {workspace_name}")
-                except HTTPError as e:
-                    if e.code == 409:
-                        # Variable set exists — try to extract ID from error or response
-                        error_body = e.read().decode() if e.fp else ""
-                        result["steps"].append({"step": "create_variable_set", "status": "exists", "detail": error_body})
-                        logger.info(f"  ℹ️  Variable set for {workspace_name} already exists")
-                        # Can't proceed without varset_id — log warning
-                        logger.warning(f"  ⚠️  Cannot proceed with key/attach without variable set ID. "
-                                       f"Variable set may need manual attachment.")
-                        result["status"] = "partial"
-                        result["warning"] = "Variable set exists but ID unknown — key and attach skipped"
-                        return result
-                    else:
-                        raise
-
-                if not varset_id:
-                    result["status"] = "error"
-                    result["error"] = "Variable set created but no ID returned in response"
-                    return result
-
-                # Step 3: Create variable set key — account_id
-                key_request = VariableSetKeyRequest(
-                    key="account_id",
-                    value=account_id,
-                    description=f"AWS account ID for workspace sg-{account_id}",
-                    sensitive=False,
-                    env=False,  # Terraform variable, not environment variable
-                )
-                try:
-                    self.client.create_variable_set_key(varset_id, key_request)
-                    result["steps"].append({"step": "create_variable_set_key", "status": "created", "key": "account_id"})
-                    logger.info(f"  ✅ Created variable set key account_id={account_id}")
-                except HTTPError as e:
-                    if e.code == 409:
-                        result["steps"].append({"step": "create_variable_set_key", "status": "exists", "key": "account_id"})
-                        logger.info(f"  ℹ️  Variable set key account_id already exists")
-                    else:
-                        raise
-
-                # Step 4: Attach variable set to workspace
-                attach_request = VariableSetAttachRequest(
-                    workspace_name=workspace_name,
-                )
-                try:
-                    self.client.attach_variable_set(varset_id, attach_request)
-                    result["steps"].append({"step": "attach_variable_set", "status": "attached"})
-                    logger.info(f"  ✅ Attached variable set to {workspace_name}")
-                except HTTPError as e:
-                    if e.code == 409:
-                        result["steps"].append({"step": "attach_variable_set", "status": "already_attached"})
-                        logger.info(f"  ℹ️  Variable set already attached to {workspace_name}")
-                    else:
-                        raise
-
-                result["status"] = "created"
-                logger.info(f"✅ Fully provisioned {workspace_name}")
 
             elif action.action == "skip":
                 result["status"] = "skipped"
@@ -483,11 +313,7 @@ class WorkspaceProvisioner:
         return result
 
     def apply(self, actions: List[PlanAction], max_workers: int = 5) -> List[Dict[str, Any]]:
-        """Execute planned actions against CloudIaC. Threaded for parallel provisioning.
-
-        Auth happens once on the first API call, then the cached bearer token
-        is reused across all threads. max_workers controls concurrency.
-        """
+        """Execute planned actions against CloudIaC. Threaded for parallel provisioning."""
         if not self.client:
             raise RuntimeError("Cannot apply without a CloudIaC client")
 
@@ -509,7 +335,6 @@ class WorkspaceProvisioner:
                 for future in as_completed(futures):
                     results.append(future.result())
 
-        # Sort results by account_id for deterministic output
         results.sort(key=lambda r: r.get("account_id", ""))
         return results
 
@@ -533,10 +358,7 @@ def format_plan_text(actions: List[PlanAction]) -> str:
         for a in creates:
             req = a.details.get("request", {})
             lines.append(f"   + {a.workspace} (account {a.account_id}, env: {req.get('env', '?')})")
-            lines.append(f"     1. Create workspace  — CAR: {req.get('car_id', 'N/A')}, Project: {req.get('project_id', 'N/A')}")
-            lines.append(f"     2. Create variable set — suffix: {a.workspace}")
-            lines.append(f"     3. Set key account_id = {a.account_id}")
-            lines.append(f"     4. Attach variable set → {a.workspace}")
+            lines.append(f"     Dynamic creds: {req.get('dynamic_credentials_auth', 'N/A')}")
         lines.append("")
 
     if skips:
@@ -575,10 +397,7 @@ def format_plan_markdown(actions: List[PlanAction]) -> str:
             req = a.details.get("request", {})
             lines.append(f"**`{a.workspace}`** — account `{a.account_id}`")
             lines.append(f"- Environment: `{req.get('env', '?')}`")
-            lines.append(f"- CAR ID: `{req.get('car_id', 'N/A')}`")
-            lines.append(f"- Project: `{req.get('project_id', 'N/A')}`")
-            lines.append(f"- Repository: `{req.get('attach_repository', 'N/A')}`")
-            lines.append(f"- Credentials: `{req.get('dynamic_credentials_provider', 'N/A')}`")
+            lines.append(f"- Dynamic creds: `{req.get('dynamic_credentials_auth', 'N/A')}`")
             lines.append("")
         lines.append("</details>")
         lines.append("")
@@ -603,7 +422,6 @@ def main():
                         help="Repository root directory (default: cwd)")
     parser.add_argument("--format", choices=["text", "json", "markdown"], default="text")
 
-    # All config from env vars — CLI overrides available
     parser.add_argument("--car-id", default=None, help="Override CLDIAC_CAR_ID")
     parser.add_argument("--project-id", default=None, help="Override CLDIAC_PROJECT_ID")
     parser.add_argument("--repository", default=None, help="Override CLDIAC_REPOSITORY")
@@ -612,10 +430,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Parse changed accounts
     changed_accounts = [a.strip() for a in args.changed_accounts.split(",") if a.strip()]
 
-    # Resolve config from env vars with CLI overrides
     cldiac_url = os.environ.get("CLDIAC_URL", "")
     auth_url = os.environ.get("CLDIAC_AUTH_URL", "")
     auth_env = os.environ.get("CLDIAC_AUTH_ENV", "E1")
@@ -627,9 +443,7 @@ def main():
     repository = args.repository or os.environ.get("CLDIAC_REPOSITORY", "")
     creds_provider = os.environ.get("CLDIAC_CREDS_PROVIDER", "aws")
     creds_auth = os.environ.get("CLDIAC_CREDS_AUTH", "")
-    sid = os.environ.get("CLDIAC_SID", "")
 
-    # Validate required config for apply
     if args.command in ("apply", "sync"):
         missing = []
         if not cldiac_url:
@@ -646,13 +460,10 @@ def main():
             missing.append("CLDIAC_PROJECT_ID")
         if not repository:
             missing.append("CLDIAC_REPOSITORY")
-        if not sid:
-            missing.append("CLDIAC_SID")
         if missing:
             logger.error(f"Missing required config: {', '.join(missing)}")
             sys.exit(1)
 
-    # Build client if credentials available
     client = None
     if cldiac_url and (username or password):
         client = CloudIaCClient(
@@ -671,13 +482,11 @@ def main():
         repository=repository,
         creds_provider=creds_provider,
         creds_auth=creds_auth,
-        sid=sid,
     )
 
     if args.command == "sync":
         changed_accounts = None
 
-    # Plan
     actions = provisioner.plan(changed_accounts=changed_accounts or None)
 
     if args.command == "plan":

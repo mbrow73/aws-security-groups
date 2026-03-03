@@ -10,7 +10,7 @@ import os
 import sys
 import base64
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 from dataclasses import asdict
 from urllib.error import HTTPError
 from io import BytesIO
@@ -20,8 +20,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from tfe_workspace import (
-    WorkspaceRequest, VariableSetRequest, VariableSetKeyRequest,
-    VariableSetAttachRequest, WorkspaceProvisioner, CloudIaCClient, PlanAction,
+    WorkspaceRequest, WorkspaceProvisioner, CloudIaCClient, PlanAction,
     WORKSPACE_SUFFIX_PREFIX, format_plan_text, format_plan_markdown,
 )
 
@@ -75,8 +74,7 @@ def provisioner(repo_root, mock_client):
         project_id="prj-test-456",
         repository="org-eng/aws-security-groups",
         creds_provider="aws",
-        creds_auth="arn:aws:iam::123456789012:role/tfe-sg-platform",
-        sid="sgplat01",
+        creds_auth="TfcSgPlatformRole",
     )
 
 
@@ -137,9 +135,9 @@ class TestWorkspaceRequest:
         req = provisioner.build_workspace_request("111222333444")
         assert req.dynamic_credentials_provider == "aws"
 
-    def test_creds_auth(self, provisioner):
+    def test_creds_auth_builds_arn(self, provisioner):
         req = provisioner.build_workspace_request("111222333444")
-        assert req.dynamic_credentials_auth == "arn:aws:iam::123456789012:role/tfe-sg-platform"
+        assert req.dynamic_credentials_auth == "arn:aws:iam::111222333444:role/TfcSgPlatformRole"
 
     def test_to_dict(self, provisioner):
         req = provisioner.build_workspace_request("111222333444")
@@ -208,10 +206,10 @@ class TestDynamicCredsAuth:
 
 
 # ---------------------------------------------------------------------------
-# Plan: New Workspaces
+# Plan
 # ---------------------------------------------------------------------------
 
-class TestPlanNewWorkspaces:
+class TestPlan:
     def test_plan_without_client(self, repo_root):
         p = WorkspaceProvisioner(repo_root=str(repo_root), client=None,
                                  car_id="car-1", project_id="prj-1", repository="org/repo")
@@ -219,41 +217,34 @@ class TestPlanNewWorkspaces:
         creates = [a for a in actions if a.action == "create"]
         assert len(creates) == 1
         assert creates[0].workspace == "sg-111222333444"
-        assert "dry-run" in creates[0].reason.lower()
 
-    def test_plan_with_client(self, provisioner, mock_client):
+    def test_plan_with_client(self, provisioner):
         actions = provisioner.plan(changed_accounts=["111222333444"])
         creates = [a for a in actions if a.action == "create"]
         assert len(creates) == 1
         assert creates[0].account_id == "111222333444"
 
-    def test_plan_includes_request_details(self, provisioner, mock_client):
+    def test_plan_includes_request_details(self, provisioner):
         actions = provisioner.plan(changed_accounts=["111222333444"])
         req = actions[0].details.get("request", {})
         assert req["car_id"] == "car-test-123"
         assert req["env"] == "prod"
         assert req["suffix"] == "sg-111222333444"
 
-
-# ---------------------------------------------------------------------------
-# Plan: Edge Cases
-# ---------------------------------------------------------------------------
-
-class TestPlanEdgeCases:
     def test_skip_nonexistent_account(self, provisioner):
         actions = provisioner.plan(changed_accounts=["000000000000"])
         skips = [a for a in actions if a.action == "skip"]
         assert len(skips) == 1
         assert "not found" in skips[0].reason
 
-    def test_multiple_accounts(self, provisioner, mock_client):
+    def test_multiple_accounts(self, provisioner):
         actions = provisioner.plan(changed_accounts=["111222333444", "555666777888"])
         creates = [a for a in actions if a.action == "create"]
         assert len(creates) == 2
         workspaces = {a.workspace for a in creates}
         assert workspaces == {"sg-111222333444", "sg-555666777888"}
 
-    def test_sync_all_accounts(self, provisioner, mock_client):
+    def test_sync_all_accounts(self, provisioner):
         actions = provisioner.plan(changed_accounts=None)
         creates = [a for a in actions if a.action == "create"]
         assert len(creates) == 2
@@ -264,12 +255,8 @@ class TestPlanEdgeCases:
 # ---------------------------------------------------------------------------
 
 class TestApply:
-    def test_apply_full_provisioning_flow(self, provisioner, mock_client):
-        """Full 4-step flow: workspace → varset → key → attach."""
+    def test_apply_creates_workspace(self, provisioner, mock_client):
         mock_client.create_workspace.return_value = {"id": "ws-new123"}
-        mock_client.create_variable_set.return_value = {"id": "vs-abc123"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
 
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
@@ -278,71 +265,22 @@ class TestApply:
         )]
         results = provisioner.apply(actions)
         assert results[0]["status"] == "created"
-        assert len(results[0]["steps"]) == 4
-
         mock_client.create_workspace.assert_called_once()
-        mock_client.create_variable_set.assert_called_once()
-        mock_client.create_variable_set_key.assert_called_once_with(
-            "vs-abc123", mock_client.create_variable_set_key.call_args[0][1]
-        )
-        mock_client.attach_variable_set.assert_called_once()
 
-    def test_apply_varset_key_has_correct_values(self, provisioner, mock_client):
-        """Variable set key should be account_id, not sensitive, terraform var (not env)."""
-        mock_client.create_workspace.return_value = {"id": "ws-new"}
-        mock_client.create_variable_set.return_value = {"id": "vs-123"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
-
-        actions = [PlanAction(
-            action="create", workspace="sg-111222333444",
-            account_id="111222333444", reason="new", details={},
-        )]
-        provisioner.apply(actions)
-
-        key_request = mock_client.create_variable_set_key.call_args[0][1]
-        assert key_request.key == "account_id"
-        assert key_request.value == "111222333444"
-        assert key_request.sensitive is False
-        assert key_request.env is False
-
-    def test_apply_workspace_exists_continues(self, provisioner, mock_client):
-        """409 on workspace create should continue with varset flow."""
+    def test_apply_workspace_exists_409(self, provisioner, mock_client):
+        """409 on workspace create means it already exists — not an error."""
         ws_error = HTTPError(
             url="http://test", code=409, msg="Conflict",
             hdrs={}, fp=BytesIO(b"already exists")
         )
         mock_client.create_workspace.side_effect = ws_error
-        mock_client.create_variable_set.return_value = {"id": "vs-abc123"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
 
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="new", details={},
         )]
         results = provisioner.apply(actions)
-        assert results[0]["status"] == "created"
-        assert results[0]["steps"][0]["status"] == "exists"
-        mock_client.create_variable_set.assert_called_once()
-
-    def test_apply_varset_exists_returns_partial(self, provisioner, mock_client):
-        """409 on varset create returns partial since we can't get the ID."""
-        mock_client.create_workspace.return_value = {"id": "ws-new"}
-        varset_error = HTTPError(
-            url="http://test", code=409, msg="Conflict",
-            hdrs={}, fp=BytesIO(b"already exists")
-        )
-        mock_client.create_variable_set.side_effect = varset_error
-
-        actions = [PlanAction(
-            action="create", workspace="sg-111222333444",
-            account_id="111222333444", reason="new", details={},
-        )]
-        results = provisioner.apply(actions)
-        assert results[0]["status"] == "partial"
-        mock_client.create_variable_set_key.assert_not_called()
-        mock_client.attach_variable_set.assert_not_called()
+        assert results[0]["status"] == "exists"
 
     def test_apply_error_handling(self, provisioner, mock_client):
         mock_client.create_workspace.side_effect = Exception("API timeout")
@@ -380,12 +318,9 @@ class TestApply:
         results = provisioner.apply(actions)
         assert results[0]["status"] == "skipped"
 
-    def test_apply_varset_uses_correct_sid(self, provisioner, mock_client):
-        """Variable set request should use the static SID."""
+    def test_apply_passes_correct_creds_auth(self, provisioner, mock_client):
+        """Workspace creation should include per-account dynamic creds ARN."""
         mock_client.create_workspace.return_value = {"id": "ws-new"}
-        mock_client.create_variable_set.return_value = {"id": "vs-123"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
 
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
@@ -393,24 +328,25 @@ class TestApply:
         )]
         provisioner.apply(actions)
 
-        varset_request = mock_client.create_variable_set.call_args[0][0]
-        assert varset_request.sid == "sgplat01"
+        ws_request = mock_client.create_workspace.call_args[0][0]
+        assert ws_request.dynamic_credentials_auth == "arn:aws:iam::111222333444:role/TfcSgPlatformRole"
 
-    def test_apply_attach_uses_workspace_name(self, provisioner, mock_client):
-        """Attach request should use the workspace name (sg-<account_id>)."""
+    def test_apply_different_accounts_get_different_arns(self, provisioner, mock_client):
+        """Each account should get its own ARN in the workspace request."""
         mock_client.create_workspace.return_value = {"id": "ws-new"}
-        mock_client.create_variable_set.return_value = {"id": "vs-123"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
 
-        actions = [PlanAction(
-            action="create", workspace="sg-111222333444",
-            account_id="111222333444", reason="new", details={},
-        )]
-        provisioner.apply(actions)
+        actions = [
+            PlanAction(action="create", workspace="sg-111222333444",
+                       account_id="111222333444", reason="new", details={}),
+            PlanAction(action="create", workspace="sg-555666777888",
+                       account_id="555666777888", reason="new", details={}),
+        ]
+        provisioner.apply(actions, max_workers=1)
 
-        attach_request = mock_client.attach_variable_set.call_args[0][1]
-        assert attach_request.workspace_name == "sg-111222333444"
+        calls = mock_client.create_workspace.call_args_list
+        arns = {call[0][0].dynamic_credentials_auth for call in calls}
+        assert "arn:aws:iam::111222333444:role/TfcSgPlatformRole" in arns
+        assert "arn:aws:iam::555666777888:role/TfcSgPlatformRole" in arns
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +389,6 @@ class TestCloudIaCAuth:
         token = client.authenticate()
         assert token == "tok-123"
 
-        # Verify the request
         call_args = mock_urlopen.call_args[0][0]
         expected_creds = base64.b64encode(b"svc-sg-platform:secret123").decode()
         assert call_args.get_header("Authorization") == f"Basic {expected_creds}"
@@ -492,15 +427,12 @@ class TestFormatting:
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="New",
             details={"request": {
-                "car_id": "car-1", "env": "prod", "project_id": "prj-1",
-                "attach_repository": "org/repo",
-                "dynamic_credentials_provider": "aws",
-                "dynamic_credentials_auth": "arn:aws:iam::1:role/x",
+                "car_id": "car-1", "env": "prod",
+                "dynamic_credentials_auth": "arn:aws:iam::111222333444:role/X",
             }},
         )]
         output = format_plan_text(actions)
         assert "sg-111222333444" in output
-        assert "car-1" in output
         assert "prod" in output
 
     def test_markdown_no_actions(self):
@@ -511,10 +443,8 @@ class TestFormatting:
             action="create", workspace="sg-111222333444",
             account_id="111222333444", reason="New",
             details={"request": {
-                "car_id": "car-1", "env": "prod", "project_id": "prj-1",
-                "attach_repository": "org/repo",
-                "dynamic_credentials_provider": "aws",
-                "dynamic_credentials_auth": "",
+                "env": "prod",
+                "dynamic_credentials_auth": "arn:aws:iam::111222333444:role/X",
             }},
         )]
         output = format_plan_markdown(actions)
@@ -536,12 +466,8 @@ class TestFormatting:
 
 class TestParallelApply:
     def test_apply_multiple_accounts_parallel(self, provisioner, mock_client):
-        """Multiple creates execute and all return results."""
         mock_client.authenticate.return_value = "tok-123"
         mock_client.create_workspace.return_value = {"id": "ws-new"}
-        mock_client.create_variable_set.return_value = {"id": "vs-new"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
         actions = [
             PlanAction(action="create", workspace=f"sg-{i}11222333444",
                        account_id=f"{i}11222333444", reason="new", details={})
@@ -551,15 +477,10 @@ class TestParallelApply:
         assert len(results) == 5
         assert all(r["status"] == "created" for r in results)
         assert mock_client.create_workspace.call_count == 5
-        assert mock_client.create_variable_set.call_count == 5
 
     def test_pre_authenticates_before_threads(self, provisioner, mock_client):
-        """Auth happens once before threads fan out."""
         mock_client.authenticate.return_value = "tok-123"
         mock_client.create_workspace.return_value = {"id": "ws-new"}
-        mock_client.create_variable_set.return_value = {"id": "vs-new"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
         actions = [
             PlanAction(action="create", workspace="sg-111222333444",
                        account_id="111222333444", reason="new", details={}),
@@ -570,11 +491,7 @@ class TestParallelApply:
         mock_client.authenticate.assert_called_once()
 
     def test_partial_failure_doesnt_block_others(self, provisioner, mock_client):
-        """One failure doesn't prevent other workspaces from being created."""
         mock_client.authenticate.return_value = "tok-123"
-        mock_client.create_variable_set.return_value = {"id": "vs-ok"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
         call_count = [0]
         def side_effect(req):
             call_count[0] += 1
@@ -588,13 +505,12 @@ class TestParallelApply:
             PlanAction(action="create", workspace="sg-555666777888",
                        account_id="555666777888", reason="new", details={}),
         ]
-        results = provisioner.apply(actions, max_workers=1)  # sequential to control order
+        results = provisioner.apply(actions, max_workers=1)
         statuses = {r["status"] for r in results}
         assert "error" in statuses
         assert "created" in statuses
 
     def test_skips_not_threaded(self, provisioner, mock_client):
-        """Skip actions execute inline, not in thread pool."""
         mock_client.authenticate.return_value = "tok-123"
         actions = [
             PlanAction(action="skip", workspace="sg-000", account_id="000",
@@ -606,18 +522,13 @@ class TestParallelApply:
         mock_client.create_workspace.assert_not_called()
 
     def test_empty_actions(self, provisioner, mock_client):
-        """Empty action list returns empty results without auth."""
         results = provisioner.apply([], max_workers=3)
         assert results == []
         mock_client.authenticate.assert_not_called()
 
     def test_results_sorted_by_account_id(self, provisioner, mock_client):
-        """Results come back sorted by account_id regardless of completion order."""
         mock_client.authenticate.return_value = "tok-123"
         mock_client.create_workspace.return_value = {"id": "ws-new"}
-        mock_client.create_variable_set.return_value = {"id": "vs-new"}
-        mock_client.create_variable_set_key.return_value = {}
-        mock_client.attach_variable_set.return_value = {}
         actions = [
             PlanAction(action="create", workspace="sg-999888777666",
                        account_id="999888777666", reason="new", details={}),
