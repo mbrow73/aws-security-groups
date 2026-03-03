@@ -405,8 +405,9 @@ class SecurityGroupValidator:
         if not isinstance(data['security_groups'], dict):
             return  # already caught by schema validation
         
+        top_level_env = data.get('environment', '')
         for sg_name, sg_config in data['security_groups'].items():
-            self._validate_security_group(sg_name, sg_config, summary)
+            self._validate_security_group(sg_name, sg_config, summary, top_level_env=top_level_env)
     
     def _safe_sort_tuple(self, val) -> tuple:
         """Safely convert a field to a sorted tuple for hashing, handling type errors."""
@@ -433,7 +434,7 @@ class SecurityGroupValidator:
             rule.get('self', False),
         )
 
-    def _validate_security_group(self, sg_name: str, sg_config: Dict[str, Any], summary: ValidationSummary):
+    def _validate_security_group(self, sg_name: str, sg_config: Dict[str, Any], summary: ValidationSummary, top_level_env: str = ""):
         """Validate a single security group configuration"""
         context = f"security_group.{sg_name}"
         
@@ -535,6 +536,16 @@ class SecurityGroupValidator:
                     rule='sg_required_tags',
                     context=context
                 ))
+        
+        # Validate <company>-app-env tag matches top-level environment
+        app_env_tag = sg_tags.get('<company>-app-env', '')
+        if top_level_env and app_env_tag and app_env_tag != top_level_env:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"❌ Tag '<company>-app-env' value '{app_env_tag}' does not match top-level environment '{top_level_env}' — these must be consistent.",
+                rule='sg_tag_env_mismatch',
+                context=context
+            ))
     
     def _check_duplicate_rules(self, sg_name: str, rule_type: str, rules: List[Dict[str, Any]], 
                               summary: ValidationSummary):

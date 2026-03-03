@@ -811,3 +811,59 @@ class TestCorporateMandatoryTags:
         summary = _validate(repo_root_with_tags, '100000000001', data)
         tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
         assert len(tag_errors) == 6
+
+
+class TestTagEnvMismatch:
+    def test_app_env_tag_matches_environment(self, repo_root_with_tags):
+        """No error when <company>-app-env matches top-level environment."""
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'tags': {
+                        "<company>-app-env": "prod",
+                        "<company>-data-classification": "internal",
+                        "<company>-app-carid": "600001725",
+                        "<company>-ops-supportgroup": "Security_Operations_Support",
+                        "<company>-app-supportgroup": "Security_Operations_Support",
+                        "<company>-provisioner-repo": "placeholder",
+                        "<company>-iam-access-control": "netsec",
+                        "<company>-provisioner-workspace": "sg-100000000001",
+                    },
+                    'ingress': [{'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/24']}],
+                },
+            },
+        }
+        summary = _validate(repo_root_with_tags, '100000000001', data)
+        mismatch_errors = [e for e in summary.errors if e.rule == 'sg_tag_env_mismatch']
+        assert len(mismatch_errors) == 0
+
+    def test_app_env_tag_mismatch_gives_error(self, repo_root_with_tags):
+        """Error when <company>-app-env doesn't match top-level environment."""
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'tags': {
+                        "<company>-app-env": "dev",
+                        "<company>-data-classification": "internal",
+                        "<company>-app-carid": "600001725",
+                        "<company>-ops-supportgroup": "Security_Operations_Support",
+                        "<company>-app-supportgroup": "Security_Operations_Support",
+                        "<company>-provisioner-repo": "placeholder",
+                        "<company>-iam-access-control": "netsec",
+                        "<company>-provisioner-workspace": "sg-100000000001",
+                    },
+                    'ingress': [{'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/24']}],
+                },
+            },
+        }
+        summary = _validate(repo_root_with_tags, '100000000001', data)
+        mismatch_errors = [e for e in summary.errors if e.rule == 'sg_tag_env_mismatch']
+        assert len(mismatch_errors) == 1
+        assert "dev" in mismatch_errors[0].message
+        assert "prod" in mismatch_errors[0].message
