@@ -355,10 +355,8 @@ class WorkspaceProvisioner:
         try:
             if action.action == "create":
                 ws_request = self.build_workspace_request(action.account_id)
-                is_new = False
                 try:
                     self.client.create_workspace(ws_request)
-                    is_new = True
                     result["status"] = "created"
                     logger.info(f"✅ Created workspace {action.workspace}")
                 except HTTPError as e:
@@ -368,14 +366,14 @@ class WorkspaceProvisioner:
                     else:
                         raise
 
-                # Trigger initial run for new workspaces only
-                if is_new and self.tfe_client:
+                # Always trigger a run — GitHub Actions is the trigger, not VCS
+                if self.tfe_client:
                     try:
                         ws_id = self.tfe_client.get_workspace_id(action.workspace)
                         if ws_id:
                             self.tfe_client.trigger_run(
                                 ws_id,
-                                message=f"Initial run — workspace provisioned for account {action.account_id}",
+                                message=f"Triggered by SG provisioner for account {action.account_id}",
                             )
                             result["run_triggered"] = True
                             logger.info(f"🚀 Triggered initial run on {action.workspace}")

@@ -377,16 +377,18 @@ class TestRunTrigger:
         mock_tfe_client.get_workspace_id.assert_called_once_with("sg-111222333444")
         mock_tfe_client.trigger_run.assert_called_once_with(
             "ws-abc123",
-            message="Initial run — workspace provisioned for account 111222333444",
+            message="Triggered by SG provisioner for account 111222333444",
         )
 
-    def test_existing_workspace_does_not_trigger_run(self, provisioner, mock_client, mock_tfe_client):
-        """409 (workspace exists) should NOT trigger a run."""
+    def test_existing_workspace_still_triggers_run(self, provisioner, mock_client, mock_tfe_client):
+        """409 (workspace exists) should still trigger a run — Actions is the trigger, not VCS."""
         ws_error = HTTPError(
             url="http://test", code=409, msg="Conflict",
             hdrs={}, fp=BytesIO(b"already exists")
         )
         mock_client.create_workspace.side_effect = ws_error
+        mock_tfe_client.get_workspace_id.return_value = "ws-existing"
+        mock_tfe_client.trigger_run.return_value = {"data": {"id": "run-xyz"}}
 
         actions = [PlanAction(
             action="create", workspace="sg-111222333444",
@@ -394,7 +396,8 @@ class TestRunTrigger:
         )]
         results = provisioner.apply(actions)
         assert results[0]["status"] == "exists"
-        mock_tfe_client.trigger_run.assert_not_called()
+        assert results[0]["run_triggered"] is True
+        mock_tfe_client.trigger_run.assert_called_once()
 
     def test_run_trigger_failure_is_warning_not_error(self, provisioner, mock_client, mock_tfe_client):
         """Failed run trigger shouldn't fail the whole provisioning."""
