@@ -1,0 +1,88 @@
+# Security Group Request - "Payments Team"
+# Submitted by: someone who clearly didn't read the docs
+
+account_id: "777666555444"
+environment: "staging"
+
+security_groups:
+
+  PAYMENTS_API:
+    description: "Payment processing API"
+    tags:
+      team: "payments"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "HTTPS from internet"
+      - protocol: "tcp"
+        from_port: 22
+        to_port: 22
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "SSH access"
+      - protocol: "tcp"
+        from_port: 23
+        to_port: 23
+        cidr_blocks: ["172.16.0.0/12"]
+        description: "Legacy terminal access"
+      - protocol: "tcp"
+        from_port: 8000
+        to_port: 9000
+        cidr_blocks: ["192.168.1.0/24"]
+        description: "App ports"
+    egress:
+      - protocol: "tcp"
+        from_port: 1
+        to_port: 65535
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "we need everything"
+
+  db-payments:
+    desaripshun: "Payments database"
+    tags:
+      "<company>-app-env": "staging"
+    ingress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "PostgreSQL"
+      - protocol: "tcp"
+        from_port: 445
+        to_port: 445
+        cidr_blocks: ["10.10.0.0/16"]
+        description: "File sharing"
+      - protocol: "tcp"
+        from_port: 139
+        to_port: 139
+        cidr_blocks: ["10.10.0.0/16"]
+        description: "NetBIOS"
+      - protocol: "tcp"
+        from_port: 3306
+        to_port: 3306
+        source: "10.0.0.0/8"
+        description: "MySQL from everywhere internal"
+
+  cache-layer:
+    description: "Redis cache"
+    tags:
+      "<company>-app-env": "prod"
+      "<company>-data-classification": "internal"
+      "<company>-app-carid": "600001725"
+      "<company>-ops-supportgroup": "Security_Operations_Support"
+      "<company>-app-supportgroup": "Security_Operations_Support"
+      "<company>-provisioner-repo": "placeholder"
+      "<company>-iam-access-control": "netsec"
+      "<company>-provisioner-workspace": "600001725-prod-sg-777666555444"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        cidr_blocks: ["10.20.0.0/16"]
+        description: "Redis from app tier"
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        cidr_blocks: ["10.20.0.0/16"]
+        description: "Redis from app tier"
