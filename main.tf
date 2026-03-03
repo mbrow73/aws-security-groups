@@ -1,11 +1,12 @@
 # Root Configuration — SG Self-Service Platform
 #
-# Each TFE workspace sets `account_id` via a variable set.
-# This root config reads the corresponding account YAML and
-# calls the account module to create team security groups.
+# Each TFE workspace is named `sg-<account_id>`. The account ID is
+# derived from the workspace name — no variables need to be set.
+# Dynamic credentials are scoped per account at workspace creation
+# via CloudIaC API.
 #
 # Workspace scoping: TFE workspace sg-<account_id> only processes
-# accounts/<account_id>/security-groups.yaml via the account_id variable.
+# accounts/<account_id>/security-groups.yaml.
 
 terraform {
   required_version = ">= 1.6"
@@ -17,14 +18,9 @@ terraform {
   }
 }
 
-variable "account_id" {
-  description = "12-digit AWS account ID — set by TFE variable set per workspace"
-  type        = string
-
-  validation {
-    condition     = can(regex("^\\d{12}$", var.account_id))
-    error_message = "account_id must be a 12-digit AWS account ID"
-  }
+locals {
+  # Derive account_id from workspace name: "sg-123456789012" → "123456789012"
+  account_id = regex("^sg-(\\d{12})$", terraform.workspace)[0]
 }
 
 variable "prefix_list_mappings" {
@@ -36,7 +32,7 @@ variable "prefix_list_mappings" {
 module "account" {
   source = "./modules/account"
 
-  yaml_file            = "${path.root}/accounts/${var.account_id}/security-groups.yaml"
+  yaml_file            = "${path.root}/accounts/${local.account_id}/security-groups.yaml"
   prefix_list_mappings = var.prefix_list_mappings
 }
 
@@ -47,5 +43,5 @@ output "security_group_ids" {
 
 output "account_id" {
   description = "The account ID this workspace manages"
-  value       = var.account_id
+  value       = local.account_id
 }

@@ -23,9 +23,10 @@ Workspaces are auto-provisioned by `.github/workflows/tfe-provision.yml` on merg
 2. For each changed account, create a TFE workspace via CloudIaC:
    - Name: `sg-{account_id}`
    - Environment: read from account YAML (`prod`, `test`, `dev`)
+   - Dynamic credentials: scoped to the target account via `arn:aws:iam::<account_id>:role/<CLDIAC_CREDS_AUTH>`
    - VCS: attached to this repository
-   - Trigger patterns: `accounts/{id}/**`, `modules/**`, `prefix-lists.yaml`, `guardrails.yaml`
-3. VCS-driven runs auto-trigger on workspace creation and subsequent merges
+3. `account_id` is derived from the workspace name in `main.tf` — no variables or variable sets needed
+4. VCS-driven runs auto-trigger on workspace creation and subsequent merges
 
 ### Required Secrets
 
@@ -40,7 +41,7 @@ Workspaces are auto-provisioned by `.github/workflows/tfe-provision.yml` on merg
 | `CLDIAC_REPOSITORY` | Yes | Repo to attach |
 | `CLDIAC_AUTH_ENV` | No | Auth environment header (default: E1) |
 | `CLDIAC_CREDS_PROVIDER` | No | Dynamic credentials provider (default: aws) |
-| `CLDIAC_CREDS_AUTH` | No | IAM role ARN for TFE |
+| `CLDIAC_CREDS_AUTH` | No | IAM role name for TFE (templated into per-account ARN) |
 
 ## IAM Role for TFE
 
