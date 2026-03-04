@@ -1,0 +1,98 @@
+# Security Group Request - Payments Team
+# Account: 555444333222 (payments-prod)
+# Requested by: payments-platform@company.com
+# Ticket: NETSEC-4821
+
+account_id: "555444333222"
+environment: "prod"
+
+security_groups:
+
+  # Payment processing API - receives traffic from internal ALB
+  payments-api:
+    description: "Payment processing API behind internal ALB - handles tokenization and auth flows"
+    tags:
+      "<company>-app-env": "prod"
+      "<company>-data-classification": "confidential"
+      "<company>-app-carid": "600002190"
+      "<company>-ops-supportgroup": "Payments_Platform_Support"
+      "<company>-app-supportgroup": "Payments_Platform_Support"
+      "<company>-provisioner-repo": "aws-security-groups"
+      "<company>-iam-access-control": "payments-admins"
+      "<company>-provisioner-workspace": "600002190-prod-sg-555444333222"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        security_groups: ["sg-0a1b2c3d4e5f60001"]
+        description: "HTTPS from internal ALB"
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["sg-0a1b2c3d4e5f60002"]
+        description: "Prometheus metrics scraping from monitoring stack"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-rds"]
+        description: "PostgreSQL to payments database"
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["payments-redis"]
+        description: "Redis session cache"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["corporate-networks"]
+        description: "HTTPS to internal services via TGW"
+      - protocol: "udp"
+        from_port: 53
+        to_port: 53
+        cidr_blocks: ["10.160.0.0/16"]
+        description: "DNS resolution within VPC"
+
+  # Payments database - PostgreSQL RDS
+  payments-rds:
+    description: "PostgreSQL RDS for payments data - PCI scoped, restricted access"
+    tags:
+      "<company>-app-env": "prod"
+      "<company>-data-classification": "confidential"
+      "<company>-app-carid": "600002190"
+      "<company>-ops-supportgroup": "Payments_Platform_Support"
+      "<company>-app-supportgroup": "Payments_Platform_Support"
+      "<company>-provisioner-repo": "aws-security-groups"
+      "<company>-iam-access-control": "payments-admins"
+      "<company>-provisioner-workspace": "600002190-prod-sg-555444333222"
+    ingress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-api"]
+        description: "PostgreSQL from payments API only"
+
+  # Redis cluster for session/token caching
+  payments-redis:
+    description: "ElastiCache Redis cluster for payments session and token caching"
+    tags:
+      "<company>-app-env": "prod"
+      "<company>-data-classification": "confidential"
+      "<company>-app-carid": "600002190"
+      "<company>-ops-supportgroup": "Payments_Platform_Support"
+      "<company>-app-supportgroup": "Payments_Platform_Support"
+      "<company>-provisioner-repo": "aws-security-groups"
+      "<company>-iam-access-control": "payments-admins"
+      "<company>-provisioner-workspace": "600002190-prod-sg-555444333222"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["payments-api"]
+        description: "Redis from payments API only"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.160.0.0/16"]
+        description: "HTTPS to VPC endpoints"
