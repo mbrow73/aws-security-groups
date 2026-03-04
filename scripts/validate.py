@@ -192,9 +192,7 @@ class SecurityGroupValidator:
         # Perform all validation checks
         self._validate_schema(data, summary)
         self._validate_account_id(data, summary)
-        self._validate_baseline_profiles(data, summary)
         self._validate_security_groups(data, summary)
-        self._validate_guardrails(data, summary)
         self._validate_naming_conventions(data, summary)
         self._validate_prefix_list_references(data, summary)
         self._validate_unicode_characters(data, summary)
@@ -202,9 +200,9 @@ class SecurityGroupValidator:
         return summary
     
     # Known top-level keys in security-groups.yaml
-    KNOWN_TOP_LEVEL_KEYS = {'account_id', 'environment', 'security_groups', 'baseline_profiles', 'tags'}
+    KNOWN_TOP_LEVEL_KEYS = {'account_id', 'environment', 'security_groups', 'tags'}
     # Known keys within a security group definition
-    KNOWN_SG_KEYS = {'description', 'ingress', 'egress', 'tags', 'type'}
+    KNOWN_SG_KEYS = {'description', 'ingress', 'egress', 'tags'}
     # Known keys within a rule definition
     KNOWN_RULE_KEYS = {'protocol', 'from_port', 'to_port', 'cidr_blocks', 'ipv6_cidr_blocks',
                        'security_groups', 'prefix_list_ids', 'self', 'description'}
@@ -305,97 +303,6 @@ class SecurityGroupValidator:
                 level='warning',
                 message=f"account_id '{account_id}' doesn't match directory name '{self.account_dir.name}'",
                 rule='account_id_consistency'
-            ))
-    
-    def _validate_baseline_profiles(self, data: Dict[str, Any], summary: ValidationSummary):
-        """Validate baseline_profiles configuration"""
-        if 'baseline_profiles' not in data:
-            return  # baseline_profiles is optional
-        
-        baseline_profiles = data['baseline_profiles']
-        
-        # Must be a list
-        if not isinstance(baseline_profiles, list):
-            summary.add_result(ValidationResult(
-                level='error',
-                message="'baseline_profiles' must be a list",
-                rule='baseline_profiles_type'
-            ))
-            return
-        
-        # Valid profile names — must match profiles in terraform-aws-eks-baseline-sgs
-        valid_profiles = ['vpc-endpoints', 'eks-internet', 'eks-standard']
-        
-        # Validate each profile name
-        for i, profile in enumerate(baseline_profiles):
-            if not isinstance(profile, str):
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"baseline_profiles[{i}] must be a string, got {type(profile).__name__}",
-                    rule='baseline_profile_type'
-                ))
-                continue
-            
-            if profile not in valid_profiles:
-                message = (f"❌ Baseline profile '{profile}' does not exist. Available profiles: {', '.join(valid_profiles)}\n"
-                          f"   → See terraform-aws-eks-baseline-sgs repo for profile details.")
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=message,
-                    rule='baseline_profile_name'
-                ))
-        
-        # Check for duplicates
-        if len(baseline_profiles) != len(set(baseline_profiles)):
-            duplicates = [p for p in baseline_profiles if baseline_profiles.count(p) > 1]
-            summary.add_result(ValidationResult(
-                level='warning',
-                message=f"Duplicate baseline profiles found: {', '.join(set(duplicates))}",
-                rule='baseline_profile_duplicates'
-            ))
-        
-        # Profile dependency checks
-        PROFILE_DEPENDENCIES = {
-            'eks-standard': ['vpc-endpoints'],
-            'eks-internet': ['vpc-endpoints'],
-        }
-        
-        # Mutually exclusive profiles
-        MUTUALLY_EXCLUSIVE = [
-            {'eks-standard', 'eks-internet'},  # pick one EKS profile, not both
-        ]
-        
-        for exclusive_set in MUTUALLY_EXCLUSIVE:
-            conflicts = exclusive_set.intersection(set(baseline_profiles))
-            if len(conflicts) > 1:
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"❌ Profiles {', '.join(sorted(conflicts))} cannot be used together — pick one EKS profile per account.\n   → Use 'eks-standard' for intranet-only clusters, 'eks-internet' for internet-facing clusters.",
-                    rule='baseline_profile_conflict'
-                ))
-        
-        for profile in baseline_profiles:
-            if profile in PROFILE_DEPENDENCIES:
-                for dep in PROFILE_DEPENDENCIES[profile]:
-                    if dep not in baseline_profiles:
-                        summary.add_result(ValidationResult(
-                            level='info',
-                            message=f"ℹ️ Profile '{profile}' requires '{dep}' — it will be auto-deployed by the platform.",
-                            rule='baseline_profile_dependency'
-                        ))
-        
-        # Informational message about what's being deployed
-        if baseline_profiles:
-            # Show what will actually deploy (including auto-deps)
-            effective_profiles = set(baseline_profiles)
-            for profile in baseline_profiles:
-                if profile in PROFILE_DEPENDENCIES:
-                    effective_profiles.update(PROFILE_DEPENDENCIES[profile])
-            
-            summary.add_result(ValidationResult(
-                level='info',
-                message=f"Will deploy baseline profiles: {', '.join(sorted(effective_profiles))}",
-                rule='baseline_profiles_info'
             ))
     
     def _validate_security_groups(self, data: Dict[str, Any], summary: ValidationSummary):
@@ -669,7 +576,7 @@ class SecurityGroupValidator:
         if port_range_size > max_range_size:
             message = (f"❌ Port range {from_port}-{to_port} is too broad ({port_range_size} ports, max {max_range_size}) — this effectively opens all ports.\n"
                       f"   → Narrow to specific ports your application needs (e.g., 443, 8080).\n"
-                      f"   → If this is for EKS node communication, set type: \"eks-nodes\" to allow ephemeral ranges.")
+                      f"   → EKS node communication is handled by baseline profiles via AFT — not this repo.")
             summary.add_result(ValidationResult(
                 level='error',
                 message=message,
@@ -794,6 +701,14 @@ class SecurityGroupValidator:
                         context=context
                     ))
                 else:
+                    # Terraform only uses the first CIDR — warn if multiple specified
+                    if len(cidr_value) > 1:
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"❌ '{cidr_field}' in {sg_name} {rule_type}[{rule_index}] has {len(cidr_value)} entries, but Terraform only applies the first one — the rest are silently ignored.\n   → Split into separate rules, one CIDR per rule.",
+                            rule='rule_multi_cidr',
+                            context=context
+                        ))
                     for cidr in cidr_value:
                         if not isinstance(cidr, str):
                             summary.add_result(ValidationResult(
@@ -941,65 +856,6 @@ class SecurityGroupValidator:
                     level='error',
                     message=f"Undefined prefix list '{prefix_list_id}' in {sg_name} {rule_type}[{rule_index}]",
                     rule='rule_undefined_prefix_list',
-                    context=context
-                ))
-    
-    def _validate_guardrails(self, data: Dict[str, Any], summary: ValidationSummary):
-        """Apply type-specific guardrail overrides"""
-        if 'security_groups' not in data or not isinstance(data['security_groups'], dict):
-            return
-        
-        for sg_name, sg_config in data['security_groups'].items():
-            sg_type = self._get_security_group_type(sg_name)
-            self._apply_type_specific_validation(sg_name, sg_config, sg_type, summary)
-    
-    def _get_security_group_type(self, sg_name: str) -> str:
-        """Determine security group type from name patterns"""
-        sg_name_lower = sg_name.lower()
-        
-        if 'eks' in sg_name_lower and 'node' in sg_name_lower:
-            return 'eks-nodes'
-        elif 'nlb' in sg_name_lower or 'network-lb' in sg_name_lower:
-            return 'nlb'
-        elif 'web' in sg_name_lower or 'http' in sg_name_lower:
-            return 'web'
-        elif 'alb' in sg_name_lower or 'application-lb' in sg_name_lower:
-            return 'alb'
-        elif 'rds' in sg_name_lower or 'database' in sg_name_lower or 'db' in sg_name_lower:
-            return 'database'
-        else:
-            return 'general'
-    
-    def _apply_type_specific_validation(self, sg_name: str, sg_config: Dict[str, Any], 
-                                      sg_type: str, summary: ValidationSummary):
-        """Apply type-specific validation rules"""
-        type_overrides = self.guardrails.get('type_overrides', {}).get(sg_type, {})
-        context = f"security_group.{sg_name}"
-        
-        # Check allowed protocols
-        if 'allowed_protocols' in type_overrides:
-            allowed_protocols = type_overrides['allowed_protocols']
-            
-            for rule_type in ['ingress', 'egress']:
-                if rule_type in sg_config:
-                    for i, rule in enumerate(sg_config[rule_type]):
-                        protocol = rule.get('protocol')
-                        if protocol and protocol not in allowed_protocols:
-                            summary.add_result(ValidationResult(
-                                level='error',
-                                message=f"Protocol '{protocol}' not allowed for {sg_type} type in {sg_name} {rule_type}[{i}]",
-                                rule='type_protocol_restriction',
-                                context=context
-                            ))
-        
-        # Check rule count overrides
-        if 'max_rules' in type_overrides:
-            total_rules = len(sg_config.get('ingress', [])) + len(sg_config.get('egress', []))
-            if total_rules > type_overrides['max_rules']:
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"Security group '{sg_name}' has {total_rules} rules, maximum for {sg_type} is {type_overrides['max_rules']}",
-                    rule='type_rule_count_override',
                     context=context
                 ))
     

@@ -39,11 +39,5 @@ validation:
       - "<company>-iam-access-control"
       - "<company>-provisioner-workspace"
 
-# Security group type-specific overrides
-# Type is inferred from SG name patterns in validate.py
-type_overrides:
-  nlb:
-    allowed_protocols:
-      - tcp
-      - udp
-    max_rules: 200  # NLBs may need more rules for multiple services
+# Note: Baseline SGs (EKS, VPC endpoints) are managed by AFT, not this repo.
+# Type-specific overrides were removed — all SGs follow the same guardrails.

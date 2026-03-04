@@ -4,10 +4,7 @@
 account_id: "123456789012"
 environment: "prod"  # prod | test | dev
 
-# Baseline profiles are deployed separately via terraform-aws-eks-baseline-sgs.
-# This field is optional metadata — validated here but not consumed by this repo's Terraform.
-# baseline_profiles:
-#   - eks-standard
+# Note: Baseline SGs (EKS, VPC endpoints) are managed by AFT — not this repo.
 
 # Team security groups
 security_groups:
