@@ -126,13 +126,24 @@ class SecurityGroupValidator:
             raise FileNotFoundError(f"Failed to load guardrails.yaml: {e}")
     
     def _load_prefix_lists(self) -> Dict[str, Any]:
-        """Load prefix lists configuration from repo root"""
-        prefix_lists_path = self.repo_root / "prefix-lists.yaml"
+        """Load known prefix list names from allowlist"""
+        # Try new allowlist format first, fall back to legacy prefix-lists.yaml
+        allowlist_path = self.repo_root / "known-prefix-lists.yaml"
+        legacy_path = self.repo_root / "prefix-lists.yaml"
+        
         try:
-            with open(prefix_lists_path, 'r') as f:
-                return yaml.safe_load(f)
+            if allowlist_path.exists():
+                with open(allowlist_path, 'r') as f:
+                    data = yaml.safe_load(f)
+                # Convert list to dict keys for backward compat with validation checks
+                names = data.get('known_prefix_lists', [])
+                return {"prefix_lists": {name: {} for name in names}}
+            elif legacy_path.exists():
+                with open(legacy_path, 'r') as f:
+                    return yaml.safe_load(f)
+            else:
+                return {"prefix_lists": {}}
         except Exception as e:
-            # Prefix lists are optional
             return {"prefix_lists": {}}
     
     def _extract_account_id(self) -> str:

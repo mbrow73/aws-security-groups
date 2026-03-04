@@ -1,0 +1,9 @@
+# Known Prefix Lists — managed by baseline configs (AFT)
+# The validator checks that prefix list references in security-groups.yaml
+# match a name here or an AWS prefix list ID (pl-xxx). This file does NOT
+# create prefix lists — it's an allowlist for validation only.
+#
+# Update this when baselines add new prefix lists.
+
+known_prefix_lists:
+  - corporate-networks
