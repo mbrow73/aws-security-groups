@@ -6,7 +6,7 @@ on:
     paths:
       - 'accounts/**'
       - 'guardrails.yaml'
-      - 'prefix-lists.yaml'
+      - 'known-prefix-lists.yaml'
       - 'modules/**'
       - 'scripts/**'
 
