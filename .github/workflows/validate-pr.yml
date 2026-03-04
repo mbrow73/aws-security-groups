@@ -108,14 +108,6 @@ jobs:
           
           exit $EXIT_CODE
 
-      - name: Upload validation summary
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: validation-summary
-          path: /tmp/validation-summary.md
-          retention-days: 5
-
   post-summary:
     name: "Post Validation Summary"
     runs-on: ubuntu-latest
