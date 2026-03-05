@@ -388,6 +388,7 @@ class SecurityGroupValidator:
                     for i, rule in enumerate(sg_config['ingress']):
                         self._validate_security_group_rule(sg_name, 'ingress', i, rule, summary)
                     self._check_duplicate_rules(sg_name, 'ingress', sg_config['ingress'], summary)
+                    self._check_shadowed_rules(sg_name, 'ingress', sg_config['ingress'], summary)
             else:
                 summary.add_result(ValidationResult(
                     level='error',
@@ -410,6 +411,7 @@ class SecurityGroupValidator:
                     for i, rule in enumerate(sg_config['egress']):
                         self._validate_security_group_rule(sg_name, 'egress', i, rule, summary)
                     self._check_duplicate_rules(sg_name, 'egress', sg_config['egress'], summary)
+                    self._check_shadowed_rules(sg_name, 'egress', sg_config['egress'], summary)
             else:
                 summary.add_result(ValidationResult(
                     level='error',
@@ -465,6 +467,171 @@ class SecurityGroupValidator:
                 context=context
             ))
     
+    def _check_shadowed_rules(self, sg_name: str, rule_type: str, rules: List[Dict[str, Any]],
+                             summary: ValidationSummary):
+        """Detect rules that are fully shadowed by a broader rule in the same SG/direction.
+        
+        A rule is shadowed when another rule in the same security group and direction covers
+        a superset of its traffic. This wastes SG rule quota without adding any access.
+        
+        Shadowing is checked across three dimensions:
+        - Protocol match (must be identical or the broader rule uses 'all'/-1)
+        - Port range containment (broader rule's range must fully contain the narrower one)
+        - Source/destination containment (CIDR supernet, or both use self/same SG ref/same prefix list)
+        """
+        context_base = f"security_group.{sg_name}.{rule_type}"
+        
+        for i, narrow in enumerate(rules):
+            if not isinstance(narrow, dict):
+                continue
+            for j, broad in enumerate(rules):
+                if i == j or not isinstance(broad, dict):
+                    continue
+                if self._rule_is_shadowed_by(narrow, broad):
+                    # Build a concise description of the broader rule
+                    broad_desc = self._describe_rule_brief(broad)
+                    narrow_desc = self._describe_rule_brief(narrow)
+                    summary.add_result(ValidationResult(
+                        level='warning',
+                        message=(
+                            f"⚠️ Shadowed rule: {sg_name} {rule_type}[{i}] ({narrow_desc}) "
+                            f"is fully covered by {rule_type}[{j}] ({broad_desc}) — "
+                            f"this rule wastes SG quota without adding any access.\n"
+                            f"   → Remove the shadowed rule to free up quota."
+                        ),
+                        rule='rule_shadowed',
+                        context=f"{context_base}[{i}]"
+                    ))
+                    break  # One shadow report per rule is enough
+
+    def _rule_is_shadowed_by(self, narrow: Dict[str, Any], broad: Dict[str, Any]) -> bool:
+        """Return True if `broad` fully covers all traffic that `narrow` allows."""
+        # Protocol check
+        broad_proto = broad.get('protocol', '')
+        narrow_proto = narrow.get('protocol', '')
+        if broad_proto not in ('all', '-1') and broad_proto != narrow_proto:
+            return False
+        
+        # Port range check (skip for protocol 'all'/-1 on the broad side)
+        if broad_proto not in ('all', '-1'):
+            if broad_proto in ('tcp', 'udp') and narrow_proto in ('tcp', 'udp'):
+                try:
+                    b_from = int(broad.get('from_port', -1))
+                    b_to = int(broad.get('to_port', -1))
+                    n_from = int(narrow.get('from_port', -1))
+                    n_to = int(narrow.get('to_port', -1))
+                except (ValueError, TypeError):
+                    return False
+                if b_from > n_from or b_to < n_to:
+                    return False
+        
+        # Source/destination check — at least one source type in broad must cover narrow
+        return self._sources_covered(narrow, broad)
+
+    def _sources_covered(self, narrow: Dict[str, Any], broad: Dict[str, Any]) -> bool:
+        """Check if broad's sources fully cover narrow's sources."""
+        # Collect what the narrow rule uses as sources
+        narrow_cidrs = narrow.get('cidr_blocks', [])
+        narrow_v6 = narrow.get('ipv6_cidr_blocks', [])
+        narrow_sgs = narrow.get('security_groups', [])
+        narrow_pls = narrow.get('prefix_list_ids', [])
+        narrow_self = narrow.get('self', False)
+        
+        broad_cidrs = broad.get('cidr_blocks', [])
+        broad_v6 = broad.get('ipv6_cidr_blocks', [])
+        broad_sgs = broad.get('security_groups', [])
+        broad_pls = broad.get('prefix_list_ids', [])
+        broad_self = broad.get('self', False)
+        
+        # Normalize types
+        if isinstance(narrow_cidrs, str): narrow_cidrs = [narrow_cidrs]
+        if isinstance(broad_cidrs, str): broad_cidrs = [broad_cidrs]
+        if isinstance(narrow_v6, str): narrow_v6 = [narrow_v6]
+        if isinstance(broad_v6, str): broad_v6 = [broad_v6]
+        if not isinstance(narrow_sgs, list): narrow_sgs = []
+        if not isinstance(broad_sgs, list): broad_sgs = []
+        if not isinstance(narrow_pls, list): narrow_pls = []
+        if not isinstance(broad_pls, list): broad_pls = []
+        
+        # Every narrow source must be covered by broad
+        # Check CIDRs
+        for n_cidr in narrow_cidrs:
+            if not self._cidr_covered_by_any(n_cidr, broad_cidrs):
+                return False
+        
+        for n_cidr in narrow_v6:
+            if not self._cidr_covered_by_any(n_cidr, broad_v6):
+                return False
+        
+        # Check self
+        if narrow_self and not broad_self:
+            return False
+        
+        # Check SG refs — exact match only (can't determine superset relationship)
+        for sg in narrow_sgs:
+            if sg not in broad_sgs:
+                return False
+        
+        # Check prefix lists — exact match only
+        for pl in narrow_pls:
+            if pl not in broad_pls:
+                return False
+        
+        # Must have at least one source to compare (avoid false positives on empty)
+        has_narrow_sources = (narrow_cidrs or narrow_v6 or narrow_sgs or narrow_pls or narrow_self)
+        if not has_narrow_sources:
+            return False
+        
+        return True
+
+    def _cidr_covered_by_any(self, narrow_cidr: str, broad_cidrs: list) -> bool:
+        """Check if a CIDR is a subnet of any CIDR in the broad list."""
+        try:
+            narrow_net = ipaddress.ip_network(narrow_cidr, strict=False)
+        except (ValueError, TypeError):
+            return False
+        
+        for b_cidr in broad_cidrs:
+            try:
+                broad_net = ipaddress.ip_network(b_cidr, strict=False)
+                if narrow_net.subnet_of(broad_net):
+                    return True
+            except (ValueError, TypeError):
+                continue
+        return False
+
+    def _describe_rule_brief(self, rule: Dict[str, Any]) -> str:
+        """Return a short human-readable description of a rule."""
+        proto = rule.get('protocol', '?')
+        parts = [proto]
+        
+        from_p = rule.get('from_port')
+        to_p = rule.get('to_port')
+        if from_p is not None and to_p is not None:
+            if from_p == to_p:
+                parts.append(f"port {from_p}")
+            else:
+                parts.append(f"ports {from_p}-{to_p}")
+        
+        sources = []
+        for cidr in rule.get('cidr_blocks', []):
+            sources.append(str(cidr))
+        for cidr in rule.get('ipv6_cidr_blocks', []):
+            sources.append(str(cidr))
+        if rule.get('self'):
+            sources.append('self')
+        for sg in rule.get('security_groups', []):
+            sources.append(sg)
+        for pl in rule.get('prefix_list_ids', []):
+            sources.append(pl)
+        
+        if sources:
+            parts.append(f"from {', '.join(sources[:3])}")
+            if len(sources) > 3:
+                parts.append(f"+{len(sources)-3} more")
+        
+        return ' '.join(parts)
+
     def _check_duplicate_rules(self, sg_name: str, rule_type: str, rules: List[Dict[str, Any]], 
                               summary: ValidationSummary):
         """Detect duplicate rules within a security group"""
