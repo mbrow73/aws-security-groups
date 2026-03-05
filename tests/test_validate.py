@@ -813,6 +813,157 @@ class TestCorporateMandatoryTags:
         assert len(tag_errors) == 6
 
 
+# ============================================================
+# Rule shadowing detection tests
+# ============================================================
+
+class TestRuleShadowing:
+    def test_cidr_supernet_shadows_subnet(self, repo_root):
+        """A /16 rule shadows a /24 rule on the same port."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'ingress': [
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/16']},
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.1.0/24']},
+                    ],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        shadow_warnings = [w for w in summary.warnings if w.rule == 'rule_shadowed']
+        assert len(shadow_warnings) == 1
+        assert '[1]' in shadow_warnings[0].message  # the /24 rule at index 1 is shadowed
+
+    def test_broad_port_range_shadows_narrow(self, repo_root):
+        """A rule with ports 80-8080 shadows a rule with port 443 on the same CIDR."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'ingress': [
+                        {'protocol': 'tcp', 'from_port': 80, 'to_port': 8080, 'cidr_blocks': ['10.0.0.0/24']},
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/24']},
+                    ],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        shadow_warnings = [w for w in summary.warnings if w.rule == 'rule_shadowed']
+        assert len(shadow_warnings) == 1
+
+    def test_no_shadow_different_protocols(self, repo_root):
+        """TCP and UDP rules on same port/CIDR don't shadow each other."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'ingress': [
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/16']},
+                        {'protocol': 'udp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.1.0/24']},
+                    ],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        shadow_warnings = [w for w in summary.warnings if w.rule == 'rule_shadowed']
+        assert len(shadow_warnings) == 0
+
+    def test_no_shadow_different_cidrs(self, repo_root):
+        """Different non-overlapping CIDRs don't shadow."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'ingress': [
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/24']},
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.1.0.0/24']},
+                    ],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        shadow_warnings = [w for w in summary.warnings if w.rule == 'rule_shadowed']
+        assert len(shadow_warnings) == 0
+
+    def test_protocol_all_shadows_tcp(self, repo_root):
+        """Protocol 'all' shadows a TCP rule on the same CIDR."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'egress': [
+                        {'protocol': 'all', 'cidr_blocks': ['10.0.0.0/16']},
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.1.0/24']},
+                    ],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        shadow_warnings = [w for w in summary.warnings if w.rule == 'rule_shadowed']
+        assert len(shadow_warnings) == 1
+
+    def test_self_rule_shadowing(self, repo_root):
+        """A broader self rule shadows a narrower self rule."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'ingress': [
+                        {'protocol': 'tcp', 'from_port': 0, 'to_port': 65535, 'self': True},
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'self': True},
+                    ],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        shadow_warnings = [w for w in summary.warnings if w.rule == 'rule_shadowed']
+        assert len(shadow_warnings) == 1
+
+    def test_no_shadow_self_vs_cidr(self, repo_root):
+        """Self rule doesn't shadow a CIDR rule (different source types)."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'ingress': [
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'self': True},
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/24']},
+                    ],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        shadow_warnings = [w for w in summary.warnings if w.rule == 'rule_shadowed']
+        assert len(shadow_warnings) == 0
+
+    def test_egress_shadowing(self, repo_root):
+        """Shadowing detection works for egress rules too."""
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'my-sg': {
+                    'description': 'test',
+                    'egress': [
+                        {'protocol': 'tcp', 'from_port': 400, 'to_port': 500, 'cidr_blocks': ['10.0.0.0/8']},
+                        {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.1.2.0/24']},
+                    ],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        shadow_warnings = [w for w in summary.warnings if w.rule == 'rule_shadowed']
+        assert len(shadow_warnings) == 1
+
+
 class TestTagEnvMismatch:
     def test_app_env_tag_matches_environment(self, repo_root_with_tags):
         """No error when <company>-app-env matches top-level environment."""
