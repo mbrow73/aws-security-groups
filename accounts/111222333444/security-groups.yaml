@@ -1,0 +1,246 @@
+# ============================================================
+# 🎄 VALIDATION SHOWCASE — every rule should fire on this file
+# This is intentionally terrible. Do not approve.
+# ============================================================
+
+account_id: "111222333445"   # Wrong — doesn't match directory name (111222333444)
+enviroment: "staging"        # Typo key AND invalid environment value
+extra_field: "oops"          # Unknown top-level key
+
+security_groups:
+
+  # --- SG 1: Maximum chaos ---
+  API-Gateway_v2:              # Violates naming pattern (uppercase, underscore)
+    descrption: "API gateway"  # Typo key (not 'description'), also triggers missing description
+    inbound: []                # Typo key (not 'ingress')
+    ingress:
+      # Rule 0: blocked CIDR — full internet ingress
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "HTTPS from the entire internet"
+
+      # Rule 1: blocked port — Telnet
+      - protocol: "tcp"
+        from_port: 23
+        to_port: 23
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "Telnet from internal — who does this?"
+
+      # Rule 2: blocked port — SMB
+      - protocol: "tcp"
+        from_port: 445
+        to_port: 445
+        cidr_blocks: ["172.16.0.0/12"]
+        description: "SMB from internal"
+
+      # Rule 3: blocked port — NetBIOS
+      - protocol: "tcp"
+        from_port: 135
+        to_port: 139
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "NetBIOS/RPC range"
+
+      # Rule 4: port range too broad
+      - protocol: "tcp"
+        from_port: 1
+        to_port: 65535
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "All TCP ports — just in case"
+
+      # Rule 5: SHADOWED by rule 4 — 443 from a subnet of 10.0.0.0/8
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "HTTPS from internal subnet (shadowed by rule 4)"
+
+      # Rule 6: SHADOWED by rule 4 — 8080 from same supernet
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        cidr_blocks: ["10.100.0.0/16"]
+        description: "App port from VPC (also shadowed by rule 4)"
+
+      # Rule 7: DUPLICATE of rule 0
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "Duplicate of rule 0 — oops"
+
+      # Rule 8: invalid CIDR
+      - protocol: "tcp"
+        from_port: 80
+        to_port: 80
+        cidr_blocks: ["999.999.999.999/32"]
+        description: "Not a real CIDR"
+
+      # Rule 9: bare string instead of list for cidr_blocks
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        cidr_blocks: "10.200.0.0/16"
+        description: "Bare string CIDR — should be a list"
+
+      # Rule 10: missing protocol
+      - from_port: 9090
+        to_port: 9090
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Forgot the protocol field"
+
+      # Rule 11: invalid protocol
+      - protocol: "banana"
+        from_port: 80
+        to_port: 80
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Banana is not a protocol"
+
+      # Rule 12: from_port > to_port
+      - protocol: "tcp"
+        from_port: 9000
+        to_port: 8000
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Inverted port range"
+
+      # Rule 13: port out of range
+      - protocol: "tcp"
+        from_port: 80
+        to_port: 99999
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Port 99999 doesn't exist"
+
+      # Rule 14: no source at all
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        description: "No CIDR, no SG ref, no self, no prefix list — nothing"
+
+      # Rule 15: SSH from CIDR
+      - protocol: "tcp"
+        from_port: 22
+        to_port: 22
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "SSH from CIDR — PCI flag"
+
+      # Rule 16: RDP from CIDR
+      - protocol: "tcp"
+        from_port: 3389
+        to_port: 3389
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "RDP from CIDR — PCI flag"
+
+      # Rule 17: DB port from CIDR
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "PostgreSQL from CIDR — PCI flag"
+
+      # Rule 18: broad internal CIDR
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "HTTPS from entire 10-space"
+
+      # Rule 19: undefined prefix list
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["totally-not-real"]
+        description: "Prefix list doesn't exist"
+
+      # Rule 20: multiple CIDRs (Terraform only uses first)
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.50.0.0/16", "10.60.0.0/16", "10.70.0.0/16"]
+        description: "Multiple CIDRs — TF silently ignores 2nd and 3rd"
+
+      # Rule 21: unknown key in rule
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.50.0.0/16"]
+        source: "my-app"           # not a valid key
+        priorty: "high"            # not a valid key
+        description: "Rule with typo keys"
+
+      # Rule 22: IPv6 open internet
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        ipv6_cidr_blocks: ["::/0"]
+        description: "IPv6 open internet"
+
+      # Rule 23: self field as string instead of bool
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        self: "true"
+        description: "Self should be boolean not string"
+
+    egress:
+      # Egress rule 0: non-443 to 0.0.0.0/0
+      - protocol: "tcp"
+        from_port: 80
+        to_port: 80
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "HTTP egress to internet — PCI flag"
+
+      # Egress rule 1: shadowed by rule 2
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "HTTPS to internal subnet"
+
+      # Egress rule 2: broader rule that shadows rule 1
+      - protocol: "tcp"
+        from_port: 1
+        to_port: 65535
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "All TCP to entire 10-space"
+
+    # Missing ALL required tags — this should fire 8 tag errors
+    tags:
+      "random-tag": "yolo"
+
+  # --- SG 2: Empty rules + unicode ---
+  te§t-uñicode-sg:           # Unicode in SG name
+    description: "Testing with émojis and spëcial chars 🎄"
+    ingress: []                # Empty ingress list warning
+    egress: []                 # Empty egress list warning
+    tags: {}                   # No tags at all
+
+  # --- SG 3: Reserved name pattern ---
+  aws-managed-thing:
+    description: "Starts with reserved 'aws-' pattern"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Legit rule on a badly named SG"
+    tags:
+      "<company>-app-env": "prod"
+      "<company>-data-classification": "internal"
+      "<company>-app-carid": "600001725"
+      "<company>-ops-supportgroup": "Security_Operations_Support"
+      "<company>-app-supportgroup": "Security_Operations_Support"
+      "<company>-provisioner-repo": "placeholder"
+      "<company>-iam-access-control": "netsec"
+      "<company>-provisioner-workspace": "sg-111222333444"
+
+  # --- SG 4: Name too long ---
+  this-security-group-name-is-intentionally-way-too-long-and-exceeds-the-maximum-allowed-character-limit:
+    description: "Name exceeds 63 chars"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "Normal rule"
+    tags: {}
