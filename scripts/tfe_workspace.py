@@ -29,7 +29,7 @@ Environment:
     CLDIAC_PASSWORD       - AD service account key (fallback if AUTH_TOKEN not set)
     CLDIAC_CAR_ID         - Cloud account reference ID
     CLDIAC_PROJECT_ID     - TFE project ID (prj-xxx)
-    CLDIAC_REPOSITORY     - Repository to attach (e.g. org-eng/aws-security-groups)
+    CLDIAC_REPOSITORY     - (DEPRECATED — ignored, kept for backward compat)
     CLDIAC_CREDS_PROVIDER - Dynamic credentials provider (aws, gcp)
     CLDIAC_CREDS_AUTH     - Dynamic credentials auth role name (e.g. TfcSgPlatformRole).
                             Combined with account ID to form full ARN per workspace:
@@ -76,7 +76,6 @@ class WorkspaceRequest:
     env: str
     suffix: str
     project_id: str
-    attach_repository: str
     dynamic_credentials_provider: str = "aws"
     dynamic_credentials_auth: str = ""
 
@@ -86,7 +85,6 @@ class WorkspaceRequest:
             "env": self.env,
             "suffix": self.suffix,
             "project_id": self.project_id,
-            "attach_repository": self.attach_repository,
             "dynamic_credentials_provider": self.dynamic_credentials_provider,
             "dynamic_credentials_auth": self.dynamic_credentials_auth,
         }
@@ -271,14 +269,13 @@ class WorkspaceProvisioner:
 
     def __init__(self, repo_root: str, client: Optional[CloudIaCClient] = None,
                  tfe_client: Optional['TFEClient'] = None,
-                 car_id: str = "", project_id: str = "", repository: str = "",
+                 car_id: str = "", project_id: str = "",
                  creds_provider: str = "aws", creds_auth: str = ""):
         self.repo_root = Path(repo_root)
         self.client = client
         self.tfe_client = tfe_client
         self.car_id = car_id
         self.project_id = project_id
-        self.repository = repository
         self.creds_provider = creds_provider
         self.creds_auth = creds_auth
 
@@ -325,7 +322,6 @@ class WorkspaceProvisioner:
             env=env,
             suffix=f"{WORKSPACE_SUFFIX_PREFIX}{account_id}",
             project_id=self.project_id,
-            attach_repository=self.repository,
             dynamic_credentials_provider=self.creds_provider,
             dynamic_credentials_auth=self._build_creds_auth(account_id),
         )
@@ -534,7 +530,7 @@ def main():
 
     parser.add_argument("--car-id", default=None, help="Override CLDIAC_CAR_ID")
     parser.add_argument("--project-id", default=None, help="Override CLDIAC_PROJECT_ID")
-    parser.add_argument("--repository", default=None, help="Override CLDIAC_REPOSITORY")
+    parser.add_argument("--repository", default=None, help="(deprecated, ignored)")
     parser.add_argument("--max-workers", type=int, default=5,
                         help="Max parallel workspace operations (default: 5)")
 
@@ -551,7 +547,7 @@ def main():
 
     car_id = args.car_id or os.environ.get("CLDIAC_CAR_ID", "")
     project_id = args.project_id or os.environ.get("CLDIAC_PROJECT_ID", "")
-    repository = args.repository or os.environ.get("CLDIAC_REPOSITORY", "")
+    repository = args.repository or os.environ.get("CLDIAC_REPOSITORY", "")  # deprecated, ignored
     creds_provider = os.environ.get("CLDIAC_CREDS_PROVIDER", "aws")
     creds_auth = os.environ.get("CLDIAC_CREDS_AUTH", "")
 
@@ -571,8 +567,6 @@ def main():
             missing.append("CLDIAC_CAR_ID")
         if not project_id:
             missing.append("CLDIAC_PROJECT_ID")
-        if not repository:
-            missing.append("CLDIAC_REPOSITORY")
         if missing:
             logger.error(f"Missing required config: {', '.join(missing)}")
             sys.exit(1)
@@ -604,7 +598,6 @@ def main():
         tfe_client=tfe_client,
         car_id=car_id,
         project_id=project_id,
-        repository=repository,
         creds_provider=creds_provider,
         creds_auth=creds_auth,
     )
