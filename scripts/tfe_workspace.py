@@ -450,20 +450,10 @@ class WorkspaceProvisioner:
         if not actions:
             return []
 
-        # Pre-authenticate so all threads share the cached token
-        self.client.authenticate()
-
-        # Split skips (instant) from API calls (threadable)
-        skips = [a for a in actions if a.action == "skip"]
-        api_actions = [a for a in actions if a.action != "skip"]
-
-        results = [self._execute_action(a) for a in skips]
-
-        if api_actions:
-            with ThreadPoolExecutor(max_workers=min(max_workers, len(api_actions))) as pool:
-                futures = {pool.submit(self._execute_action, a): a for a in api_actions}
-                for future in as_completed(futures):
-                    results.append(future.result())
+        # Execute sequentially — auth env changes per account (dev→E1,
+        # test→E2, prod→E3), so each action must set_auth_env before
+        # authenticating. Can't pre-auth or parallelize.
+        results = [self._execute_action(a) for a in actions]
 
         results.sort(key=lambda r: r.get("account_id", ""))
         return results
