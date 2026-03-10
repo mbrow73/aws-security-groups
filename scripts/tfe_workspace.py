@@ -317,7 +317,7 @@ class WorkspaceProvisioner:
         try:
             with open(yaml_path) as f:
                 data = yaml.safe_load(f)
-                return data.get("environment", "dev")
+                return data.get("environment", "dev").lower().strip()
         except Exception:
             return "dev"
 
@@ -388,7 +388,8 @@ class WorkspaceProvisioner:
             if action.action == "create":
                 ws_request = self.build_workspace_request(action.account_id)
                 # Set auth environment based on account's env (dev→E1, test→E2, prod→E3)
-                auth_env = ENV_TO_AUTH.get(ws_request.env, "E3")
+                auth_env = ENV_TO_AUTH.get(ws_request.env.lower(), "E1")
+                logger.info(f"📋 Account {action.account_id}: env={ws_request.env} → auth_env={auth_env}")
                 self.client.set_auth_env(auth_env)
                 try:
                     self.client.create_workspace(ws_request)
