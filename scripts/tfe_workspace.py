@@ -186,11 +186,11 @@ class CloudIaCClient:
 
     def create_workspace(self, request: WorkspaceRequest) -> dict:
         """Create a TFE workspace via CloudIaC API."""
-        return self._request("POST", "/v1/tfe/workspaces", request.to_dict())
+        return self._request("POST", "/v2/tfe/workspaces", request.to_dict())
 
     def list_workspaces(self, project_id: Optional[str] = None) -> list:
         """List workspaces. Optionally filter by project."""
-        path = "/v1/tfe/workspaces"
+        path = "/v2/tfe/workspaces"
         if project_id:
             path += f"?project_id={project_id}"
         return self._request("GET", path)
