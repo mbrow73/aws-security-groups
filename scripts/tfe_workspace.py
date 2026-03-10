@@ -23,8 +23,10 @@ Environment:
     CLDIAC_URL            - CloudIaC API base URL (e.g. https://cldiac.example.com)
     CLDIAC_AUTH_URL       - Auth service URL (e.g. https://authservice.example.com)
     CLDIAC_AUTH_ENV       - Auth environment header (e.g. E1)
-    CLDIAC_USER           - AD service account ID
-    CLDIAC_PASSWORD       - AD service account key
+    CLDIAC_AUTH_TOKEN     - Pre-encoded base64 auth token (preferred)
+                            Used directly as: Authorization: Basic <token>
+    CLDIAC_USER           - AD service account ID (fallback if AUTH_TOKEN not set)
+    CLDIAC_PASSWORD       - AD service account key (fallback if AUTH_TOKEN not set)
     CLDIAC_CAR_ID         - Cloud account reference ID
     CLDIAC_PROJECT_ID     - TFE project ID (prj-xxx)
     CLDIAC_REPOSITORY     - Repository to attach (e.g. org-eng/aws-security-groups)
@@ -108,26 +110,39 @@ class CloudIaCClient:
     """Client for the organization's CloudIaC TFE wrapper API."""
 
     def __init__(self, base_url: str, auth_url: str, auth_env: str = "E1",
-                 username: str = "", password: str = "", token: str = ""):
+                 username: str = "", password: str = "",
+                 auth_token: str = "", token: str = ""):
         self.base_url = base_url.rstrip("/")
         self.auth_url = auth_url.rstrip("/")
         self.auth_env = auth_env
         self._username = username
         self._password = password
-        self._token = token
+        self._auth_token = auth_token  # pre-encoded base64
+        self._token = token            # cached bearer token
 
     def authenticate(self) -> str:
-        """Authenticate via AD basic auth and return bearer token."""
+        """Authenticate via basic auth and return bearer token.
+
+        Supports two modes:
+          1. Pre-encoded base64 token (CLDIAC_AUTH_TOKEN) — used directly
+          2. Username + password (CLDIAC_USER/CLDIAC_PASSWORD) — encoded at runtime
+        """
         if self._token:
             return self._token
 
-        if not self._username or not self._password:
-            raise RuntimeError("CLDIAC_USER and CLDIAC_PASSWORD required for authentication")
+        if self._auth_token:
+            creds = self._auth_token
+        elif self._username and self._password:
+            creds = base64.b64encode(f"{self._username}:{self._password}".encode()).decode()
+        else:
+            raise RuntimeError(
+                "Authentication requires CLDIAC_AUTH_TOKEN or both CLDIAC_USER and CLDIAC_PASSWORD"
+            )
 
-        creds = base64.b64encode(f"{self._username}:{self._password}".encode()).decode()
         headers = {
             "Authorization": f"Basic {creds}",
             "Environment": self.auth_env,
+            "Accept": "application/json",
             "Content-Type": "application/json",
         }
 
@@ -530,6 +545,7 @@ def main():
     cldiac_url = os.environ.get("CLDIAC_URL", "")
     auth_url = os.environ.get("CLDIAC_AUTH_URL", "")
     auth_env = os.environ.get("CLDIAC_AUTH_ENV", "E1")
+    auth_token = os.environ.get("CLDIAC_AUTH_TOKEN", "")
     username = os.environ.get("CLDIAC_USER", "")
     password = os.environ.get("CLDIAC_PASSWORD", "")
 
@@ -549,10 +565,8 @@ def main():
             missing.append("CLDIAC_URL")
         if not auth_url:
             missing.append("CLDIAC_AUTH_URL")
-        if not username:
-            missing.append("CLDIAC_USER")
-        if not password:
-            missing.append("CLDIAC_PASSWORD")
+        if not auth_token and not (username and password):
+            missing.append("CLDIAC_AUTH_TOKEN (or CLDIAC_USER + CLDIAC_PASSWORD)")
         if not car_id:
             missing.append("CLDIAC_CAR_ID")
         if not project_id:
@@ -564,11 +578,12 @@ def main():
             sys.exit(1)
 
     client = None
-    if cldiac_url and (username or password):
+    if cldiac_url and (auth_token or (username and password)):
         client = CloudIaCClient(
             base_url=cldiac_url,
             auth_url=auth_url,
             auth_env=auth_env,
+            auth_token=auth_token,
             username=username,
             password=password,
         )
