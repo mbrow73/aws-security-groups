@@ -71,7 +71,6 @@ jobs:
           CLDIAC_PASSWORD: ${{ secrets.CLDIAC_PASSWORD }}
           CLDIAC_CAR_ID: ${{ secrets.CLDIAC_CAR_ID }}
           CLDIAC_PROJECT_ID: ${{ secrets.CLDIAC_PROJECT_ID }}
-          CLDIAC_REPOSITORY: ${{ secrets.CLDIAC_REPOSITORY }}
           CLDIAC_CREDS_PROVIDER: ${{ secrets.CLDIAC_CREDS_PROVIDER }}
           CLDIAC_CREDS_AUTH: ${{ secrets.CLDIAC_CREDS_AUTH }}
           TFE_ADDRESS: ${{ secrets.TFE_ADDRESS }}
