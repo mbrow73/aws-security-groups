@@ -403,9 +403,12 @@ class WorkspaceProvisioner:
                         raise
 
                 # Always trigger a run — GitHub Actions is the trigger, not VCS
+                # CloudIaC names workspaces as: <car_id>-<env>-<suffix>
+                tfe_workspace_name = f"{self.car_id}-{ws_request.env}-{action.workspace}"
+                logger.info(f"🔍 Looking up TFE workspace: {tfe_workspace_name}")
                 if self.tfe_client:
                     try:
-                        ws_id = self.tfe_client.get_workspace_id(action.workspace)
+                        ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
                         if ws_id:
                             self.tfe_client.trigger_run(
                                 ws_id,
