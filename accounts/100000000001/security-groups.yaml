@@ -1,0 +1,8 @@
+account_id: "100000000001"
+environment: "dev"
+
+security_groups:
+  test-sg:
+    description: "env mapping test - dev"
+    ingress: []
+    egress: []
