@@ -66,6 +66,7 @@ jobs:
           CLDIAC_URL: ${{ secrets.CLDIAC_URL }}
           CLDIAC_AUTH_URL: ${{ secrets.CLDIAC_AUTH_URL }}
           CLDIAC_AUTH_ENV: ${{ secrets.CLDIAC_AUTH_ENV }}
+          CLDIAC_AUTH_TOKEN: ${{ secrets.CLDIAC_AUTH_TOKEN }}
           CLDIAC_USER: ${{ secrets.CLDIAC_USER }}
           CLDIAC_PASSWORD: ${{ secrets.CLDIAC_PASSWORD }}
           CLDIAC_CAR_ID: ${{ secrets.CLDIAC_CAR_ID }}
