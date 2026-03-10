@@ -22,14 +22,15 @@ Usage:
 Environment:
     CLDIAC_URL            - CloudIaC API base URL (e.g. https://cldiac.example.com)
     CLDIAC_AUTH_URL       - Auth service URL (e.g. https://authservice.example.com)
-    CLDIAC_AUTH_ENV       - Auth environment header (e.g. E1)
+    CLDIAC_AUTH_ENV       - (DEPRECATED — now derived from account environment)
+                            Mapping: dev→E1, test→E2, prod→E3
     CLDIAC_AUTH_TOKEN     - Pre-encoded base64 auth token (preferred)
                             Used directly as: Authorization: Basic <token>
     CLDIAC_USER           - AD service account ID (fallback if AUTH_TOKEN not set)
     CLDIAC_PASSWORD       - AD service account key (fallback if AUTH_TOKEN not set)
     CLDIAC_CAR_ID         - Cloud account reference ID
     CLDIAC_PROJECT_ID     - TFE project ID (prj-xxx)
-    CLDIAC_REPOSITORY     - (DEPRECATED — ignored, kept for backward compat)
+    CLDIAC_REPOSITORY     - Repository to attach (e.g. org-eng/aws-security-groups)
     CLDIAC_CREDS_PROVIDER - Dynamic credentials provider (aws, gcp)
     CLDIAC_CREDS_AUTH     - Dynamic credentials auth role name (e.g. TfcSgPlatformRole).
                             Combined with account ID to form full ARN per workspace:
@@ -68,6 +69,13 @@ logger = logging.getLogger(__name__)
 
 WORKSPACE_SUFFIX_PREFIX = "sg-"
 
+# Maps account YAML environment to CloudIaC auth environment header
+ENV_TO_AUTH = {
+    "dev": "E1",
+    "test": "E2",
+    "prod": "E3",
+}
+
 
 @dataclass
 class WorkspaceRequest:
@@ -76,11 +84,12 @@ class WorkspaceRequest:
     env: str
     suffix: str
     project_id: str
+    attach_repository: str = ""
     dynamic_credentials_provider: str = "aws"
     dynamic_credentials_auth: str = ""
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "car_id": self.car_id,
             "env": self.env,
             "suffix": self.suffix,
@@ -88,6 +97,9 @@ class WorkspaceRequest:
             "dynamic_credentials_provider": self.dynamic_credentials_provider,
             "dynamic_credentials_auth": self.dynamic_credentials_auth,
         }
+        if self.attach_repository:
+            d["attach_repository"] = self.attach_repository
+        return d
 
 
 @dataclass
@@ -117,6 +129,13 @@ class CloudIaCClient:
         self._password = password
         self._auth_token = auth_token  # pre-encoded base64
         self._token = token            # cached bearer token
+
+    def set_auth_env(self, auth_env: str) -> None:
+        """Switch auth environment, clearing cached bearer token if changed."""
+        if auth_env != self.auth_env:
+            logger.info(f"🔄 Switching auth environment: {self.auth_env} → {auth_env}")
+            self.auth_env = auth_env
+            self._token = ""  # force re-auth with new environment
 
     def authenticate(self) -> str:
         """Authenticate via basic auth and return bearer token.
@@ -269,13 +288,14 @@ class WorkspaceProvisioner:
 
     def __init__(self, repo_root: str, client: Optional[CloudIaCClient] = None,
                  tfe_client: Optional['TFEClient'] = None,
-                 car_id: str = "", project_id: str = "",
+                 car_id: str = "", project_id: str = "", repository: str = "",
                  creds_provider: str = "aws", creds_auth: str = ""):
         self.repo_root = Path(repo_root)
         self.client = client
         self.tfe_client = tfe_client
         self.car_id = car_id
         self.project_id = project_id
+        self.repository = repository
         self.creds_provider = creds_provider
         self.creds_auth = creds_auth
 
@@ -322,6 +342,7 @@ class WorkspaceProvisioner:
             env=env,
             suffix=f"{WORKSPACE_SUFFIX_PREFIX}{account_id}",
             project_id=self.project_id,
+            attach_repository=self.repository,
             dynamic_credentials_provider=self.creds_provider,
             dynamic_credentials_auth=self._build_creds_auth(account_id),
         )
@@ -366,6 +387,9 @@ class WorkspaceProvisioner:
         try:
             if action.action == "create":
                 ws_request = self.build_workspace_request(action.account_id)
+                # Set auth environment based on account's env (dev→E1, test→E2, prod→E3)
+                auth_env = ENV_TO_AUTH.get(ws_request.env, "E3")
+                self.client.set_auth_env(auth_env)
                 try:
                     self.client.create_workspace(ws_request)
                     result["status"] = "created"
@@ -530,7 +554,7 @@ def main():
 
     parser.add_argument("--car-id", default=None, help="Override CLDIAC_CAR_ID")
     parser.add_argument("--project-id", default=None, help="Override CLDIAC_PROJECT_ID")
-    parser.add_argument("--repository", default=None, help="(deprecated, ignored)")
+    parser.add_argument("--repository", default=None, help="Override CLDIAC_REPOSITORY")
     parser.add_argument("--max-workers", type=int, default=5,
                         help="Max parallel workspace operations (default: 5)")
 
@@ -547,7 +571,7 @@ def main():
 
     car_id = args.car_id or os.environ.get("CLDIAC_CAR_ID", "")
     project_id = args.project_id or os.environ.get("CLDIAC_PROJECT_ID", "")
-    repository = args.repository or os.environ.get("CLDIAC_REPOSITORY", "")  # deprecated, ignored
+    repository = args.repository or os.environ.get("CLDIAC_REPOSITORY", "")
     creds_provider = os.environ.get("CLDIAC_CREDS_PROVIDER", "aws")
     creds_auth = os.environ.get("CLDIAC_CREDS_AUTH", "")
 
@@ -567,6 +591,8 @@ def main():
             missing.append("CLDIAC_CAR_ID")
         if not project_id:
             missing.append("CLDIAC_PROJECT_ID")
+        if not repository:
+            missing.append("CLDIAC_REPOSITORY")
         if missing:
             logger.error(f"Missing required config: {', '.join(missing)}")
             sys.exit(1)
@@ -598,6 +624,7 @@ def main():
         tfe_client=tfe_client,
         car_id=car_id,
         project_id=project_id,
+        repository=repository,
         creds_provider=creds_provider,
         creds_auth=creds_auth,
     )
