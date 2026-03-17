@@ -211,7 +211,7 @@ class SecurityGroupValidator:
         return summary
     
     # Known top-level keys in security-groups.yaml
-    KNOWN_TOP_LEVEL_KEYS = {'account_id', 'environment', 'security_groups', 'tags'}
+    KNOWN_TOP_LEVEL_KEYS = {'account_id', 'environment', 'carid', 'security_groups', 'tags'}
     # Known keys within a security group definition
     KNOWN_SG_KEYS = {'description', 'ingress', 'egress', 'tags'}
     # Known keys within a rule definition
@@ -222,7 +222,7 @@ class SecurityGroupValidator:
 
     def _validate_schema(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate basic YAML schema structure"""
-        required_fields = ['account_id', 'security_groups']
+        required_fields = ['account_id', 'environment', 'carid', 'security_groups']
         
         for field in required_fields:
             if field not in data:
@@ -240,6 +240,16 @@ class SecurityGroupValidator:
                 message=f"❌ Unknown top-level key '{key}' — did you mean one of: {', '.join(sorted(self.KNOWN_TOP_LEVEL_KEYS))}?\n   → Typos in key names are silently ignored and your config won't apply.",
                 rule='schema_unknown_key'
             ))
+        
+        # Validate carid field
+        if 'carid' in data:
+            carid = str(data['carid'])
+            if not re.match(r'^\d+$', carid):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ 'carid' must be a numeric string (e.g., '600001725'), got '{carid}'",
+                    rule='schema_carid_format'
+                ))
         
         # Validate environment field
         if 'environment' in data:
@@ -442,30 +452,8 @@ class SecurityGroupValidator:
                 context=context
             ))
         
-        # Check for required tags
-        required_tags = self.guardrails.get('validation', {}).get('naming', {}).get('required_tags', [])
-        sg_tags = sg_config.get('tags', {})
-        
-        for required_tag in required_tags:
-            if required_tag not in sg_tags:
-                message = (f"❌ Missing required tag '{required_tag}' — all security groups must include corporate mandatory tags for compliance tracking.\n"
-                          f"   → Required tags: <company>-app-env, <company>-data-classification, <company>-app-carid, <company>-ops-supportgroup, <company>-app-supportgroup, <company>-provisioner-repo, <company>-iam-access-control, <company>-provisioner-workspace")
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=message,
-                    rule='sg_required_tags',
-                    context=context
-                ))
-        
-        # Validate <company>-app-env tag matches top-level environment
-        app_env_tag = sg_tags.get('<company>-app-env', '')
-        if top_level_env and app_env_tag and app_env_tag != top_level_env:
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"❌ Tag '<company>-app-env' value '{app_env_tag}' does not match top-level environment '{top_level_env}' — these must be consistent.",
-                rule='sg_tag_env_mismatch',
-                context=context
-            ))
+        # Corporate mandatory tags are auto-generated from top-level carid + environment.
+        # No per-SG tag validation needed — requestors don't specify them.
     
     def _check_shadowed_rules(self, sg_name: str, rule_type: str, rules: List[Dict[str, Any]],
                              summary: ValidationSummary):

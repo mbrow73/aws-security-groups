@@ -3,8 +3,11 @@
 
 account_id: "123456789012"
 environment: "prod"  # prod | test | dev
+carid: "600001725"   # Your application's CARID
 
 # Note: Baseline SGs (EKS, VPC endpoints) are managed by AFT — not this repo.
+# Note: Corporate mandatory tags are auto-generated from environment + carid.
+#       You do NOT need to specify them per security group.
 
 # Team security groups
 security_groups:
@@ -12,15 +15,6 @@ security_groups:
   # Example: Application behind NLB
   app-backend:
     description: "Backend API service"
-    tags:
-      "<company>-app-env": "prod"
-      "<company>-data-classification": "internal"
-      "<company>-app-carid": "600001725"
-      "<company>-ops-supportgroup": "Security_Operations_Support"
-      "<company>-app-supportgroup": "Security_Operations_Support"
-      "<company>-provisioner-repo": "placeholder"
-      "<company>-iam-access-control": "netsec"
-      "<company>-provisioner-workspace": "600001725-prod-sg-123456789012"
     ingress:
       - protocol: "tcp"
         from_port: 8080
@@ -52,15 +46,6 @@ security_groups:
   # Example: Database (restrictive)
   rds-postgres:
     description: "PostgreSQL RDS"
-    tags:
-      "<company>-app-env": "prod"
-      "<company>-data-classification": "internal"
-      "<company>-app-carid": "600001725"
-      "<company>-ops-supportgroup": "Security_Operations_Support"
-      "<company>-app-supportgroup": "Security_Operations_Support"
-      "<company>-provisioner-repo": "placeholder"
-      "<company>-iam-access-control": "netsec"
-      "<company>-provisioner-workspace": "600001725-prod-sg-123456789012"
     ingress:
       - protocol: "tcp"
         from_port: 5432

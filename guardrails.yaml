@@ -29,15 +29,8 @@ validation:
   naming:
     security_group_pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
     max_name_length: 63
-    required_tags:
-      - "<company>-app-env"
-      - "<company>-data-classification"
-      - "<company>-app-carid"
-      - "<company>-ops-supportgroup"
-      - "<company>-app-supportgroup"
-      - "<company>-provisioner-repo"
-      - "<company>-iam-access-control"
-      - "<company>-provisioner-workspace"
+    # Corporate mandatory tags are auto-generated from top-level carid + environment.
+    # No per-SG tag validation needed — the account module computes all 8 tags.
 
 # Note: Baseline SGs (EKS, VPC endpoints) are managed by AFT, not this repo.
 # Type-specific overrides were removed — all SGs follow the same guardrails.

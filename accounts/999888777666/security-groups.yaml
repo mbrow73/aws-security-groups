@@ -1,18 +1,10 @@
 account_id: "999888777666"
 environment: "prod"
+carid: "600001725"
 
 security_groups:
   eks-nodes-api:
     description: "EKS worker nodes for API service cluster"
-    tags:
-      "<company>-app-env": "prod"
-      "<company>-data-classification": "internal"
-      "<company>-app-carid": "600001725"
-      "<company>-ops-supportgroup": "Security_Operations_Support"
-      "<company>-app-supportgroup": "Security_Operations_Support"
-      "<company>-provisioner-repo": "placeholder"
-      "<company>-iam-access-control": "netsec"
-      "<company>-provisioner-workspace": "600001725-prod-sg-999888777666"
     ingress:
       - protocol: "tcp"
         from_port: 10250
