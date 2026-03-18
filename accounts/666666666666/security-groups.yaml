@@ -1,0 +1,109 @@
+account_id: "999999999999"
+enviroment: "production"
+carid: "abc-not-numeric"
+extra_nonsense: true
+
+security_groups:
+  UPPER-CASE-BAD!:
+    desciption: "I misspelled description"
+    inbound:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/8"]
+    ingress:
+      - protocol: "banana"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/8"]
+      - protocol: "tcp"
+        from_port: 70000
+        to_port: 50
+        cidr_blocks: "not-a-list"
+        description: "ports are backwards and too high"
+      - protocol: "tcp"
+        from_port: 22
+        to_port: 22
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "SSH from the entire internet lol"
+      - protocol: "tcp"
+        from_port: 23
+        to_port: 23
+        cidr_blocks: ["10.1.0.0/16"]
+        description: "telnet in 2026"
+      - protocol: "tcp"
+        from_port: 445
+        to_port: 445
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "SMB because why not"
+      - protocol: "tcp"
+        from_port: 3306
+        to_port: 3306
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "MySQL from everywhere internal"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.50.0.0/16"]
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.50.0.0/16"]
+        description: "duplicate of the above"
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        cidr_blocks: ["10.50.0.0/16", "10.60.0.0/16"]
+        description: "multiple CIDRs that terraform ignores"
+      - protocol: "tcp"
+        from_port: 1
+        to_port: 65535
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "all ports, who needs security"
+      - protocol: "udp"
+        description: "forgot the ports entirely"
+        cidr_blocks: ["10.1.0.0/16"]
+      - protocol: "tcp"
+        from_port: 139
+        to_port: 139
+        cidr_blocks: ["10.1.0.0/16"]
+        description: "NetBIOS in the cloud"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["169.254.169.254/32"]
+        description: "postgres from the metadata service?"
+    egress:
+      - protocol: "tcp"
+        from_port: 80
+        to_port: 80
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "unencrypted HTTP to the world"
+
+  aws-reserved-name:
+    description: "starts with reserved pattern"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["nonexistent-prefix-list"]
+
+  a:
+    description: "name too short for the regex"
+    ingress: "not-a-list"
+
+  valid-but-émojis-in-desc:
+    description: "This has a sneaky unicode → arrow 🔥"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        self: "yes"
+        description: "self should be bool not string"
+
+  no-sources-rule:
+    description: "rule with no source at all"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
