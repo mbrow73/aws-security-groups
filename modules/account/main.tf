@@ -3,9 +3,8 @@
 # Baselines are deployed separately via terraform-aws-eks-baseline-sgs module.
 # This module handles team-requested custom security groups only.
 #
-# Note: Cross-references between SGs in the same YAML use raw SG IDs
-# or are resolved post-apply. Teams reference external SGs by ID,
-# prefix lists by name (resolved via prefix_list_mappings).
+# Corporate mandatory tags are computed automatically from account-level
+# fields (environment, carid) — requestors never specify tags manually.
 
 terraform {
   required_version = ">= 1.6"
@@ -20,14 +19,33 @@ terraform {
 locals {
   config     = yamldecode(file(var.yaml_file))
   account_id = tostring(local.config.account_id)
+  environment = lookup(local.config, "environment", "unknown")
+  carid       = tostring(local.config.carid)
 
+  # Corporate mandatory tags — computed automatically, not requestor-specified
+  corporate_mandatory_tags = {
+    "<company>-app-env"                = local.environment
+    "<company>-data-classification"    = "internal"
+    "<company>-app-carid"              = local.carid
+    "<company>-ops-supportgroup"       = "Security_Operations_Support"
+    "<company>-app-supportgroup"       = "Security_Operations_Support"
+    "<company>-provisioner-repo"       = "placeholder"
+    "<company>-iam-access-control"     = "netsec"
+    "<company>-provisioner-workspace"  = "${local.carid}-${local.environment}-sg-${local.account_id}"
+  }
+
+  # Platform-managed tags
+  platform_tags = {
+    ManagedBy   = "sg-platform"
+    Account     = local.account_id
+    Environment = local.environment
+    Repository  = "aws-security-groups"
+  }
+
+  # All tags merged: platform + corporate mandatory + any account-level extras
   common_tags = merge(
-    {
-      ManagedBy   = "sg-platform"
-      Account     = local.account_id
-      Environment = lookup(local.config, "environment", "unknown")
-      Repository  = "aws-security-groups"
-    },
+    local.platform_tags,
+    local.corporate_mandatory_tags,
     lookup(local.config, "tags", {})
   )
 }
@@ -64,9 +82,4 @@ module "security_groups" {
   account_id            = local.account_id
   tags                  = local.common_tags
   prefix_list_mappings  = var.prefix_list_mappings
-
-  # External SG references only — no self-referencing between SGs in this YAML
-  # Teams reference external SGs by ID (e.g., sg-0123abc)
-  # Cross-SG references within the same account are handled by Terraform's
-  # natural dependency resolution when using actual SG IDs
 }

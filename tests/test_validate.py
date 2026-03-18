@@ -80,7 +80,7 @@ def _validate(repo_root, account_id, data):
 
 class TestSchemaValidation:
     def test_missing_required_fields(self, repo_root):
-        data = {'environment': 'prod'}  # has content but missing required fields
+        data = {'environment': 'prod'}  # has content but missing required fields (account_id, carid, security_groups)
         summary = _validate(repo_root, '100000000001', data)
         rules = [e.rule for e in summary.errors]
         assert 'schema_required_fields' in rules
@@ -433,6 +433,7 @@ class TestCleanPass:
         data = {
             'account_id': '100000000001',
             'environment': 'prod',
+            'carid': '600001725',
             'security_groups': {
                 'web-app-sg': {
                     'description': 'Web application security group',
@@ -689,72 +690,17 @@ class TestUnicodeCharacterValidation:
 
 
 # ============================================================
-# Corporate mandatory tag tests
+# CARID validation tests
 # ============================================================
 
-NEW_CORPORATE_TAGS = {
-    "<company>-app-env": "prod",
-    "<company>-data-classification": "internal",
-    "<company>-app-carid": "600001725",
-    "<company>-ops-supportgroup": "Security_Operations_Support",
-    "<company>-app-supportgroup": "Security_Operations_Support",
-    "<company>-provisioner-repo": "placeholder",
-    "<company>-iam-access-control": "netsec",
-    "<company>-provisioner-workspace": "600001725-prod-sg-100000000001",
-}
-
-CORPORATE_TAG_KEYS = list(NEW_CORPORATE_TAGS.keys())
-
-
-@pytest.fixture
-def repo_root_with_tags():
-    """Create a temporary repo root with corporate mandatory tag enforcement."""
-    tmpdir = tempfile.mkdtemp()
-
-    guardrails = {
-        'validation': {
-            'blocked_cidrs': ['0.0.0.0/0', '::/0'],
-            'blocked_ports': [23, 135, 139, 445],
-            'port_ranges': {'max_range_size': 1000},
-            'rules': {
-                'max_ingress_rules': 60,
-                'max_egress_rules': 60,
-            },
-            'naming': {
-                'security_group_pattern': r'^[a-z0-9][a-z0-9-]*[a-z0-9]$',
-                'max_name_length': 63,
-                'required_tags': CORPORATE_TAG_KEYS,
-            },
-        },
-        'type_overrides': {},
-    }
-
-    prefix_lists = {
-        'prefix_lists': {
-            'corporate-networks': {
-                'description': 'Corporate office CIDRs',
-                'entries': ['10.100.0.0/16'],
-            },
-        },
-    }
-
-    with open(os.path.join(tmpdir, 'guardrails.yaml'), 'w') as f:
-        yaml.dump(guardrails, f)
-    with open(os.path.join(tmpdir, 'prefix-lists.yaml'), 'w') as f:
-        yaml.dump(prefix_lists, f)
-
-    yield tmpdir
-    shutil.rmtree(tmpdir)
-
-
-class TestCorporateMandatoryTags:
-    def test_missing_all_tags_gives_errors(self, repo_root_with_tags):
+class TestCaridValidation:
+    def test_missing_carid_gives_error(self, repo_root):
         data = {
             'account_id': '100000000001',
+            'environment': 'prod',
             'security_groups': {
                 'my-sg': {
                     'description': 'test',
-                    'tags': {},
                     'ingress': [{
                         'protocol': 'tcp',
                         'from_port': 443,
@@ -764,17 +710,18 @@ class TestCorporateMandatoryTags:
                 },
             },
         }
-        summary = _validate(repo_root_with_tags, '100000000001', data)
-        tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
-        assert len(tag_errors) == 8, f"Expected 8 missing tag errors, got {len(tag_errors)}"
+        summary = _validate(repo_root, '100000000001', data)
+        rules = [e.rule for e in summary.errors]
+        assert 'schema_required_fields' in rules
 
-    def test_all_corporate_tags_present_passes(self, repo_root_with_tags):
+    def test_valid_carid_passes(self, repo_root):
         data = {
             'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
             'security_groups': {
                 'my-sg': {
                     'description': 'test',
-                    'tags': NEW_CORPORATE_TAGS,
                     'ingress': [{
                         'protocol': 'tcp',
                         'from_port': 443,
@@ -784,21 +731,18 @@ class TestCorporateMandatoryTags:
                 },
             },
         }
-        summary = _validate(repo_root_with_tags, '100000000001', data)
-        tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
-        assert len(tag_errors) == 0
+        summary = _validate(repo_root, '100000000001', data)
+        carid_errors = [e for e in summary.errors if e.rule == 'schema_carid_format']
+        assert len(carid_errors) == 0
 
-    def test_partial_corporate_tags_gives_errors(self, repo_root_with_tags):
-        partial_tags = {
-            "<company>-app-env": "prod",
-            "<company>-data-classification": "internal",
-        }
+    def test_non_numeric_carid_gives_error(self, repo_root):
         data = {
             'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': 'abc-not-a-number',
             'security_groups': {
                 'my-sg': {
                     'description': 'test',
-                    'tags': partial_tags,
                     'ingress': [{
                         'protocol': 'tcp',
                         'from_port': 443,
@@ -808,9 +752,9 @@ class TestCorporateMandatoryTags:
                 },
             },
         }
-        summary = _validate(repo_root_with_tags, '100000000001', data)
-        tag_errors = [e for e in summary.errors if e.rule == 'sg_required_tags']
-        assert len(tag_errors) == 6
+        summary = _validate(repo_root, '100000000001', data)
+        carid_errors = [e for e in summary.errors if e.rule == 'schema_carid_format']
+        assert len(carid_errors) == 1
 
 
 # ============================================================
@@ -964,57 +908,25 @@ class TestRuleShadowing:
         assert len(shadow_warnings) == 1
 
 
-class TestTagEnvMismatch:
-    def test_app_env_tag_matches_environment(self, repo_root_with_tags):
-        """No error when <company>-app-env matches top-level environment."""
+class TestAutoTagsNoPerSgValidation:
+    def test_no_tags_in_sg_still_passes(self, repo_root):
+        """SGs without tags should pass — corporate mandatory tags are auto-generated by the account module."""
         data = {
             'account_id': '100000000001',
             'environment': 'prod',
+            'carid': '600001725',
             'security_groups': {
                 'my-sg': {
                     'description': 'test',
-                    'tags': {
-                        "<company>-app-env": "prod",
-                        "<company>-data-classification": "internal",
-                        "<company>-app-carid": "600001725",
-                        "<company>-ops-supportgroup": "Security_Operations_Support",
-                        "<company>-app-supportgroup": "Security_Operations_Support",
-                        "<company>-provisioner-repo": "placeholder",
-                        "<company>-iam-access-control": "netsec",
-                        "<company>-provisioner-workspace": "sg-100000000001",
-                    },
-                    'ingress': [{'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/24']}],
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.0.0.0/24'],
+                    }],
                 },
             },
         }
-        summary = _validate(repo_root_with_tags, '100000000001', data)
-        mismatch_errors = [e for e in summary.errors if e.rule == 'sg_tag_env_mismatch']
-        assert len(mismatch_errors) == 0
-
-    def test_app_env_tag_mismatch_gives_error(self, repo_root_with_tags):
-        """Error when <company>-app-env doesn't match top-level environment."""
-        data = {
-            'account_id': '100000000001',
-            'environment': 'prod',
-            'security_groups': {
-                'my-sg': {
-                    'description': 'test',
-                    'tags': {
-                        "<company>-app-env": "dev",
-                        "<company>-data-classification": "internal",
-                        "<company>-app-carid": "600001725",
-                        "<company>-ops-supportgroup": "Security_Operations_Support",
-                        "<company>-app-supportgroup": "Security_Operations_Support",
-                        "<company>-provisioner-repo": "placeholder",
-                        "<company>-iam-access-control": "netsec",
-                        "<company>-provisioner-workspace": "sg-100000000001",
-                    },
-                    'ingress': [{'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'cidr_blocks': ['10.0.0.0/24']}],
-                },
-            },
-        }
-        summary = _validate(repo_root_with_tags, '100000000001', data)
-        mismatch_errors = [e for e in summary.errors if e.rule == 'sg_tag_env_mismatch']
-        assert len(mismatch_errors) == 1
-        assert "dev" in mismatch_errors[0].message
-        assert "prod" in mismatch_errors[0].message
+        summary = _validate(repo_root, '100000000001', data)
+        tag_errors = [e for e in summary.errors if 'tag' in (e.rule or '')]
+        assert len(tag_errors) == 0

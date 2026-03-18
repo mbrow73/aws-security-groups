@@ -11,16 +11,9 @@ terraform {
 }
 
 locals {
-  # Platform-managed tags — always applied, not team-configurable
-  platform_tags = {
-    ManagedBy = "sg-platform"
-    Account   = var.account_id
-  }
-
-  # Merge order: platform tags (base) → account-level tags → SG-level tags from YAML (wins)
-  # Corporate mandatory tags come from the YAML and are enforced by guardrails validation
+  # Merge order: account-level tags (includes platform + corporate mandatory) → SG-level optional tags
+  # Corporate mandatory tags are computed in the account module — not requestor-specified
   tags = merge(
-    local.platform_tags,
     var.tags,
     var.security_group_config.tags
   )
