@@ -1,0 +1,48 @@
+account_id: "111222333444"
+environment: "prod"
+carid: "600001725"
+
+security_groups:
+  api-gateway-prod:
+    description: "Public-facing API gateway - accepts HTTPS from corporate networks"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["corporate-networks"]
+        description: "HTTPS from corporate networks"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.100.0.0/16"]
+        description: "HTTPS to backend services VPC"
+
+  backend-services:
+    description: "Backend microservices - receives traffic from API gateway SG only"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        security_groups: ["sg-0abc1234def56789"]
+        description: "HTTP from API gateway SG"
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        self: true
+        description: "mTLS mesh between backend instances"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/16"]
+        description: "HTTPS to VPC endpoints and internal services"
+
+  redis-cache:
+    description: "ElastiCache Redis cluster - backend services only"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["sg-0abc1234def56789"]
+        description: "Redis from backend services SG"
