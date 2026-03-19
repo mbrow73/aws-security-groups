@@ -471,17 +471,24 @@ class WorkspaceProvisioner:
                     try:
                         ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
                         if ws_id:
-                            # Create config version (auto-queues run on upload)
-                            cv_resp = self.tfe_client.create_config_version(ws_id)
+                            # Create config version (don't auto-queue — we trigger manually with auto-apply)
+                            cv_resp = self.tfe_client.create_config_version(ws_id, auto_queue=False)
                             upload_url = cv_resp["data"]["attributes"]["upload-url"]
                             cv_id = cv_resp["data"]["id"]
 
                             # Upload the tarball
                             self.tfe_client.upload_config(upload_url, self.config_tarball)
 
+                            # Trigger run with auto-apply
+                            self.tfe_client.trigger_run(
+                                ws_id,
+                                message=f"Triggered by SG provisioner for account {action.account_id}",
+                                auto_apply=True,
+                            )
+
                             result["run_triggered"] = True
                             result["config_version"] = cv_id
-                            logger.info(f"🚀 Config uploaded to {action.workspace} (cv: {cv_id}) — run auto-queued")
+                            logger.info(f"🚀 Config uploaded to {action.workspace} (cv: {cv_id}) — run triggered with auto-apply")
                         else:
                             result["run_triggered"] = False
                             result["run_warning"] = "Workspace created but not found in TFE — config not uploaded"
