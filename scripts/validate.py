@@ -318,11 +318,11 @@ class SecurityGroupValidator:
                 rule='account_id_format'
             ))
         
-        # Should match directory name if directory is account ID
+        # Must match directory name if directory is account ID
         if re.match(r'^\d{12}$', self.account_dir.name) and account_id != self.account_dir.name:
             summary.add_result(ValidationResult(
-                level='warning',
-                message=f"account_id '{account_id}' doesn't match directory name '{self.account_dir.name}'",
+                level='error',
+                message=f"❌ account_id '{account_id}' doesn't match directory name '{self.account_dir.name}' — the account_id in security-groups.yaml must match the directory name.\n   → Either rename the directory to '{account_id}/' or fix the account_id field.",
                 rule='account_id_consistency'
             ))
     
