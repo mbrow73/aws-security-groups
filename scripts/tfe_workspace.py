@@ -258,47 +258,18 @@ class TFEClient:
                 return None
             raise
 
-    def ensure_workspace_settings(self, workspace_id: str, account_id: str) -> bool:
-        """Ensure auto-apply and file triggers are configured on a workspace.
+    def trigger_run(self, workspace_id: str, message: str = "Triggered by SG provisioner",
+                    auto_apply: bool = True) -> dict:
+        """Trigger a new run on a workspace.
 
-        Uses the ID-based PATCH endpoint — call this AFTER get_workspace_id
-        succeeds so we know the workspace is reachable.
-
-        Sets:
-          - auto-apply: true
-          - file-triggers-enabled: true
-          - trigger-prefixes: accounts/<account_id>, modules
-
-        Returns True on success, False on error.
+        Sets auto-apply at the run level so the plan applies automatically
+        without needing workspace admin permissions.
         """
-        try:
-            body = {
-                "data": {
-                    "type": "workspaces",
-                    "id": workspace_id,
-                    "attributes": {
-                        "auto-apply": True,
-                        "file-triggers-enabled": True,
-                        "trigger-prefixes": [
-                            f"accounts/{account_id}",
-                            "modules",
-                        ],
-                    }
-                }
-            }
-            self._request("PATCH", f"/workspaces/{workspace_id}", body)
-            logger.info(f"✅ Workspace settings configured (auto-apply + file triggers for {account_id})")
-            return True
-        except HTTPError as e:
-            logger.warning(f"⚠️  Failed to configure workspace settings: {e}")
-            return False
-
-    def trigger_run(self, workspace_id: str, message: str = "Triggered by SG provisioner") -> dict:
-        """Trigger a new run on a workspace."""
         body = {
             "data": {
                 "attributes": {
                     "message": message,
+                    "auto-apply": auto_apply,
                 },
                 "type": "runs",
                 "relationships": {
@@ -445,9 +416,6 @@ class WorkspaceProvisioner:
                     try:
                         ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
                         if ws_id:
-                            # Configure workspace settings (auto-apply + file triggers)
-                            self.tfe_client.ensure_workspace_settings(ws_id, action.account_id)
-
                             self.tfe_client.trigger_run(
                                 ws_id,
                                 message=f"Triggered by SG provisioner for account {action.account_id}",
@@ -520,8 +488,7 @@ def format_plan_text(actions: List[PlanAction]) -> str:
             req = a.details.get("request", {})
             lines.append(f"   + {a.workspace} (account {a.account_id}, env: {req.get('env', '?')})")
             lines.append(f"     Dynamic creds: {req.get('dynamic_credentials_auth', 'N/A')}")
-            lines.append(f"     → Auto-apply will be enabled")
-            lines.append(f"     → Initial TFE run will be triggered after creation")
+            lines.append(f"     → Initial TFE run will be triggered with auto-apply")
         lines.append("")
 
     if skips:
