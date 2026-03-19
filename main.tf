@@ -117,7 +117,7 @@ module "us_east_1" {
     aws = aws.us-east-1
   }
 
-  security_groups      = local.sgs_by_region["us-east-1"]
+  security_groups      = lookup(local.sgs_by_region, "us-east-1", {})
   account_id           = local.account_id
   tags                 = local.common_tags
   prefix_list_mappings = var.prefix_list_mappings
@@ -131,7 +131,7 @@ module "us_west_2" {
     aws = aws.us-west-2
   }
 
-  security_groups      = local.sgs_by_region["us-west-2"]
+  security_groups      = lookup(local.sgs_by_region, "us-west-2", {})
   account_id           = local.account_id
   tags                 = local.common_tags
   prefix_list_mappings = var.prefix_list_mappings
