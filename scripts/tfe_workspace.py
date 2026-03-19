@@ -258,6 +258,38 @@ class TFEClient:
                 return None
             raise
 
+    def ensure_auto_apply(self, workspace_name: str) -> bool:
+        """Enable auto-apply on a workspace if not already set.
+
+        Returns True if auto-apply was enabled (or already enabled), False on error.
+        """
+        try:
+            resp = self._request("GET", f"/organizations/{self.org}/workspaces/{workspace_name}")
+            ws_data = resp.get("data", {})
+            ws_id = ws_data.get("id")
+            is_auto = ws_data.get("attributes", {}).get("auto-apply", False)
+
+            if is_auto:
+                logger.info(f"✅ Auto-apply already enabled on {workspace_name}")
+                return True
+
+            # Enable auto-apply
+            body = {
+                "data": {
+                    "type": "workspaces",
+                    "id": ws_id,
+                    "attributes": {
+                        "auto-apply": True,
+                    }
+                }
+            }
+            self._request("PATCH", f"/workspaces/{ws_id}", body)
+            logger.info(f"✅ Enabled auto-apply on {workspace_name}")
+            return True
+        except HTTPError as e:
+            logger.warning(f"⚠️  Failed to set auto-apply on {workspace_name}: {e}")
+            return False
+
     def trigger_run(self, workspace_id: str, message: str = "Triggered by SG provisioner") -> dict:
         """Trigger a new run on a workspace."""
         body = {
@@ -407,6 +439,9 @@ class WorkspaceProvisioner:
                 tfe_workspace_name = f"{self.car_id}-{ws_request.env}-{action.workspace}"
                 logger.info(f"🔍 Looking up TFE workspace: {tfe_workspace_name}")
                 if self.tfe_client:
+                    # Ensure auto-apply is enabled so plans apply automatically
+                    self.tfe_client.ensure_auto_apply(tfe_workspace_name)
+
                     try:
                         ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
                         if ws_id:
@@ -482,6 +517,7 @@ def format_plan_text(actions: List[PlanAction]) -> str:
             req = a.details.get("request", {})
             lines.append(f"   + {a.workspace} (account {a.account_id}, env: {req.get('env', '?')})")
             lines.append(f"     Dynamic creds: {req.get('dynamic_credentials_auth', 'N/A')}")
+            lines.append(f"     → Auto-apply will be enabled")
             lines.append(f"     → Initial TFE run will be triggered after creation")
         lines.append("")
 
