@@ -6,6 +6,10 @@ Creates TFE workspaces through the organization's CloudIaC wrapper API.
 CloudIaC handles dynamic credential provisioning — each workspace gets
 credentials scoped to its target AWS account via the role ARN.
 
+API-driven workflow: workspaces are NOT VCS-connected. Instead, config
+is uploaded via the Configuration Versions API, which gives us full
+control over which workspaces get runs (no speculative plan spam).
+
 No variable sets needed — account_id is derived from the workspace name
 (sg-<account_id>) in the root Terraform config.
 
@@ -13,7 +17,7 @@ Usage:
     # Dry-run: show what would be created
     python tfe_workspace.py plan --changed-accounts 111222333444,555666777888
 
-    # Apply: create workspaces
+    # Apply: create workspaces + upload config + trigger runs
     python tfe_workspace.py apply --changed-accounts 111222333444
 
     # Sync: ensure all account dirs have workspaces
@@ -30,7 +34,6 @@ Environment:
     CLDIAC_PASSWORD       - AD service account key (fallback if AUTH_TOKEN not set)
     CLDIAC_CAR_ID         - Cloud account reference ID
     CLDIAC_PROJECT_ID     - TFE project ID (prj-xxx)
-    CLDIAC_REPOSITORY     - Repository to attach (e.g. org-eng/aws-security-groups)
     CLDIAC_CREDS_PROVIDER - Dynamic credentials provider (aws, gcp)
     CLDIAC_CREDS_AUTH     - Dynamic credentials auth role name (e.g. TfcSgPlatformRole).
                             Combined with account ID to form full ARN per workspace:
@@ -79,17 +82,20 @@ ENV_TO_AUTH = {
 
 @dataclass
 class WorkspaceRequest:
-    """Payload for CloudIaC workspace creation."""
+    """Payload for CloudIaC workspace creation.
+
+    Note: No attach_repository — workspaces are API-driven, not VCS-connected.
+    Config is uploaded via the Configuration Versions API.
+    """
     car_id: str
     env: str
     suffix: str
     project_id: str
-    attach_repository: str = ""
     dynamic_credentials_provider: str = "aws"
     dynamic_credentials_auth: str = ""
 
     def to_dict(self) -> dict:
-        d = {
+        return {
             "car_id": self.car_id,
             "env": self.env,
             "suffix": self.suffix,
@@ -97,9 +103,6 @@ class WorkspaceRequest:
             "dynamic_credentials_provider": self.dynamic_credentials_provider,
             "dynamic_credentials_auth": self.dynamic_credentials_auth,
         }
-        if self.attach_repository:
-            d["attach_repository"] = self.attach_repository
-        return d
 
 
 @dataclass
@@ -258,12 +261,63 @@ class TFEClient:
                 return None
             raise
 
+    def create_config_version(self, workspace_id: str, auto_queue: bool = True,
+                              speculative: bool = False) -> dict:
+        """Create a configuration version and get an upload URL.
+
+        Returns the full response including the upload URL at:
+          data.attributes.upload-url
+
+        Args:
+            workspace_id: TFE workspace ID (ws-xxx)
+            auto_queue: Auto-queue a run when upload completes (default: True)
+            speculative: Create a speculative (plan-only) config version
+        """
+        body = {
+            "data": {
+                "type": "configuration-versions",
+                "attributes": {
+                    "auto-queue-runs": auto_queue,
+                    "speculative": speculative,
+                }
+            }
+        }
+        return self._request("POST", f"/workspaces/{workspace_id}/configuration-versions", body)
+
+    def upload_config(self, upload_url: str, tarball_path: str) -> None:
+        """Upload a tarball to the configuration version upload URL.
+
+        Args:
+            upload_url: Presigned upload URL from create_config_version
+            tarball_path: Path to the .tar.gz file to upload
+        """
+        with open(tarball_path, "rb") as f:
+            data = f.read()
+
+        req = Request(
+            upload_url,
+            data=data,
+            headers={"Content-Type": "application/octet-stream"},
+            method="PUT",
+        )
+
+        try:
+            with urlopen(req) as resp:
+                logger.info(f"📦 Config uploaded ({len(data)} bytes)")
+        except HTTPError as e:
+            error_body = e.read().decode() if e.fp else ""
+            logger.error(f"Upload failed ({e.code}): {error_body}")
+            raise
+
     def trigger_run(self, workspace_id: str, message: str = "Triggered by SG provisioner",
                     auto_apply: bool = True) -> dict:
         """Trigger a new run on a workspace.
 
         Sets auto-apply at the run level so the plan applies automatically
         without needing workspace admin permissions.
+
+        Note: In the API-driven workflow, runs are auto-queued by config
+        version upload. This method is kept for manual/fallback triggers.
         """
         body = {
             "data": {
@@ -295,7 +349,8 @@ class WorkspaceProvisioner:
     def __init__(self, repo_root: str, client: Optional[CloudIaCClient] = None,
                  tfe_client: Optional['TFEClient'] = None,
                  car_id: str = "", project_id: str = "", repository: str = "",
-                 creds_provider: str = "aws", creds_auth: str = ""):
+                 creds_provider: str = "aws", creds_auth: str = "",
+                 config_tarball: str = ""):
         self.repo_root = Path(repo_root)
         self.client = client
         self.tfe_client = tfe_client
@@ -304,6 +359,7 @@ class WorkspaceProvisioner:
         self.repository = repository
         self.creds_provider = creds_provider
         self.creds_auth = creds_auth
+        self.config_tarball = config_tarball
 
     def discover_accounts(self) -> List[str]:
         """Find all 12-digit account directories under accounts/."""
@@ -348,7 +404,6 @@ class WorkspaceProvisioner:
             env=env,
             suffix=f"{WORKSPACE_SUFFIX_PREFIX}{account_id}",
             project_id=self.project_id,
-            attach_repository=self.repository,
             dynamic_credentials_provider=self.creds_provider,
             dynamic_credentials_auth=self._build_creds_auth(account_id),
         )
@@ -408,28 +463,37 @@ class WorkspaceProvisioner:
                     else:
                         raise
 
-                # Always trigger a run — GitHub Actions is the trigger, not VCS
+                # Upload config and trigger run via Configuration Versions API
                 # CloudIaC names workspaces as: <car_id>-<env>-<suffix>
                 tfe_workspace_name = f"{self.car_id}-{ws_request.env}-{action.workspace}"
                 logger.info(f"🔍 Looking up TFE workspace: {tfe_workspace_name}")
-                if self.tfe_client:
+                if self.tfe_client and self.config_tarball:
                     try:
                         ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
                         if ws_id:
-                            self.tfe_client.trigger_run(
-                                ws_id,
-                                message=f"Triggered by SG provisioner for account {action.account_id}",
-                            )
+                            # Create config version (auto-queues run on upload)
+                            cv_resp = self.tfe_client.create_config_version(ws_id)
+                            upload_url = cv_resp["data"]["attributes"]["upload-url"]
+                            cv_id = cv_resp["data"]["id"]
+
+                            # Upload the tarball
+                            self.tfe_client.upload_config(upload_url, self.config_tarball)
+
                             result["run_triggered"] = True
-                            logger.info(f"🚀 Triggered initial run on {action.workspace}")
+                            result["config_version"] = cv_id
+                            logger.info(f"🚀 Config uploaded to {action.workspace} (cv: {cv_id}) — run auto-queued")
                         else:
                             result["run_triggered"] = False
-                            result["run_warning"] = "Workspace created but not found in TFE — run not triggered"
+                            result["run_warning"] = "Workspace created but not found in TFE — config not uploaded"
                             logger.warning(f"⚠️  Workspace {action.workspace} not found in TFE after creation")
                     except Exception as e:
                         result["run_triggered"] = False
                         result["run_error"] = str(e)
-                        logger.warning(f"⚠️  Failed to trigger run on {action.workspace}: {e}")
+                        logger.warning(f"⚠️  Failed to upload config to {action.workspace}: {e}")
+                elif self.tfe_client and not self.config_tarball:
+                    logger.warning(f"⚠️  No config tarball provided — skipping upload for {action.workspace}")
+                    result["run_triggered"] = False
+                    result["run_warning"] = "No config tarball provided"
 
             elif action.action == "skip":
                 result["status"] = "skipped"
@@ -488,7 +552,7 @@ def format_plan_text(actions: List[PlanAction]) -> str:
             req = a.details.get("request", {})
             lines.append(f"   + {a.workspace} (account {a.account_id}, env: {req.get('env', '?')})")
             lines.append(f"     Dynamic creds: {req.get('dynamic_credentials_auth', 'N/A')}")
-            lines.append(f"     → Initial TFE run will be triggered with auto-apply")
+            lines.append(f"     → Config will be uploaded via API (auto-queues run)")
         lines.append("")
 
     if skips:
@@ -557,6 +621,8 @@ def main():
     parser.add_argument("--repository", default=None, help="Override CLDIAC_REPOSITORY")
     parser.add_argument("--max-workers", type=int, default=5,
                         help="Max parallel workspace operations (default: 5)")
+    parser.add_argument("--config-tarball", default="",
+                        help="Path to repo tarball for config upload (auto-created if not provided)")
 
     args = parser.parse_args()
 
@@ -591,8 +657,6 @@ def main():
             missing.append("CLDIAC_CAR_ID")
         if not project_id:
             missing.append("CLDIAC_PROJECT_ID")
-        if not repository:
-            missing.append("CLDIAC_REPOSITORY")
         if missing:
             logger.error(f"Missing required config: {', '.join(missing)}")
             sys.exit(1)
@@ -618,6 +682,31 @@ def main():
     elif args.command in ("apply", "sync") and not tfe_address:
         logger.warning("TFE_ADDRESS/TFE_TOKEN/TFE_ORG not set — initial runs will not be triggered")
 
+    # Create config tarball for API-driven upload
+    config_tarball = args.config_tarball
+    if not config_tarball and args.command in ("apply", "sync") and tfe_client:
+        import tarfile
+        import tempfile
+
+        EXCLUDE_DIRS = {".git", ".github", "__pycache__", ".terraform", "tests"}
+        EXCLUDE_FILES = {".gitignore", ".gitattributes"}
+
+        def tar_filter(tarinfo):
+            """Exclude unnecessary files from the config upload."""
+            parts = tarinfo.name.split("/")
+            for part in parts:
+                if part in EXCLUDE_DIRS:
+                    return None
+            if os.path.basename(tarinfo.name) in EXCLUDE_FILES:
+                return None
+            return tarinfo
+
+        tarball_path = os.path.join(tempfile.gettempdir(), "sg-config.tar.gz")
+        with tarfile.open(tarball_path, "w:gz") as tar:
+            tar.add(args.repo_root, arcname=".", filter=tar_filter)
+        config_tarball = tarball_path
+        logger.info(f"📦 Created config tarball: {tarball_path} ({os.path.getsize(tarball_path)} bytes)")
+
     provisioner = WorkspaceProvisioner(
         repo_root=args.repo_root,
         client=client,
@@ -627,6 +716,7 @@ def main():
         repository=repository,
         creds_provider=creds_provider,
         creds_auth=creds_auth,
+        config_tarball=config_tarball,
     )
 
     if args.command == "sync":
