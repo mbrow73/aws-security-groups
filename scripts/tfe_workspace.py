@@ -309,6 +309,31 @@ class TFEClient:
             logger.error(f"Upload failed ({e.code}): {error_body}")
             raise
 
+    def wait_for_config_version(self, cv_id: str, timeout: int = 60, interval: float = 2.0) -> str:
+        """Poll a configuration version until it reaches a terminal state.
+
+        Returns the final status ('uploaded', 'errored', etc.).
+        Raises RuntimeError on timeout.
+        """
+        import time
+        deadline = time.time() + timeout
+
+        while time.time() < deadline:
+            resp = self._request("GET", f"/configuration-versions/{cv_id}")
+            status = resp.get("data", {}).get("attributes", {}).get("status", "unknown")
+
+            if status == "uploaded":
+                logger.info(f"✅ Config version {cv_id} is ready (uploaded)")
+                return status
+            elif status == "errored":
+                error = resp.get("data", {}).get("attributes", {}).get("error-message", "unknown")
+                raise RuntimeError(f"Config version {cv_id} errored: {error}")
+            else:
+                logger.info(f"⏳ Config version {cv_id} status: {status} — waiting...")
+                time.sleep(interval)
+
+        raise RuntimeError(f"Config version {cv_id} did not reach 'uploaded' within {timeout}s")
+
     def trigger_run(self, workspace_id: str, message: str = "Triggered by SG provisioner",
                     auto_apply: bool = True) -> dict:
         """Trigger a new run on a workspace.
@@ -476,8 +501,9 @@ class WorkspaceProvisioner:
                             upload_url = cv_resp["data"]["attributes"]["upload-url"]
                             cv_id = cv_resp["data"]["id"]
 
-                            # Upload the tarball
+                            # Upload the tarball and wait for TFE to process it
                             self.tfe_client.upload_config(upload_url, self.config_tarball)
+                            self.tfe_client.wait_for_config_version(cv_id)
 
                             # Trigger run with auto-apply
                             self.tfe_client.trigger_run(
