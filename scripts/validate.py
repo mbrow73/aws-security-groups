@@ -173,9 +173,18 @@ class SecurityGroupValidator:
         # Check if security-groups.yaml exists
         sg_file = self.account_dir / "security-groups.yaml"
         if not sg_file.exists():
+            # Check for commonly misnamed files
+            misnamed = [
+                f.name for f in self.account_dir.iterdir()
+                if f.is_file() and f.suffix in ('.yaml', '.yml')
+                and f.name != 'security-groups.yaml'
+            ]
+            hint = ""
+            if misnamed:
+                hint = f"\n   → Found: {', '.join(misnamed)} — did you mean to name it security-groups.yaml?"
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"❌ security-groups.yaml not found in {self.account_dir} — this file is required to define security groups for the account.\n   → Create security-groups.yaml with your security group definitions.",
+                message=f"❌ security-groups.yaml not found in {self.account_dir} — this file is required to define security groups for the account.{hint}\n   → The file must be named exactly 'security-groups.yaml'.",
                 rule='file_exists'
             ))
             return summary
