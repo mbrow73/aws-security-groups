@@ -261,29 +261,30 @@ class TFEClient:
     def ensure_auto_apply(self, workspace_name: str) -> bool:
         """Enable auto-apply on a workspace if not already set.
 
+        Uses the name-based PATCH endpoint to avoid propagation delays
+        with newly created workspaces where the ID may not be immediately
+        available.
+
         Returns True if auto-apply was enabled (or already enabled), False on error.
         """
         try:
             resp = self._request("GET", f"/organizations/{self.org}/workspaces/{workspace_name}")
-            ws_data = resp.get("data", {})
-            ws_id = ws_data.get("id")
-            is_auto = ws_data.get("attributes", {}).get("auto-apply", False)
+            is_auto = resp.get("data", {}).get("attributes", {}).get("auto-apply", False)
 
             if is_auto:
                 logger.info(f"✅ Auto-apply already enabled on {workspace_name}")
                 return True
 
-            # Enable auto-apply
+            # Enable auto-apply via name-based endpoint
             body = {
                 "data": {
                     "type": "workspaces",
-                    "id": ws_id,
                     "attributes": {
                         "auto-apply": True,
                     }
                 }
             }
-            self._request("PATCH", f"/workspaces/{ws_id}", body)
+            self._request("PATCH", f"/organizations/{self.org}/workspaces/{workspace_name}", body)
             logger.info(f"✅ Enabled auto-apply on {workspace_name}")
             return True
         except HTTPError as e:
