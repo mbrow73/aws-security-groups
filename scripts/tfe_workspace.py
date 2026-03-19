@@ -505,16 +505,25 @@ class WorkspaceProvisioner:
                             self.tfe_client.upload_config(upload_url, self.config_tarball)
                             self.tfe_client.wait_for_config_version(cv_id)
 
-                            # Trigger run with auto-apply
+                            # Trigger two runs — first often fails a blank Sentinel
+                            # policy on newly provisioned workspaces, second passes.
+                            import time
                             self.tfe_client.trigger_run(
                                 ws_id,
-                                message=f"Triggered by SG provisioner for account {action.account_id}",
+                                message=f"[1/2] Initial run for account {action.account_id}",
+                                auto_apply=True,
+                            )
+                            logger.info(f"🚀 First run triggered on {action.workspace} — queuing retry")
+                            time.sleep(5)
+                            self.tfe_client.trigger_run(
+                                ws_id,
+                                message=f"[2/2] Retry run for account {action.account_id}",
                                 auto_apply=True,
                             )
 
                             result["run_triggered"] = True
                             result["config_version"] = cv_id
-                            logger.info(f"🚀 Config uploaded to {action.workspace} (cv: {cv_id}) — run triggered with auto-apply")
+                            logger.info(f"🚀 Both runs queued on {action.workspace} (cv: {cv_id})")
                         else:
                             result["run_triggered"] = False
                             result["run_warning"] = "Workspace created but not found in TFE — config not uploaded"
