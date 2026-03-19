@@ -5,8 +5,3 @@ output "security_group_ids" {
     sg_name => sg.security_group_id
   }
 }
-
-output "account_id" {
-  description = "Account ID from YAML"
-  value       = local.account_id
-}

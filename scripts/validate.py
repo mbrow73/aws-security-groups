@@ -212,6 +212,7 @@ class SecurityGroupValidator:
         # Perform all validation checks
         self._validate_schema(data, summary)
         self._validate_account_id(data, summary)
+        self._validate_regions(data, summary)
         self._validate_security_groups(data, summary)
         self._validate_naming_conventions(data, summary)
         self._validate_prefix_list_references(data, summary)
@@ -220,9 +221,9 @@ class SecurityGroupValidator:
         return summary
     
     # Known top-level keys in security-groups.yaml
-    KNOWN_TOP_LEVEL_KEYS = {'account_id', 'environment', 'carid', 'security_groups', 'tags'}
+    KNOWN_TOP_LEVEL_KEYS = {'account_id', 'environment', 'carid', 'security_groups', 'tags', 'default_region'}
     # Known keys within a security group definition
-    KNOWN_SG_KEYS = {'description', 'ingress', 'egress', 'tags'}
+    KNOWN_SG_KEYS = {'description', 'ingress', 'egress', 'tags', 'region'}
     # Known keys within a rule definition
     KNOWN_RULE_KEYS = {'protocol', 'from_port', 'to_port', 'cidr_blocks', 'ipv6_cidr_blocks',
                        'security_groups', 'prefix_list_ids', 'self', 'description'}
@@ -335,6 +336,52 @@ class SecurityGroupValidator:
                 rule='account_id_consistency'
             ))
     
+    # AWS region pattern
+    AWS_REGION_PATTERN = re.compile(r'^[a-z]{2}-(north|south|east|west|central|northeast|southeast|northwest|southwest)-\d+$')
+
+    def _validate_regions(self, data: Dict[str, Any], summary: ValidationSummary):
+        """Validate region fields on default_region and per-SG region."""
+        # Allowed regions from guardrails (if configured)
+        allowed_regions = self.guardrails.get('validation', {}).get('allowed_regions', [])
+
+        # Validate default_region
+        if 'default_region' in data:
+            dr = data['default_region']
+            if not isinstance(dr, str) or not self.AWS_REGION_PATTERN.match(dr):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ Invalid default_region '{dr}' — must be a valid AWS region (e.g. us-east-1, us-west-2).",
+                    rule='invalid_default_region'
+                ))
+            elif allowed_regions and dr not in allowed_regions:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ default_region '{dr}' is not in allowed regions: {', '.join(allowed_regions)}",
+                    rule='disallowed_default_region'
+                ))
+
+        # Validate per-SG region
+        if 'security_groups' in data and isinstance(data['security_groups'], dict):
+            for sg_name, sg_config in data['security_groups'].items():
+                if not isinstance(sg_config, dict):
+                    continue
+                if 'region' in sg_config:
+                    r = sg_config['region']
+                    if not isinstance(r, str) or not self.AWS_REGION_PATTERN.match(r):
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"❌ Invalid region '{r}' on security group '{sg_name}' — must be a valid AWS region.",
+                            rule='invalid_sg_region',
+                            context=f"security_group.{sg_name}"
+                        ))
+                    elif allowed_regions and r not in allowed_regions:
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"❌ Region '{r}' on security group '{sg_name}' is not in allowed regions: {', '.join(allowed_regions)}",
+                            rule='disallowed_sg_region',
+                            context=f"security_group.{sg_name}"
+                        ))
+
     def _validate_security_groups(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate individual security groups"""
         if 'security_groups' not in data or not data['security_groups']:
