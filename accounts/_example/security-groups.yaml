@@ -4,6 +4,7 @@
 account_id: "123456789012"
 environment: "prod"  # prod | test | dev
 carid: "600001725"   # Your application's CARID
+default_region: "us-east-1"  # Default region for SGs that don't specify one
 
 # Note: Baseline SGs (EKS, VPC endpoints) are managed by AFT — not this repo.
 # Note: Corporate mandatory tags are auto-generated from environment + carid.
@@ -12,7 +13,7 @@ carid: "600001725"   # Your application's CARID
 # Team security groups
 security_groups:
 
-  # Example: Application behind NLB
+  # Example: Application behind NLB (inherits default_region: us-east-1)
   app-backend:
     description: "Backend API service"
     ingress:
@@ -43,7 +44,7 @@ security_groups:
         cidr_blocks: ["10.0.0.0/8"]
         description: "DNS resolution"
 
-  # Example: Database (restrictive)
+  # Example: Database (inherits default_region: us-east-1)
   rds-postgres:
     description: "PostgreSQL RDS"
     ingress:
@@ -52,3 +53,14 @@ security_groups:
         to_port: 5432
         security_groups: ["app-backend"]
         description: "PostgreSQL from app servers"
+
+  # Example: Cache in a different region (explicit region override)
+  west-cache:
+    region: "us-west-2"
+    description: "Redis cache in us-west-2"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        cidr_blocks: ["10.200.0.0/16"]
+        description: "Redis from app tier"

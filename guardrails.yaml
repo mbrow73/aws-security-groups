@@ -25,6 +25,11 @@ validation:
     max_ingress_rules: 60
     max_egress_rules: 60
 
+  # Allowed AWS regions (empty = allow all valid regions)
+  allowed_regions:
+    - "us-east-1"
+    - "us-west-2"
+
   # Naming conventions
   naming:
     security_group_pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
