@@ -258,45 +258,40 @@ class TFEClient:
                 return None
             raise
 
-    def ensure_auto_apply(self, workspace_name: str, retries: int = 3, delay: float = 5.0) -> bool:
-        """Enable auto-apply on a workspace if not already set.
+    def ensure_workspace_settings(self, workspace_id: str, account_id: str) -> bool:
+        """Ensure auto-apply and file triggers are configured on a workspace.
 
-        Uses the name-based PATCH endpoint. Retries on 404 to handle
-        propagation delay after workspace creation via CloudIaC.
+        Uses the ID-based PATCH endpoint — call this AFTER get_workspace_id
+        succeeds so we know the workspace is reachable.
 
-        Returns True if auto-apply was enabled (or already enabled), False on error.
+        Sets:
+          - auto-apply: true
+          - file-triggers-enabled: true
+          - trigger-prefixes: accounts/<account_id>, modules
+
+        Returns True on success, False on error.
         """
-        import time
-
-        for attempt in range(retries):
-            try:
-                resp = self._request("GET", f"/organizations/{self.org}/workspaces/{workspace_name}")
-                is_auto = resp.get("data", {}).get("attributes", {}).get("auto-apply", False)
-
-                if is_auto:
-                    logger.info(f"✅ Auto-apply already enabled on {workspace_name}")
-                    return True
-
-                # Enable auto-apply via name-based endpoint
-                body = {
-                    "data": {
-                        "type": "workspaces",
-                        "attributes": {
-                            "auto-apply": True,
-                        }
+        try:
+            body = {
+                "data": {
+                    "type": "workspaces",
+                    "id": workspace_id,
+                    "attributes": {
+                        "auto-apply": True,
+                        "file-triggers-enabled": True,
+                        "trigger-prefixes": [
+                            f"accounts/{account_id}",
+                            "modules",
+                        ],
                     }
                 }
-                self._request("PATCH", f"/organizations/{self.org}/workspaces/{workspace_name}", body)
-                logger.info(f"✅ Enabled auto-apply on {workspace_name}")
-                return True
-            except HTTPError as e:
-                if e.code == 404 and attempt < retries - 1:
-                    logger.info(f"⏳ Workspace {workspace_name} not found yet, retrying in {delay}s ({attempt + 1}/{retries})")
-                    time.sleep(delay)
-                    continue
-                logger.warning(f"⚠️  Failed to set auto-apply on {workspace_name}: {e}")
-                return False
-        return False
+            }
+            self._request("PATCH", f"/workspaces/{workspace_id}", body)
+            logger.info(f"✅ Workspace settings configured (auto-apply + file triggers for {account_id})")
+            return True
+        except HTTPError as e:
+            logger.warning(f"⚠️  Failed to configure workspace settings: {e}")
+            return False
 
     def trigger_run(self, workspace_id: str, message: str = "Triggered by SG provisioner") -> dict:
         """Trigger a new run on a workspace."""
@@ -447,12 +442,12 @@ class WorkspaceProvisioner:
                 tfe_workspace_name = f"{self.car_id}-{ws_request.env}-{action.workspace}"
                 logger.info(f"🔍 Looking up TFE workspace: {tfe_workspace_name}")
                 if self.tfe_client:
-                    # Ensure auto-apply is enabled so plans apply automatically
-                    self.tfe_client.ensure_auto_apply(tfe_workspace_name)
-
                     try:
                         ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
                         if ws_id:
+                            # Configure workspace settings (auto-apply + file triggers)
+                            self.tfe_client.ensure_workspace_settings(ws_id, action.account_id)
+
                             self.tfe_client.trigger_run(
                                 ws_id,
                                 message=f"Triggered by SG provisioner for account {action.account_id}",
