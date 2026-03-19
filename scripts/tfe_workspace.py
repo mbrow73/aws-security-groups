@@ -258,38 +258,45 @@ class TFEClient:
                 return None
             raise
 
-    def ensure_auto_apply(self, workspace_name: str) -> bool:
+    def ensure_auto_apply(self, workspace_name: str, retries: int = 3, delay: float = 5.0) -> bool:
         """Enable auto-apply on a workspace if not already set.
 
-        Uses the name-based PATCH endpoint to avoid propagation delays
-        with newly created workspaces where the ID may not be immediately
-        available.
+        Uses the name-based PATCH endpoint. Retries on 404 to handle
+        propagation delay after workspace creation via CloudIaC.
 
         Returns True if auto-apply was enabled (or already enabled), False on error.
         """
-        try:
-            resp = self._request("GET", f"/organizations/{self.org}/workspaces/{workspace_name}")
-            is_auto = resp.get("data", {}).get("attributes", {}).get("auto-apply", False)
+        import time
 
-            if is_auto:
-                logger.info(f"✅ Auto-apply already enabled on {workspace_name}")
-                return True
+        for attempt in range(retries):
+            try:
+                resp = self._request("GET", f"/organizations/{self.org}/workspaces/{workspace_name}")
+                is_auto = resp.get("data", {}).get("attributes", {}).get("auto-apply", False)
 
-            # Enable auto-apply via name-based endpoint
-            body = {
-                "data": {
-                    "type": "workspaces",
-                    "attributes": {
-                        "auto-apply": True,
+                if is_auto:
+                    logger.info(f"✅ Auto-apply already enabled on {workspace_name}")
+                    return True
+
+                # Enable auto-apply via name-based endpoint
+                body = {
+                    "data": {
+                        "type": "workspaces",
+                        "attributes": {
+                            "auto-apply": True,
+                        }
                     }
                 }
-            }
-            self._request("PATCH", f"/organizations/{self.org}/workspaces/{workspace_name}", body)
-            logger.info(f"✅ Enabled auto-apply on {workspace_name}")
-            return True
-        except HTTPError as e:
-            logger.warning(f"⚠️  Failed to set auto-apply on {workspace_name}: {e}")
-            return False
+                self._request("PATCH", f"/organizations/{self.org}/workspaces/{workspace_name}", body)
+                logger.info(f"✅ Enabled auto-apply on {workspace_name}")
+                return True
+            except HTTPError as e:
+                if e.code == 404 and attempt < retries - 1:
+                    logger.info(f"⏳ Workspace {workspace_name} not found yet, retrying in {delay}s ({attempt + 1}/{retries})")
+                    time.sleep(delay)
+                    continue
+                logger.warning(f"⚠️  Failed to set auto-apply on {workspace_name}: {e}")
+                return False
+        return False
 
     def trigger_run(self, workspace_id: str, message: str = "Triggered by SG provisioner") -> dict:
         """Trigger a new run on a workspace."""
