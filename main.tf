@@ -19,8 +19,11 @@ terraform {
 }
 
 locals {
-  # Derive account_id from workspace name: "sg-123456789012" → "123456789012"
-  account_id = regex("^sg-(\\d{12})$", terraform.workspace)[0]
+  # Derive account_id from workspace name
+  # Supports both formats:
+  #   - "sg-123456789012"                  (local / direct)
+  #   - "<car_id>-<env>-sg-123456789012"   (CloudIaC provisioned)
+  account_id = regex("sg-(\\d{12})$", terraform.workspace)[0]
 }
 
 variable "prefix_list_mappings" {
