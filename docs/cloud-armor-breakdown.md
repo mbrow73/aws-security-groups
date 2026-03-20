@@ -2,17 +2,13 @@
 
 ## The Baseline (Free, Automatic)
 
-Every GCP project gets standard network DDoS protection out of the box for external passthrough NLBs, protocol forwarding, and VMs with public IPs. This is always-on, always free; you don't configure anything. It covers basic volumetric attack mitigation at the network edge.
+Every GCP project gets **standard network DDoS protection** out of the box for external passthrough NLBs, protocol forwarding, and VMs with public IPs. Always-on, no config needed. Covers basic volumetric attack mitigation at the network edge. Included with Cloud Armor Standard; no subscription required.
 
-This is covered under Cloud Armor Standard and doesn't require any subscriptions.
-
-> [Standard vs Advanced Network DDoS Protection](https://cloud.google.com/armor/docs/advanced-network-ddos#compare)
+> [Standard vs Advanced Network DDoS Protection](https://cloud.google.com/armor/docs/advanced-network-ddos)
 
 ---
 
 ## Pricing Tiers
-
-Cloud Armor has two tiers that determine what features you get access to.
 
 ### Standard (Pay-as-you-go)
 
@@ -33,7 +29,7 @@ Everything in Standard, plus:
 - **Advanced rate limiting** and bot management
 - **DDoS bill protection**: If an attack spikes your infra costs, Google credits you back
 - **DDoS response team**: Direct support from Google during active incidents
-- **Advanced Network DDoS Protection**: Per-region targeted attack mitigation with traffic baselining (more on this below)
+- **Advanced Network DDoS Protection**: Per-region targeted attack mitigation with traffic baselining
 
 > [Cloud Armor Enterprise Overview](https://cloud.google.com/armor/docs/armor-enterprise-overview)  
 > [Cloud Armor Pricing](https://cloud.google.com/armor/pricing)
@@ -42,11 +38,11 @@ Everything in Standard, plus:
 
 ## Security Policy Types
 
-There are three types of service-level security policies. Each one attaches to different resources and supports different capabilities.
+Three types. Each one attaches to different resources and supports different capabilities.
 
-### Backend Security Policies
+### Backend Security Policies (`CLOUD_ARMOR`)
 
-These protect backend services exposed by load balancers. Supported LB types:
+Protect backend services behind proxy-based load balancers:
 
 - Global external Application Load Balancer
 - Classic Application Load Balancer
@@ -55,42 +51,42 @@ These protect backend services exposed by load balancers. Supported LB types:
 - Global external proxy Network Load Balancer (TCP/SSL)
 - Classic proxy Network Load Balancer (TCP/SSL)
 
-This is the full L7 WAF; SQL injection, XSS, LFI, RCE, OWASP pre-configured rules, custom rules using CEL, rate limiting, bot management, adaptive protection. If your workload sits behind any of these LB types, this is where you write your rules.
+Full L7 WAF; SQL injection, XSS, LFI, RCE, OWASP pre-configured rules, custom CEL rules, rate limiting, bot management, adaptive protection.
 
-Backend security policies use the type flag `CLOUD_ARMOR`.
+These attach to **backend services**. If your workload sits behind any of these proxy-based LB types, this is where you write your rules.
 
 > [Backend Security Policies](https://cloud.google.com/armor/docs/security-policy-overview#backend-security-policies)
 
-### Edge Security Policies
+### Edge Security Policies (`CLOUD_ARMOR_EDGE`)
 
-These protect cached content and are supported on:
+Protect cached content. Supported on:
 
 - Global external Application Load Balancer
 - Classic Application Load Balancer
 
-Edge policies are deployed and enforced near the outermost perimeter of Google's network, upstream of where the Cloud CDN cache sits. They're evaluated **before Identity-Aware Proxy (IAP)**; a request blocked by an edge policy is denied before IAP even attempts to authenticate the user.
+Deployed and enforced near the outermost perimeter of Google's network, upstream of where the Cloud CDN cache sits.
 
-Edge security policies can **coexist with backend security policies** on the same backend service. When both are attached, edge policies are evaluated first. Backend policies only see cache-miss requests that have already passed the edge policy.
+Key behaviors:
 
-They can be applied to backend services (regardless of backend type) and to backend buckets. Only edge policies can be applied to backend buckets.
-
-Edge security policies use the type flag `CLOUD_ARMOR_EDGE`.
+- Evaluated **before Identity-Aware Proxy (IAP)**. A request blocked by an edge policy is denied before IAP even attempts to authenticate the user.
+- Can **coexist with backend security policies** on the same backend service. When both are attached, edge policies are evaluated first. Backend policies only see cache-miss requests that passed the edge policy.
+- Only edge policies can be applied to **backend buckets**.
 
 > [Edge Security Policies](https://cloud.google.com/armor/docs/security-policy-overview#edge-security-policies)
 
-### Network Edge Security Policies
+### Network Edge Security Policies (`CLOUD_ARMOR_NETWORK`)
 
-These protect resources that don't sit behind a proxy-based load balancer:
+Protect resources that don't sit behind a proxy-based load balancer:
 
 - External passthrough Network Load Balancers
 - Protocol forwarding
 - VMs with public IP addresses
 
-Enforced at the edge of Google's network, so blocking happens before traffic consumes VM or host resources. This is critical for preventing high-volume attacks from exhausting resources on the target workload.
+Enforced at the edge of Google's network, so traffic is blocked before it consumes VM or host resources. L3/L4 only; IP filtering, geo-blocking, byte offset filtering, rate limiting. No HTTP filtering, no WAF, no bot management (there's no proxy to inspect the traffic).
 
-Network edge policies support IP filtering, geo-blocking, byte offset filtering, and rate limiting; but no HTTP filtering, no WAF rules, and no bot management. The scope is L3/L4.
+Network edge policies can be attached to **specific resources** (target pools, target instances, backend services, VM instances) for scoped filtering.
 
-Network edge security policies are tightly coupled with advanced network DDoS protection (see below); they share the same policy type (`CLOUD_ARMOR_NETWORK`) and the same attachment model via the network edge security service.
+They can also be attached to a **network edge security service** (see Advanced DDoS below).
 
 > [Network Edge Security Policies](https://cloud.google.com/armor/docs/security-policy-overview#network-edge-security-policies)
 
@@ -98,28 +94,49 @@ Network edge security policies are tightly coupled with advanced network DDoS pr
 
 ## Advanced Network DDoS Protection
 
-Enterprise tier only. This is where network edge security policies and DDoS protection converge.
+Enterprise tier only.
 
-### How it works
+This is where it can get confusing. Advanced DDoS protection uses the **same policy type** (`CLOUD_ARMOR_NETWORK`) as network edge security policies, but it's attached differently and serves a different purpose.
 
-You create a security policy of type `CLOUD_ARMOR_NETWORK` in a specific region, then enable `--network-ddos-protection ADVANCED` on that policy. You then attach it to a **network edge security service** in that region. Once attached, all applicable endpoints in that region (external passthrough NLBs, protocol forwarding, VMs with public IPs) get always-on targeted volumetric attack detection and mitigation.
+### How to configure it
 
-### The relationship with network edge security policies
+```
+1. Create a CLOUD_ARMOR_NETWORK security policy in a region
+   $ gcloud compute security-policies create my-policy \
+       --type CLOUD_ARMOR_NETWORK --region us-east1
 
-They're the same policy type. A `CLOUD_ARMOR_NETWORK` policy serves two purposes:
+2. Enable advanced DDoS on that policy
+   $ gcloud compute security-policies update my-policy \
+       --network-ddos-protection ADVANCED --region us-east1
 
-1. **Network edge security rules**: The filtering rules you write (IP allow/deny, geo-blocking, byte offset filtering)
-2. **Advanced DDoS protection**: The `--network-ddos-protection ADVANCED` flag on the same policy enables targeted DDoS mitigation
+3. Create a network edge security service and attach the policy
+   $ gcloud compute network-edge-security-services create my-service \
+       --security-policy my-policy --region us-east1
+```
 
-Both are attached to the network edge security service. You're not managing two separate things; it's one policy type that handles both rule-based filtering and DDoS protection for the same set of resources.
+Once attached to the network edge security service, advanced DDoS protection **blankets ALL passthrough resources in that region** (external passthrough NLBs, protocol forwarding, VMs with public IPs). You don't attach it per-resource; the regional service covers everything.
+
+### How it differs from network edge policy rules
+
+Same policy type, two independent capabilities:
+
+| | Network Edge Policy Rules | Advanced DDoS Protection |
+|---|---|---|
+| What it does | Your filtering rules (IP block, geo, rate limit) | Google's automated attack detection and mitigation |
+| Who defines it | You write the rules | Google runs it automatically |
+| Attachment | Specific resources OR network edge security service | Network edge security service only |
+| Scope | Per-resource (when attached to resources) | Per-region blanket (when attached to service) |
+| Tier required | Standard or Enterprise | Enterprise only |
+
+You can use both independently or together. A single `CLOUD_ARMOR_NETWORK` policy can have your filtering rules AND have advanced DDoS enabled. Or you can have one without the other.
 
 ### Traffic baselining
 
-When you first enable advanced DDoS protection, there's a 24-hour training period where Cloud Armor builds a baseline of your normal traffic patterns. After training, it applies additional mitigation techniques based on that baseline. This is what makes it "advanced" compared to the standard always-on protection; it learns what normal looks like for your specific workloads.
+When you first enable advanced DDoS, there's a 24-hour training period where Cloud Armor builds a baseline of your normal traffic patterns. After training, it applies additional mitigation techniques based on that historical data. This is what separates it from the free standard DDoS protection; it learns what normal looks like for your specific workloads and detects deviations.
 
-### Standard vs Advanced
+### Standard vs Advanced DDoS comparison
 
-| Feature | Standard | Advanced |
+| Feature | Standard (free) | Advanced (Enterprise) |
 |---------|----------|----------|
 | Protected endpoints | Passthrough NLB, protocol forwarding, public IP VMs | Same |
 | Always-on monitoring | Yes | Yes |
@@ -134,20 +151,28 @@ When you first enable advanced DDoS protection, there's a 24-hour training perio
 ## How It All Fits Together
 
 ```
-Standard network DDoS (free)       Always-on baseline for passthrough resources
+Standard network DDoS (free)       Always-on for passthrough resources
       |
-Cloud Armor Standard               You start writing security policies
+Cloud Armor Standard               You create security policies and write rules
       |
-Cloud Armor Enterprise             ML, threat intel, adaptive protection
+Cloud Armor Enterprise             ML, threat intel, adaptive protection, advanced DDoS
       |
-      |-- Backend policies             L7 WAF for proxy-based LBs
-      |-- Edge policies                CDN filtering (evaluated before IAP; stacks with backend policies)
-      |-- Network edge policies  }
-      |                          }--   Same CLOUD_ARMOR_NETWORK policy type
-      |-- Advanced DDoS          }     Attached via network edge security service
+      |-- Backend policies             L7 WAF; proxy-based LBs
+      |       attached to: backend services
+      |
+      |-- Edge policies                CDN filtering; evaluated before IAP
+      |       attached to: backend services / backend buckets
+      |       stacks with backend policies (evaluated first)
+      |
+      |-- Network edge policies        L3/L4 filtering; passthrough resources
+      |       attached to: specific resources (target pool, VM, etc)
+      |
+      |-- Advanced DDoS                Regional blanket; auto-mitigation
+              attached to: network edge security service (per-region)
+              uses same CLOUD_ARMOR_NETWORK policy type as network edge policies
 ```
 
-The tiers control *what features* you can use. The policy types control *where* you attach protection. Edge policies stack with backend policies on the same backend service. Network edge policies and advanced DDoS protection are two sides of the same coin.
+The tiers control what features you can use. The policy types control where you attach protection. Edge policies stack with backend policies. Network edge policies and advanced DDoS share the same policy type but differ in attachment and scope.
 
 ---
 
@@ -162,3 +187,4 @@ The tiers control *what features* you can use. The policy types control *where* 
 - [Cloud Armor Enterprise Overview](https://cloud.google.com/armor/docs/armor-enterprise-overview)
 - [Cloud Armor Pricing](https://cloud.google.com/armor/pricing)
 - [Preconfigured WAF Rules](https://cloud.google.com/armor/docs/waf-rules)
+- [Configure Security Policies](https://cloud.google.com/armor/docs/configure-security-policies)
