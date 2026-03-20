@@ -86,12 +86,24 @@ jobs:
               }
             }
 
-            const required = hasProd ? 2 : 1;
-            const envLabel = hasProd ? 'prod' : 'nonprod';
+            // Check if framework files changed (modules, scripts, workflows, etc.)
+            const FRAMEWORK_PATHS = ['modules/', 'scripts/', '.github/', 'guardrails.yaml', 'known-prefix-lists.yaml'];
+            const frameworkFiles = files.filter(f =>
+              FRAMEWORK_PATHS.some(p => f.filename.startsWith(p) || f.filename === p)
+            );
+            const frameworkChanged = frameworkFiles.length > 0;
 
-            if (prodAccounts.length === 0 && nonprodAccounts.length === 0) {
-              console.log('No account YAMLs changed — framework change, requiring 1 review');
+            if (frameworkChanged) {
+              console.log(`🔧 Framework files changed (${frameworkFiles.length}):`);
+              frameworkFiles.forEach(f => console.log(`  ${f.filename}`));
             }
+
+            // Approval requirements:
+            //   prod account YAML     → 2 (high-risk change)
+            //   framework/modules     → 2 (affects all accounts)
+            //   nonprod account YAML  → 1
+            const required = (hasProd || frameworkChanged) ? 2 : 1;
+            const envLabel = hasProd ? 'prod' : frameworkChanged ? 'framework' : 'nonprod';
 
             // Get current approvals (deduplicated by user)
             const reviews = await github.rest.pulls.listReviews({
