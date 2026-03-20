@@ -1,29 +1,20 @@
 account_id: "999888777666"
-environment: "prod"
+environment: "staging"
 carid: "600001725"
+default_region: "us-east-1"
 
 security_groups:
-  eks-nodes-api:
-    description: "EKS worker nodes for API service cluster"
+  broken-sg:
+    description: "This SG is intentionally broken — should fail validation"
     ingress:
       - protocol: "tcp"
-        from_port: 10250
-        to_port: 10250
-        cidr_blocks: ["10.100.0.0/16"]
-        description: "Kubelet API from EKS control plane"
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        self: true
-        description: "Inter-node HTTPS communication"
+        from_port: 22
+        to_port: 22
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "SSH from the entire internet — yikes"
     egress:
       - protocol: "tcp"
         from_port: 443
         to_port: 443
-        cidr_blocks: ["10.100.0.0/16"]
-        description: "HTTPS to VPC endpoints (VPC CIDR scoped)"
-      - protocol: "udp"
-        from_port: 53
-        to_port: 53
-        cidr_blocks: ["10.100.0.0/16"]
-        description: "DNS resolution within VPC"
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "HTTPS outbound"
