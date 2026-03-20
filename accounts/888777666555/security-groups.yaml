@@ -1,20 +1,30 @@
 account_id: "888777666555"
-environment: "yolo"
+environment: "prod"
 carid: "600001725"
 default_region: "us-east-1"
 
 security_groups:
   demo-api:
-    description: "Demo API service - now broken again"
+    description: "Demo API service - all clean"
     ingress:
       - protocol: "tcp"
-        from_port: 3389
-        to_port: 3389
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "RDP from the internet - extra bad"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.160.0.0/16"]
+        description: "HTTPS from corporate"
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        security_groups: ["monitoring-sg"]
+        description: "Health checks from monitoring"
     egress:
       - protocol: "tcp"
         from_port: 443
         to_port: 443
-        cidr_blocks: ["10.0.0.0/8"]
-        description: "HTTPS outbound"
+        prefix_list_ids: ["corporate-networks"]
+        description: "On-prem services via TGW"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["rds-postgres"]
+        description: "PostgreSQL access"
