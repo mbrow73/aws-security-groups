@@ -1,0 +1,10 @@
+account_id: "655497436602"
+environment: "prod"
+carid: "600001725"
+default_region: "us-east-1"
+
+security_groups:
+  review-gate-test-prod:
+    description: "Testing review gate — prod account (should require 2 approvals)"
+    ingress: []
+    egress: []
