@@ -72,6 +72,7 @@ jobs:
         run: |
           IFS=',' read -ra ACCOUNTS <<< "${{ needs.detect-changes.outputs.changed-accounts }}"
           EXIT_CODE=0
+          HAS_WARNINGS=false
           VALIDATION_OUTPUT=""
           
           for account in "${ACCOUNTS[@]}"; do
@@ -86,14 +87,19 @@ jobs:
             
             if [ $ACCOUNT_EXIT_CODE -eq 1 ]; then
               EXIT_CODE=1
+            elif [ $ACCOUNT_EXIT_CODE -eq 2 ]; then
+              HAS_WARNINGS=true
             fi
-            # Exit code 2 = warnings only — these are advisory and don't block merge.
-            # Warnings are still visible in the PR comment for reviewer awareness.
           done
           
-          # If everything passed, generate a success summary
-          if [ $EXIT_CODE -eq 0 ]; then
+          # Three outcomes:
+          #   errors (exit 1)   → fail check, post error output
+          #   warnings (exit 2) → pass check, post warning output
+          #   clean (exit 0)    → pass check, post success message
+          if [ $EXIT_CODE -eq 0 ] && [ "$HAS_WARNINGS" = false ]; then
             VALIDATION_OUTPUT="## ✅ Security Group Validation Results"$'\n\n'"**Status:** All schema, guardrails, and naming checks passed!"$'\n\n'"🚀 Once approved and merged, Terraform Enterprise will handle deployment."
+          elif [ $EXIT_CODE -eq 0 ] && [ "$HAS_WARNINGS" = true ]; then
+            VALIDATION_OUTPUT="## ⚠️ Security Group Validation Results"$'\n\n'"**Status:** Passed with warnings (non-blocking)"$'\n\n'"${VALIDATION_OUTPUT}"$'\n\n'"🚀 Once approved and merged, Terraform Enterprise will handle deployment."
           fi
           
           # Write summary to file for artifact upload and job output
