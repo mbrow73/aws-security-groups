@@ -26,8 +26,9 @@ Usage:
 Environment:
     CLDIAC_URL            - CloudIaC API base URL (e.g. https://cldiac.example.com)
     CLDIAC_AUTH_URL       - Auth service URL (e.g. https://authservice.example.com)
-    CLDIAC_AUTH_ENV       - (DEPRECATED — now derived from account environment)
-                            Mapping: dev→E1, test→E2, prod→E3
+    CLDIAC_AUTH_ENV       - (DEPRECATED — auth is always E1)
+                            The auth service is a shared control plane; E1 tokens
+                            are valid for all environments (E1/E2/E3).
     CLDIAC_AUTH_TOKEN     - Pre-encoded base64 auth token (preferred)
                             Used directly as: Authorization: Basic <token>
     CLDIAC_USER           - AD service account ID (fallback if AUTH_TOKEN not set)
@@ -72,12 +73,10 @@ logger = logging.getLogger(__name__)
 
 WORKSPACE_SUFFIX_PREFIX = "sg-"
 
-# Maps account YAML environment to CloudIaC auth environment header
-ENV_TO_AUTH = {
-    "dev": "E1",
-    "test": "E2",
-    "prod": "E3",
-}
+# Auth environment is always E1 — the auth service is a shared control plane
+# that issues tokens valid across all environments (E1/E2/E3).
+# The workspace environment (dev/test/prod) is separate from auth.
+AUTH_ENV = "E1"
 
 
 @dataclass
@@ -134,7 +133,10 @@ class CloudIaCClient:
         self._token = token            # cached bearer token
 
     def set_auth_env(self, auth_env: str) -> None:
-        """Switch auth environment, clearing cached bearer token if changed."""
+        """Switch auth environment, clearing cached bearer token if changed.
+
+        DEPRECATED: Auth is always E1. Kept for backward compatibility only.
+        """
         if auth_env != self.auth_env:
             logger.info(f"🔄 Switching auth environment: {self.auth_env} → {auth_env}")
             self.auth_env = auth_env
@@ -473,10 +475,7 @@ class WorkspaceProvisioner:
         try:
             if action.action == "create":
                 ws_request = self.build_workspace_request(action.account_id)
-                # Set auth environment based on account's env (dev→E1, test→E2, prod→E3)
-                auth_env = ENV_TO_AUTH.get(ws_request.env.lower(), "E1")
-                logger.info(f"📋 Account {action.account_id}: env={ws_request.env} → auth_env={auth_env}")
-                self.client.set_auth_env(auth_env)
+                logger.info(f"📋 Account {action.account_id}: env={ws_request.env} (auth: {AUTH_ENV})")
                 try:
                     self.client.create_workspace(ws_request)
                     result["status"] = "created"
@@ -565,10 +564,11 @@ class WorkspaceProvisioner:
         if not actions:
             return []
 
-        # Execute sequentially — auth env changes per account (dev→E1,
-        # test→E2, prod→E3), so each action must set_auth_env before
-        # authenticating. Can't pre-auth or parallelize.
-        results = [self._execute_action(a) for a in actions]
+        # Auth is always E1 (shared auth plane), so we can safely
+        # parallelize — no per-account auth env switching needed.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            results = list(pool.map(self._execute_action, actions))
 
         results.sort(key=lambda r: r.get("account_id", ""))
         return results
@@ -672,7 +672,9 @@ def main():
 
     cldiac_url = os.environ.get("CLDIAC_URL", "")
     auth_url = os.environ.get("CLDIAC_AUTH_URL", "")
-    auth_env = os.environ.get("CLDIAC_AUTH_ENV", "E1")
+    # Auth is always E1 — shared auth plane across all environments.
+    # CLDIAC_AUTH_ENV is deprecated but still accepted for backward compat.
+    auth_env = AUTH_ENV
     auth_token = os.environ.get("CLDIAC_AUTH_TOKEN", "")
     username = os.environ.get("CLDIAC_USER", "")
     password = os.environ.get("CLDIAC_PASSWORD", "")
