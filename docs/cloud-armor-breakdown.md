@@ -116,6 +116,34 @@ This is where it can get confusing. Advanced DDoS protection uses the **same pol
 
 Once attached to the network edge security service, advanced DDoS protection **blankets ALL passthrough resources in that region** (external passthrough NLBs, protocol forwarding, VMs with public IPs). You don't attach it per-resource; the regional service covers everything.
 
+### Scoping
+
+The network edge security service is scoped **per-region, per-project**. Not per-VPC, not per-org.
+
+- Want advanced DDoS in `us-east1` and `us-west1`? Create a separate network edge security service + policy in each region.
+- Want it across multiple projects? Same thing; configure it independently in each project.
+- There is no org-level blanket for advanced DDoS.
+
+### Attachment options
+
+You have flexibility in how you use a `CLOUD_ARMOR_NETWORK` policy:
+
+```
+Option 1: Filtering only (no advanced DDoS)
+  → Policy with rules attached to specific resources
+    (target pool, target instance, backend service, VM)
+
+Option 2: Filtering + advanced DDoS
+  → Policy with rules + --network-ddos-protection ADVANCED
+  → Attach to specific resources (for scoped filtering)
+  → Also attach to network edge security service (for regional DDoS)
+
+Option 3: Advanced DDoS only (no filtering rules)
+  → Shell policy with --network-ddos-protection ADVANCED
+  → Attach to network edge security service only
+  → Regional DDoS blanket, no custom filtering
+```
+
 ### How it differs from network edge policy rules
 
 Same policy type, two independent capabilities:
