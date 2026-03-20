@@ -1,13 +1,10 @@
 account_id: "222333444555"
-environment: "prod"
+environment: "test"
 carid: "600001725"
+default_region: "us-east-1"
 
 security_groups:
-  api-gateway:
-    description: "API gateway service"
-    ingress:
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        cidr_blocks: ["10.50.0.0/16"]
-        description: "HTTPS from internal"
+  warning-test-sg:
+    description: "SG with empty rule lists - triggers warnings"
+    ingress: []
+    egress: []
