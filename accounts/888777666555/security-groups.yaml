@@ -1,17 +1,17 @@
 account_id: "888777666555"
-environment: "prod"
+environment: "yolo"
 carid: "600001725"
 default_region: "us-east-1"
 
 security_groups:
   demo-api:
-    description: "Demo API service"
+    description: "Demo API service - now broken again"
     ingress:
       - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        cidr_blocks: ["10.160.0.0/16"]
-        description: "HTTPS from corporate"
+        from_port: 3389
+        to_port: 3389
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "RDP from the internet - extra bad"
     egress:
       - protocol: "tcp"
         from_port: 443
