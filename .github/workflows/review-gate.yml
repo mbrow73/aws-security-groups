@@ -63,10 +63,13 @@ jobs:
 
               try {
                 const content = fs.readFileSync(file.filename, 'utf8');
+                // Match environment value — tolerates quotes, trailing
+                // comments, whitespace, and \r\n line endings.
                 const envMatch = content.match(
-                  /^environment:\s*["']?(\w+)["']?\s*$/m
+                  /^environment:\s*["']?(\w+)["']?/m
                 );
                 const env = envMatch?.[1]?.toLowerCase() || 'prod';
+                console.log(`  ${file.filename}: environment=${env} (raw match: ${envMatch?.[0]})`);
 
                 if (env === 'prod') {
                   hasProd = true;
