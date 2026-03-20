@@ -157,3 +157,31 @@ jobs:
               repo: context.repo.repo,
               body: summary
             });
+
+  slack-notify:
+    name: "Slack Review Notification"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate]
+    if: needs.validate.result == 'success' && needs.detect-changes.outputs.has-accounts == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Build and send Slack notification
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          CHANGED_ACCOUNTS: ${{ needs.detect-changes.outputs.changed-accounts }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        run: python scripts/slack_notify.py
