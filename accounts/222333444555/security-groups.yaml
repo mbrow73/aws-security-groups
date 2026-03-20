@@ -5,6 +5,6 @@ default_region: "us-east-1"
 
 security_groups:
   warning-test-sg:
-    description: "This SG has empty rule lists — triggers warnings but should pass"
+    description: "This SG has empty rule lists - triggers warnings but should pass"
     ingress: []
     egress: []
