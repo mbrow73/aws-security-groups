@@ -1,0 +1,20 @@
+account_id: "655497436602"
+environment: "prod"
+carid: "600001725"
+default_region: "us-east-1"
+
+security_groups:
+  prod-api-gateway:
+    description: "Production API gateway backend"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.160.0.0/16"]
+        description: "HTTPS from corporate network"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "HTTPS to internal services"
