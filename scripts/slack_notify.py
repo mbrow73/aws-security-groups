@@ -291,12 +291,18 @@ def main():
     accounts = [parse_account(aid) for aid in account_ids]
 
     has_prod = any(a["env"] == "prod" for a in accounts)
-    has_warnings = any(
-        w
-        for a in accounts
-        for sg in a["security_groups"]
-        for w in sg.get("warnings", [])
-    )
+    # Use the authoritative warning flag from validate.py (passed via GHA output).
+    # Falls back to local detection if not set.
+    has_warnings_env = os.environ.get("HAS_WARNINGS", "").lower()
+    if has_warnings_env in ("true", "false"):
+        has_warnings = has_warnings_env == "true"
+    else:
+        has_warnings = any(
+            w
+            for a in accounts
+            for sg in a["security_groups"]
+            for w in sg.get("warnings", [])
+        )
 
     payload = build_payload(accounts, has_prod, has_warnings)
 

@@ -55,6 +55,7 @@ jobs:
     if: needs.detect-changes.outputs.has-accounts == 'true'
     outputs:
       summary: ${{ steps.validate.outputs.summary }}
+      has_warnings: ${{ steps.validate.outputs.has_warnings }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,6 +102,8 @@ jobs:
           elif [ $EXIT_CODE -eq 0 ] && [ "$HAS_WARNINGS" = true ]; then
             VALIDATION_OUTPUT="## ⚠️ Security Group Validation Results"$'\n\n'"**Status:** Passed with warnings (non-blocking)"$'\n\n'"${VALIDATION_OUTPUT}"$'\n\n'"🚀 Once approved and merged, Terraform Enterprise will handle deployment."
           fi
+          
+          echo "has_warnings=$HAS_WARNINGS" >> $GITHUB_OUTPUT
           
           # Write summary to file for artifact upload and job output
           echo "$VALIDATION_OUTPUT" > /tmp/validation-summary.md
@@ -184,4 +187,5 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
+          HAS_WARNINGS: ${{ needs.validate.outputs.has_warnings }}
         run: python scripts/slack_notify.py
