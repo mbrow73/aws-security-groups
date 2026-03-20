@@ -1,5 +1,5 @@
 account_id: "888777666555"
-environment: "staging"
+environment: "prod"
 carid: "600001725"
 default_region: "us-east-1"
 
@@ -8,10 +8,10 @@ security_groups:
     description: "Demo API service"
     ingress:
       - protocol: "tcp"
-        from_port: 22
-        to_port: 22
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "SSH from the internet - bad!"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.160.0.0/16"]
+        description: "HTTPS from corporate"
     egress:
       - protocol: "tcp"
         from_port: 443
