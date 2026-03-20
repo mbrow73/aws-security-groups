@@ -1,0 +1,13 @@
+# CODEOWNERS — Controls WHO must review, not how many.
+# Approval counts are enforced by the Review Gate workflow.
+#
+# Branch protection should be set to:
+#   ✅ Require approvals (1 minimum)
+#   ✅ Require review from Code Owners
+
+# Default: platform team owns everything
+*                                   @mbrow73/platform-team
+
+# Account YAMLs: SG reviewers (network/security team)
+# Review gate handles prod (2) vs nonprod (1) approval counts
+accounts/                           @mbrow73/sg-reviewers
