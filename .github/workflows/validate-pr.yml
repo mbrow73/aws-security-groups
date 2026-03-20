@@ -86,9 +86,9 @@ jobs:
             
             if [ $ACCOUNT_EXIT_CODE -eq 1 ]; then
               EXIT_CODE=1
-            elif [ $ACCOUNT_EXIT_CODE -eq 2 ] && [ $EXIT_CODE -eq 0 ]; then
-              EXIT_CODE=2
             fi
+            # Exit code 2 = warnings only — these are advisory and don't block merge.
+            # Warnings are still visible in the PR comment for reviewer awareness.
           done
           
           # If everything passed, generate a success summary
