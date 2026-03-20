@@ -5,26 +5,16 @@ default_region: "us-east-1"
 
 security_groups:
   demo-api:
-    description: "Demo API service - all clean"
+    description: "Demo API service - has warnings"
     ingress:
       - protocol: "tcp"
         from_port: 443
         to_port: 443
         cidr_blocks: ["10.160.0.0/16"]
         description: "HTTPS from corporate"
-      - protocol: "tcp"
-        from_port: 8080
-        to_port: 8080
-        security_groups: ["monitoring-sg"]
-        description: "Health checks from monitoring"
-    egress:
-      - protocol: "tcp"
-        from_port: 443
-        to_port: 443
-        prefix_list_ids: ["corporate-networks"]
-        description: "On-prem services via TGW"
-      - protocol: "tcp"
-        from_port: 5432
-        to_port: 5432
-        security_groups: ["rds-postgres"]
-        description: "PostgreSQL access"
+    egress: []
+
+  placeholder-sg:
+    description: "Placeholder SG for future use"
+    ingress: []
+    egress: []
