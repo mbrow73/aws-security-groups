@@ -161,6 +161,83 @@ jobs:
               body: summary
             });
 
+  change-summary:
+    name: "Post Change Summary"
+    runs-on: ubuntu-latest
+    needs: [detect-changes, validate]
+    if: always() && needs.detect-changes.outputs.has-accounts == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Manage change summary comment
+        uses: actions/github-script@v7
+        env:
+          CHANGED_ACCOUNTS: ${{ needs.detect-changes.outputs.changed-accounts }}
+          HAS_WARNINGS: ${{ needs.validate.outputs.has_warnings }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.pull_request.number;
+            const marker = '<!-- sg-change-summary-bot -->';
+
+            // Delete any existing summary comment first
+            const comments = await github.rest.issues.listComments({
+              issue_number: pr_number, owner, repo
+            });
+            for (const comment of comments.data) {
+              if (comment.body.includes(marker)) {
+                await github.rest.issues.deleteComment({
+                  owner, repo, comment_id: comment.id
+                });
+              }
+            }
+
+            // Only post summary if validation passed
+            if (process.env.VALIDATE_RESULT !== 'success') {
+              console.log('Validation failed — summary removed (if it existed)');
+              return;
+            }
+
+            // Run the Python script to generate summary
+            const { execSync } = require('child_process');
+            try {
+              const summary = execSync('python scripts/pr_summary.py', {
+                encoding: 'utf8',
+                env: {
+                  ...process.env,
+                  CHANGED_ACCOUNTS: process.env.CHANGED_ACCOUNTS,
+                  HAS_WARNINGS: process.env.HAS_WARNINGS,
+                  BASE_REF: process.env.BASE_REF,
+                },
+                timeout: 30000,
+              });
+
+              if (summary && summary.includes(marker)) {
+                await github.rest.issues.createComment({
+                  issue_number: pr_number, owner, repo,
+                  body: summary
+                });
+                console.log('✅ Change summary posted');
+              } else {
+                console.log('No changes detected — no summary posted');
+              }
+            } catch (e) {
+              console.log(`::warning::Failed to generate summary: ${e.message}`);
+            }
+
   slack-notify:
     name: "Slack Review Notification"
     runs-on: ubuntu-latest
