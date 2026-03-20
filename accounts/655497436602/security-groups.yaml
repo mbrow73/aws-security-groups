@@ -1,0 +1,212 @@
+account_id: "655497436602"
+environment: "prod"
+carid: "600001725"
+default_region: "us-east-1"
+
+# Payments team workload security groups
+# Baseline SGs (EKS cluster, workers, Istio, NLBs, VPC endpoints) are
+# deployed automatically via AFT — not managed here.
+#
+# These are workload-specific SGs requested by the payments team.
+# Each service gets its own SG with only the connectivity it needs.
+
+security_groups:
+
+  # ── Application Tier ──────────────────────────────────────────────
+
+  payments-api:
+    description: "Payments API service (EKS pods)"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        security_groups: ["secgrp-node-eks-istio-intranet"]
+        description: "HTTP from Istio intranet gateway"
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        security_groups: ["secgrp-node-eks-istio-intranet"]
+        description: "HTTPS from Istio intranet gateway"
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["monitoring-agent"]
+        description: "Prometheus metrics scraping"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-rds"]
+        description: "PostgreSQL to payments database"
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["payments-cache"]
+        description: "Redis session cache"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["corporate-networks"]
+        description: "On-prem payment gateway via TGW"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups: ["secgrp-endpoint-common"]
+        description: "AWS services via VPC endpoints"
+
+  order-processor:
+    description: "Order processing service (EKS pods)"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        security_groups: ["secgrp-node-eks-istio-intranet"]
+        description: "HTTP from Istio intranet gateway"
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["monitoring-agent"]
+        description: "Prometheus metrics scraping"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-rds"]
+        description: "PostgreSQL to payments database (read-only)"
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["order-events-msk"]
+        description: "Kafka for order event streaming"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups: ["secgrp-endpoint-common"]
+        description: "AWS services via VPC endpoints"
+
+  notification-service:
+    description: "Customer notification service (EKS pods)"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        security_groups: ["secgrp-node-eks-istio-intranet"]
+        description: "HTTP from Istio intranet gateway"
+    egress:
+      - protocol: "tcp"
+        from_port: 587
+        to_port: 587
+        security_groups: ["secgrp-endpoint-common"]
+        description: "SES via VPC endpoint for email"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups: ["secgrp-endpoint-common"]
+        description: "SNS/SQS via VPC endpoints for SMS/push"
+
+  # ── Data Tier ─────────────────────────────────────────────────────
+
+  payments-rds:
+    description: "Payments PostgreSQL RDS cluster"
+    ingress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-api"]
+        description: "From payments API"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["order-processor"]
+        description: "From order processor (read replica)"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-webhook-lambda"]
+        description: "From webhook Lambda"
+
+  payments-cache:
+    description: "Payments Redis ElastiCache cluster"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["payments-api"]
+        description: "From payments API only"
+
+  order-events-msk:
+    description: "Order events MSK/Kafka cluster"
+    ingress:
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["order-processor"]
+        description: "From order processor"
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["report-generator-lambda"]
+        description: "From reporting Lambda (consumer)"
+
+  # ── Lambda ────────────────────────────────────────────────────────
+
+  payments-webhook-lambda:
+    description: "Stripe/payment provider webhook handler"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups: ["secgrp-frontend-common-internet"]
+        description: "HTTPS from internet-facing ALB"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-rds"]
+        description: "Write payment events to database"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups: ["secgrp-endpoint-common"]
+        description: "AWS services via VPC endpoints"
+
+  report-generator-lambda:
+    description: "Scheduled report generation Lambda"
+    egress:
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["order-events-msk"]
+        description: "Consume order events from Kafka"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups: ["secgrp-endpoint-common"]
+        description: "S3 for report storage via VPC endpoint"
+
+  # ── Observability ─────────────────────────────────────────────────
+
+  monitoring-agent:
+    description: "Prometheus/Grafana monitoring agent"
+    ingress:
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["secgrp-node-eks-worker"]
+        description: "Prometheus federation from workers"
+    egress:
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["payments-api"]
+        description: "Scrape payments API metrics"
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["order-processor"]
+        description: "Scrape order processor metrics"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups: ["secgrp-endpoint-common"]
+        description: "CloudWatch via VPC endpoint"
