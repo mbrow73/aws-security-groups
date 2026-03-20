@@ -1,0 +1,131 @@
+name: "Review Gate"
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review-gate:
+    name: "Review Requirements"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check review requirements
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pr_number = context.payload.pull_request?.number
+              || context.payload.review?.pull_request?.number;
+
+            if (!pr_number) {
+              core.setFailed('Could not determine PR number');
+              return;
+            }
+
+            // Get changed files in the PR
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              { owner, repo, pull_number: pr_number }
+            );
+
+            // Check if any changed account YAML has environment: prod
+            const fs = require('fs');
+            let hasProd = false;
+            const prodAccounts = [];
+            const nonprodAccounts = [];
+
+            for (const file of files) {
+              const match = file.filename.match(
+                /^accounts\/(\d{12})\/security-groups\.yaml$/
+              );
+              if (!match) continue;
+
+              const accountId = match[1];
+
+              try {
+                const content = fs.readFileSync(file.filename, 'utf8');
+                const envMatch = content.match(
+                  /^environment:\s*["']?(\w+)["']?\s*$/m
+                );
+                const env = envMatch?.[1]?.toLowerCase() || 'prod';
+
+                if (env === 'prod') {
+                  hasProd = true;
+                  prodAccounts.push(accountId);
+                } else {
+                  nonprodAccounts.push(accountId);
+                }
+              } catch (e) {
+                // Can't read file — fail safe, assume prod
+                console.log(
+                  `⚠️ Could not read ${file.filename}, assuming prod`
+                );
+                hasProd = true;
+                prodAccounts.push(accountId);
+              }
+            }
+
+            const required = hasProd ? 2 : 1;
+            const envLabel = hasProd ? 'prod' : 'nonprod';
+
+            // If no account YAMLs changed, this is a framework/script change — 1 review
+            if (prodAccounts.length === 0 && nonprodAccounts.length === 0) {
+              console.log('No account YAMLs changed — framework change, requiring 1 review');
+            }
+
+            // Get current approvals (deduplicated by user)
+            const reviews = await github.rest.pulls.listReviews({
+              owner, repo, pull_number: pr_number
+            });
+
+            // Only count the latest review per user
+            const latestByUser = new Map();
+            for (const review of reviews.data) {
+              if (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
+                latestByUser.set(review.user.login, review.state);
+              }
+            }
+
+            const approvals = [...latestByUser.values()]
+              .filter(state => state === 'APPROVED').length;
+
+            // Build summary
+            let summary = `## 🔍 Review Gate\n\n`;
+            summary += `**Environment tier:** ${envLabel}\n`;
+            summary += `**Required approvals:** ${required}\n`;
+            summary += `**Current approvals:** ${approvals}\n\n`;
+
+            if (prodAccounts.length > 0) {
+              summary += `🔴 **Prod accounts:** ${prodAccounts.map(a => '`' + a + '`').join(', ')}\n`;
+            }
+            if (nonprodAccounts.length > 0) {
+              summary += `🟢 **Nonprod accounts:** ${nonprodAccounts.map(a => '`' + a + '`').join(', ')}\n`;
+            }
+
+            console.log(summary);
+
+            if (approvals < required) {
+              core.setFailed(
+                `❌ ${envLabel} changes require ${required} approval(s), ` +
+                `currently have ${approvals}. ` +
+                (hasProd
+                  ? `Prod accounts affected: ${prodAccounts.join(', ')}`
+                  : '')
+              );
+            } else {
+              console.log(
+                `✅ Review requirement met (${approvals}/${required})`
+              );
+            }
