@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  statuses: write
 
 jobs:
   review-gate:
@@ -33,6 +34,12 @@ jobs:
               core.setFailed('Could not determine PR number');
               return;
             }
+
+            // Get the PR to find the head SHA
+            const pr = await github.rest.pulls.get({
+              owner, repo, pull_number: pr_number
+            });
+            const sha = pr.data.head.sha;
 
             // Get changed files in the PR
             const files = await github.paginate(
@@ -68,7 +75,6 @@ jobs:
                   nonprodAccounts.push(accountId);
                 }
               } catch (e) {
-                // Can't read file — fail safe, assume prod
                 console.log(
                   `⚠️ Could not read ${file.filename}, assuming prod`
                 );
@@ -80,7 +86,6 @@ jobs:
             const required = hasProd ? 2 : 1;
             const envLabel = hasProd ? 'prod' : 'nonprod';
 
-            // If no account YAMLs changed, this is a framework/script change — 1 review
             if (prodAccounts.length === 0 && nonprodAccounts.length === 0) {
               console.log('No account YAMLs changed — framework change, requiring 1 review');
             }
@@ -90,7 +95,6 @@ jobs:
               owner, repo, pull_number: pr_number
             });
 
-            // Only count the latest review per user
             const latestByUser = new Map();
             for (const review of reviews.data) {
               if (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
@@ -101,31 +105,28 @@ jobs:
             const approvals = [...latestByUser.values()]
               .filter(state => state === 'APPROVED').length;
 
-            // Build summary
-            let summary = `## 🔍 Review Gate\n\n`;
-            summary += `**Environment tier:** ${envLabel}\n`;
-            summary += `**Required approvals:** ${required}\n`;
-            summary += `**Current approvals:** ${approvals}\n\n`;
+            const passed = approvals >= required;
+
+            // Write a single commit status — this is what branch protection checks.
+            // Both pull_request and pull_request_review triggers update the SAME
+            // status on the SAME SHA, so there's only ever one check to evaluate.
+            const description = passed
+              ? `✅ ${approvals}/${required} approvals (${envLabel})`
+              : `❌ ${approvals}/${required} approvals needed (${envLabel})`;
+
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: passed ? 'success' : 'pending',
+              context: 'Review Gate',
+              description: description.substring(0, 140),
+              target_url: `https://github.com/${owner}/${repo}/pull/${pr_number}#pullrequestreview`
+            });
+
+            console.log(`Review Gate: ${description}`);
 
             if (prodAccounts.length > 0) {
-              summary += `🔴 **Prod accounts:** ${prodAccounts.map(a => '`' + a + '`').join(', ')}\n`;
+              console.log(`Prod accounts: ${prodAccounts.join(', ')}`);
             }
             if (nonprodAccounts.length > 0) {
-              summary += `🟢 **Nonprod accounts:** ${nonprodAccounts.map(a => '`' + a + '`').join(', ')}\n`;
-            }
-
-            console.log(summary);
-
-            if (approvals < required) {
-              core.setFailed(
-                `❌ ${envLabel} changes require ${required} approval(s), ` +
-                `currently have ${approvals}. ` +
-                (hasProd
-                  ? `Prod accounts affected: ${prodAccounts.join(', ')}`
-                  : '')
-              );
-            } else {
-              console.log(
-                `✅ Review requirement met (${approvals}/${required})`
-              );
+              console.log(`Nonprod accounts: ${nonprodAccounts.join(', ')}`);
             }
