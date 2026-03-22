@@ -11,21 +11,12 @@
    ```yaml
    account_id: "123456789012"
    environment: "prod"
-   baseline_profiles:
-     - eks-standard
+   carid: "600001725"
+   default_region: "us-east-1"
 
    security_groups:
      my-app-db-access:
        description: "My app database connectivity"
-       tags:
-         "<company>-app-env": "prod"
-         "<company>-data-classification": "internal"
-         "<company>-app-carid": "600001725"
-         "<company>-ops-supportgroup": "Security_Operations_Support"
-         "<company>-app-supportgroup": "Security_Operations_Support"
-         "<company>-provisioner-repo": "placeholder"
-         "<company>-iam-access-control": "netsec"
-         "<company>-provisioner-workspace": "600001725-prod-sg-123456789012"
        egress:
          - protocol: "tcp"
            from_port: 5432
@@ -33,6 +24,9 @@
            security_groups: ["rds-postgres"]
            description: "PostgreSQL access"
    ```
+
+   > **Note:** Corporate mandatory tags are auto-generated from your `environment` and `carid` fields.
+   > You do **not** need to specify them per security group.
 
 3. Open a PR to `main`.
 
@@ -44,24 +38,19 @@
 
 ```yaml
 account_id: "123456789012"          # Required: 12-digit AWS account ID
-environment: "prod"            # Required: prod | test | dev
+environment: "prod"                 # Required: prod | test | dev
+carid: "600001725"                  # Required: your application's CARID
+default_region: "us-east-1"         # Optional: default region for SGs (defaults to us-east-1)
 
-baseline_profiles:                   # Optional: pre-built SG sets
-  - eks-standard                     # Intranet-only EKS (auto-includes vpc-endpoints)
-  # - eks-internet                   # Internet + intranet EKS (mutually exclusive with eks-standard)
+# Corporate mandatory tags are AUTO-GENERATED from environment + carid.
+# Do NOT specify them per security group — they are computed by the platform.
 
 security_groups:
   sg-name:                           # Name becomes the SG name prefix
     description: "What this SG is for"
-    tags:
-      "<company>-app-env": "prod"                                    # Required - from environment field
-      "<company>-data-classification": "internal"                    # Required
-      "<company>-app-carid": "600001725"                             # Required
-      "<company>-ops-supportgroup": "Security_Operations_Support"    # Required
-      "<company>-app-supportgroup": "Security_Operations_Support"    # Required
-      "<company>-provisioner-repo": "placeholder"                    # Required
-      "<company>-iam-access-control": "netsec"                       # Required
-      "<company>-provisioner-workspace": "600001725-prod-sg-123456789012" # Required
+    region: "us-west-2"             # Optional: override default_region for this SG
+    tags:                            # Optional: additional custom tags (NOT corporate mandatory)
+      team: "payments"
     ingress:                         # Inbound rules
       - protocol: "tcp"
         from_port: 443
@@ -100,15 +89,17 @@ Baselines are platform-managed. Don't add app-specific rules to them — create 
 
 ## What Gets Blocked
 
-- `0.0.0.0/0` ingress or egress
-- Ports 22 (SSH), 3389 (RDP) — use Session Manager
-- Database ports open to wide CIDRs
-- Missing required tags
+- `0.0.0.0/0` ingress (egress allowed only for HTTPS/443)
+- Ports 23 (Telnet), 135 (RPC), 139 (NetBIOS), 445 (SMB)
+- Port ranges wider than 1000 ports
+- Database ports from wide CIDRs (warning)
+- SSH/RDP from CIDRs (warning) — use Session Manager
 - Duplicate rules
+- Unknown/misspelled YAML keys
 
 ## Validation
 
 Run locally before pushing:
 ```bash
-python scripts/validate.py accounts/<your-account-id>/security-groups.yaml
+python scripts/validate.py accounts/<your-account-id>
 ```
