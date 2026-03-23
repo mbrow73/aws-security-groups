@@ -53,3 +53,9 @@ variable "baseline_sg_mappings" {
   type        = map(string)
   default     = {}
 }
+
+variable "tags" {
+  description = "Tags to apply to all rule resources (corporate mandatory + platform)"
+  type        = map(string)
+  default     = {}
+}

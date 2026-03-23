@@ -99,4 +99,5 @@ module "security_group_rules" {
   security_group_mappings = local.security_group_mappings
   prefix_list_mappings    = var.prefix_list_mappings
   baseline_sg_mappings    = local.baseline_sg_mappings
+  tags                    = var.tags
 }

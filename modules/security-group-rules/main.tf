@@ -64,6 +64,8 @@ resource "aws_vpc_security_group_ingress_rule" "this" {
         ? var.security_group_id
         : null
   )
+
+  tags = var.tags
 }
 
 # --- Egress Rules ---
@@ -116,4 +118,6 @@ resource "aws_vpc_security_group_egress_rule" "this" {
         ? var.security_group_id
         : null
   )
+
+  tags = var.tags
 }
