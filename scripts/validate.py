@@ -226,7 +226,10 @@ class SecurityGroupValidator:
     KNOWN_SG_KEYS = {'description', 'ingress', 'egress', 'tags', 'region'}
     # Known keys within a rule definition
     KNOWN_RULE_KEYS = {'protocol', 'from_port', 'to_port', 'cidr_blocks', 'ipv6_cidr_blocks',
-                       'security_groups', 'prefix_list_ids', 'self', 'description'}
+                       'security_groups', 'prefix_list_ids', 'baseline_ref', 'self', 'description'}
+    
+    # Allowed baseline_ref values — only these baseline SGs can be referenced
+    ALLOWED_BASELINE_REFS = {'vpc-endpoints'}
     # Valid environments
     VALID_ENVIRONMENTS = {'prod', 'test', 'dev'}
 
@@ -415,6 +418,7 @@ class SecurityGroupValidator:
             self._safe_sort_tuple(rule.get('ipv6_cidr_blocks', [])),
             self._safe_sort_tuple(rule.get('security_groups', [])),
             self._safe_sort_tuple(rule.get('prefix_list_ids', [])),
+            rule.get('baseline_ref'),
             rule.get('self', False),
         )
 
@@ -658,6 +662,8 @@ class SecurityGroupValidator:
                 parts.append(f"ports {from_p}-{to_p}")
         
         sources = []
+        if rule.get('baseline_ref'):
+            sources.append(f"baseline:{rule['baseline_ref']}")
         for cidr in rule.get('cidr_blocks', []):
             sources.append(str(cidr))
         for cidr in rule.get('ipv6_cidr_blocks', []):
@@ -886,8 +892,42 @@ class SecurityGroupValidator:
         """Validate CIDR blocks, security groups, and prefix lists in rules"""
         context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
         
+        # Validate baseline_ref if present
+        if 'baseline_ref' in rule:
+            ref = rule['baseline_ref']
+            if not isinstance(ref, str):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ 'baseline_ref' in {sg_name} {rule_type}[{rule_index}] must be a string, got {type(ref).__name__}",
+                    rule='rule_baseline_ref_type',
+                    context=context
+                ))
+            elif ref not in self.ALLOWED_BASELINE_REFS:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ 'baseline_ref: {ref}' in {sg_name} {rule_type}[{rule_index}] is not allowed — permitted values: {', '.join(sorted(self.ALLOWED_BASELINE_REFS))}\n   → Only pre-approved baseline SGs can be referenced. Teams should create their own SGs for custom rules.",
+                    rule='rule_baseline_ref_not_allowed',
+                    context=context
+                ))
+            
+            # baseline_ref is mutually exclusive with security_groups and self
+            if rule.get('security_groups'):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ 'baseline_ref' and 'security_groups' are mutually exclusive in {sg_name} {rule_type}[{rule_index}] — use one or the other.",
+                    rule='rule_baseline_ref_conflict',
+                    context=context
+                ))
+            if rule.get('self'):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"❌ 'baseline_ref' and 'self' are mutually exclusive in {sg_name} {rule_type}[{rule_index}] — use one or the other.",
+                    rule='rule_baseline_ref_conflict',
+                    context=context
+                ))
+        
         # Check for at least one source/destination
-        source_fields = ['cidr_blocks', 'ipv6_cidr_blocks', 'security_groups', 'self', 'prefix_list_ids']
+        source_fields = ['cidr_blocks', 'ipv6_cidr_blocks', 'security_groups', 'self', 'prefix_list_ids', 'baseline_ref']
         has_source = any(field in rule for field in source_fields)
         
         if not has_source:

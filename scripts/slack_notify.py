@@ -91,7 +91,9 @@ def format_rule(direction: str, rule: dict) -> str:
 
     # Source/destination
     source = ""
-    if rule.get("cidr_blocks"):
+    if rule.get("baseline_ref"):
+        source = f"\U0001f3d7\ufe0f baseline:{rule['baseline_ref']}"  # 🏗️
+    elif rule.get("cidr_blocks"):
         source = ", ".join(rule["cidr_blocks"])
     elif rule.get("security_groups"):
         sgs = rule["security_groups"]

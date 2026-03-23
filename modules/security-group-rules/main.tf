@@ -48,15 +48,21 @@ resource "aws_vpc_security_group_ingress_rule" "this" {
   )
 
   referenced_security_group_id = (
-    var.security_group_config.ingress[count.index].security_groups != null
+    var.security_group_config.ingress[count.index].baseline_ref != null
     ? lookup(
-        var.security_group_mappings,
-        var.security_group_config.ingress[count.index].security_groups[0],
-        var.security_group_config.ingress[count.index].security_groups[0]
+        var.baseline_sg_mappings,
+        var.security_group_config.ingress[count.index].baseline_ref,
+        null
       )
-    : var.security_group_config.ingress[count.index].self == true
-      ? var.security_group_id
-      : null
+    : var.security_group_config.ingress[count.index].security_groups != null
+      ? lookup(
+          var.security_group_mappings,
+          var.security_group_config.ingress[count.index].security_groups[0],
+          var.security_group_config.ingress[count.index].security_groups[0]
+        )
+      : var.security_group_config.ingress[count.index].self == true
+        ? var.security_group_id
+        : null
   )
 }
 
@@ -94,14 +100,20 @@ resource "aws_vpc_security_group_egress_rule" "this" {
   )
 
   referenced_security_group_id = (
-    var.security_group_config.egress[count.index].security_groups != null
+    var.security_group_config.egress[count.index].baseline_ref != null
     ? lookup(
-        var.security_group_mappings,
-        var.security_group_config.egress[count.index].security_groups[0],
-        var.security_group_config.egress[count.index].security_groups[0]
+        var.baseline_sg_mappings,
+        var.security_group_config.egress[count.index].baseline_ref,
+        null
       )
-    : var.security_group_config.egress[count.index].self == true
-      ? var.security_group_id
-      : null
+    : var.security_group_config.egress[count.index].security_groups != null
+      ? lookup(
+          var.security_group_mappings,
+          var.security_group_config.egress[count.index].security_groups[0],
+          var.security_group_config.egress[count.index].security_groups[0]
+        )
+      : var.security_group_config.egress[count.index].self == true
+        ? var.security_group_id
+        : null
   )
 }

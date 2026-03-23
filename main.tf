@@ -106,6 +106,25 @@ variable "prefix_list_mappings" {
 }
 
 # ---------------------------------------------------------------------------
+# Baseline Ref Allowlist
+# Only these baseline SG names can be referenced via baseline_ref in YAML.
+# Expanding this list is a deliberate security decision.
+# ---------------------------------------------------------------------------
+
+locals {
+  # Scan all SGs for baseline_ref usage and collect unique refs
+  baseline_refs_used = distinct(flatten([
+    for sg_name, sg in local.security_groups : concat(
+      [for rule in lookup(sg, "ingress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null],
+      [for rule in lookup(sg, "egress", [])  : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
+    )
+  ]))
+
+  # Allowlist — only these baseline refs are permitted
+  baseline_ref_allowlist = ["vpc-endpoints"]
+}
+
+# ---------------------------------------------------------------------------
 # Region Module Calls — one per supported region
 # ---------------------------------------------------------------------------
 
@@ -117,10 +136,11 @@ module "us_east_1" {
     aws = aws.us-east-1
   }
 
-  security_groups      = lookup(local.sgs_by_region, "us-east-1", {})
-  account_id           = local.account_id
-  tags                 = local.common_tags
-  prefix_list_mappings = var.prefix_list_mappings
+  security_groups        = lookup(local.sgs_by_region, "us-east-1", {})
+  account_id             = local.account_id
+  tags                   = local.common_tags
+  prefix_list_mappings   = var.prefix_list_mappings
+  baseline_ref_allowlist = local.baseline_ref_allowlist
 }
 
 module "us_west_2" {
@@ -131,10 +151,11 @@ module "us_west_2" {
     aws = aws.us-west-2
   }
 
-  security_groups      = lookup(local.sgs_by_region, "us-west-2", {})
-  account_id           = local.account_id
-  tags                 = local.common_tags
-  prefix_list_mappings = var.prefix_list_mappings
+  security_groups        = lookup(local.sgs_by_region, "us-west-2", {})
+  account_id             = local.account_id
+  tags                   = local.common_tags
+  prefix_list_mappings   = var.prefix_list_mappings
+  baseline_ref_allowlist = local.baseline_ref_allowlist
 }
 
 # ---------------------------------------------------------------------------

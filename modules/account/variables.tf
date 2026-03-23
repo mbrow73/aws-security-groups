@@ -19,3 +19,9 @@ variable "prefix_list_mappings" {
   type        = map(string)
   default     = {}
 }
+
+variable "baseline_ref_allowlist" {
+  description = "List of allowed baseline_ref names that can be referenced (e.g. vpc-endpoints)"
+  type        = list(string)
+  default     = []
+}
