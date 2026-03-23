@@ -60,12 +60,34 @@ locals {
     for name, sg in data.aws_security_group.baseline :
     name => sg.id
   }
+
+  # Prefix list name→ID mapping (auto-discovered + static overrides)
+  discovered_prefix_list_mappings = {
+    for name, pl in data.aws_ec2_managed_prefix_list.known :
+    name => pl.id
+  }
+
+  # Merge: static overrides win over auto-discovered
+  all_prefix_list_mappings = merge(local.discovered_prefix_list_mappings, var.prefix_list_mappings)
 }
 
 # ---------------------------------------------------------------------------
 # Baseline SG Lookups — discover deployed baseline SGs by tag
 # Only looks up baseline refs that are in the allowlist
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Prefix List Lookups — discover managed prefix lists by name
+# ---------------------------------------------------------------------------
+
+data "aws_ec2_managed_prefix_list" "known" {
+  for_each = toset(var.known_prefix_list_names)
+
+  filter {
+    name   = "prefix-list-name"
+    values = [each.value]
+  }
+}
 
 data "aws_security_group" "baseline" {
   for_each = toset(var.baseline_ref_allowlist)
@@ -97,7 +119,7 @@ module "security_group_rules" {
   security_group_id       = aws_security_group.this[each.key].id
   security_group_config   = merge(each.value, { name = each.key })
   security_group_mappings = local.security_group_mappings
-  prefix_list_mappings    = var.prefix_list_mappings
+  prefix_list_mappings    = local.all_prefix_list_mappings
   baseline_sg_mappings    = local.baseline_sg_mappings
   tags                    = var.tags
 }

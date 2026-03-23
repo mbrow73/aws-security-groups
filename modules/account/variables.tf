@@ -15,9 +15,15 @@ variable "tags" {
 }
 
 variable "prefix_list_mappings" {
-  description = "Map of prefix list names to IDs"
+  description = "Map of prefix list names to IDs (static overrides — prefer known_prefix_list_names for auto-lookup)"
   type        = map(string)
   default     = {}
+}
+
+variable "known_prefix_list_names" {
+  description = "List of prefix list names to auto-discover by AWS name (e.g. corporate-networks)"
+  type        = list(string)
+  default     = []
 }
 
 variable "baseline_ref_allowlist" {

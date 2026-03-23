@@ -122,6 +122,10 @@ locals {
 
   # Allowlist — only these baseline refs are permitted
   baseline_ref_allowlist = ["vpc-endpoints"]
+
+  # Known prefix list names — auto-discovered by AWS name in each region
+  # These are created by the baseline module (AFT) and referenced by name in YAML
+  known_prefix_list_names = yamldecode(file("${path.root}/known-prefix-lists.yaml")).known_prefix_lists
 }
 
 # ---------------------------------------------------------------------------
@@ -136,11 +140,12 @@ module "us_east_1" {
     aws = aws.us-east-1
   }
 
-  security_groups        = lookup(local.sgs_by_region, "us-east-1", {})
-  account_id             = local.account_id
-  tags                   = local.common_tags
-  prefix_list_mappings   = var.prefix_list_mappings
-  baseline_ref_allowlist = local.baseline_ref_allowlist
+  security_groups          = lookup(local.sgs_by_region, "us-east-1", {})
+  account_id               = local.account_id
+  tags                     = local.common_tags
+  prefix_list_mappings     = var.prefix_list_mappings
+  known_prefix_list_names  = local.known_prefix_list_names
+  baseline_ref_allowlist   = local.baseline_ref_allowlist
 }
 
 module "us_west_2" {
@@ -151,11 +156,12 @@ module "us_west_2" {
     aws = aws.us-west-2
   }
 
-  security_groups        = lookup(local.sgs_by_region, "us-west-2", {})
-  account_id             = local.account_id
-  tags                   = local.common_tags
-  prefix_list_mappings   = var.prefix_list_mappings
-  baseline_ref_allowlist = local.baseline_ref_allowlist
+  security_groups          = lookup(local.sgs_by_region, "us-west-2", {})
+  account_id               = local.account_id
+  tags                     = local.common_tags
+  prefix_list_mappings     = var.prefix_list_mappings
+  known_prefix_list_names  = local.known_prefix_list_names
+  baseline_ref_allowlist   = local.baseline_ref_allowlist
 }
 
 # ---------------------------------------------------------------------------
