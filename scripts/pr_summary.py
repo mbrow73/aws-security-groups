@@ -56,7 +56,9 @@ def get_base_yaml(account_id: str, base_ref: str) -> dict:
 
 def format_source(rule: dict) -> str:
     """Format the source/destination of a rule with icons."""
-    if rule.get("cidr_blocks"):
+    if rule.get("baseline_ref"):
+        return f"🏗️ `baseline:{rule['baseline_ref']}`"
+    elif rule.get("cidr_blocks"):
         return ", ".join(f"`{c}`" for c in rule["cidr_blocks"])
     elif rule.get("security_groups"):
         return ", ".join(f"🔗 `{sg}`" for sg in rule["security_groups"])
@@ -77,7 +79,7 @@ def format_port(rule: dict) -> str:
 def rules_equal(a: dict, b: dict) -> bool:
     """Check if two rules are functionally identical."""
     keys = ["protocol", "from_port", "to_port", "cidr_blocks",
-            "security_groups", "prefix_list_ids", "description"]
+            "security_groups", "prefix_list_ids", "baseline_ref", "description"]
     for k in keys:
         if a.get(k) != b.get(k):
             return False

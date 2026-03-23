@@ -38,6 +38,11 @@ security_groups:
         to_port: 443
         prefix_list_ids: ["corporate-networks"]
         description: "On-prem services via TGW"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "ECR, S3, STS, CloudWatch via VPC endpoints"
       - protocol: "udp"
         from_port: 53
         to_port: 53

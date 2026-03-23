@@ -54,6 +54,36 @@ locals {
     for name, sg in aws_security_group.this :
     name => sg.id
   }
+
+  # Baseline SG name→ID mapping (looked up by tag)
+  baseline_sg_mappings = {
+    for name, sg in data.aws_security_group.baseline :
+    name => sg.id
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Baseline SG Lookups — discover deployed baseline SGs by tag
+# Only looks up baseline refs that are in the allowlist
+# ---------------------------------------------------------------------------
+
+data "aws_security_group" "baseline" {
+  for_each = toset(var.baseline_ref_allowlist)
+
+  filter {
+    name   = "tag:Name"
+    values = ["baseline-${each.value}"]
+  }
+
+  filter {
+    name   = "tag:Type"
+    values = ["baseline"]
+  }
+
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.discovered.id]
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -64,8 +94,9 @@ module "security_group_rules" {
   for_each = var.security_groups
   source   = "../security-group-rules"
 
-  security_group_id      = aws_security_group.this[each.key].id
-  security_group_config  = merge(each.value, { name = each.key })
+  security_group_id       = aws_security_group.this[each.key].id
+  security_group_config   = merge(each.value, { name = each.key })
   security_group_mappings = local.security_group_mappings
-  prefix_list_mappings   = var.prefix_list_mappings
+  prefix_list_mappings    = var.prefix_list_mappings
+  baseline_sg_mappings    = local.baseline_sg_mappings
 }
