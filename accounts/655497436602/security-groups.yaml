@@ -1,0 +1,260 @@
+account_id: "655497436602"
+environment: "prod"
+carid: "600001725"
+default_region: "us-east-1"
+
+# Payments Team - Workload Security Groups
+#
+# Architecture mirrors the standard app template tiers:
+#   Frontend → Compute → Data → Shared Services
+#
+# Key differences from the original template:
+#   - No ALL/ALL self-references (zero-trust between peers)
+#   - No wide port ranges (specific app ports only)
+#   - No GitHub CIDR → database direct (CI runners in compute tier)
+#   - No Citrix/CAMPS → data tier on TCP ALL (bastion/proxy pattern)
+#   - VPC endpoint egress uses baseline_ref (SG chaining, not 0.0.0.0/0)
+#   - Baseline infra (EKS, NLBs, Istio, VPCe) deployed via AFT - not here
+#   - Cross-SG references enforce explicit service-to-service connectivity
+
+security_groups:
+
+  # ── Compute Tier ──────────────────────────────────────────────────
+  # Application workloads running on EKS. Each service gets its own SG
+  # with only the ports and targets it actually needs.
+
+  payments-api:
+    description: "Payments API - primary request handler (EKS pods)"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        security_groups: ["payments-internal-alb"]
+        description: "HTTPS from internal ALB"
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["monitoring-collector"]
+        description: "Prometheus metrics scraping"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-rds"]
+        description: "PostgreSQL - payments database"
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["payments-cache"]
+        description: "Redis - session and rate-limit cache"
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["payments-msk"]
+        description: "Kafka - publish payment events"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "AWS services via VPC endpoints (ECR, STS, KMS)"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["corporate-networks"]
+        description: "On-prem payment gateway via TGW"
+
+  order-processor:
+    description: "Order processing service - async order fulfillment (EKS pods)"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        security_groups: ["payments-internal-alb"]
+        description: "HTTPS from internal ALB"
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["monitoring-collector"]
+        description: "Prometheus metrics scraping"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-rds"]
+        description: "PostgreSQL - read replica queries"
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["payments-msk"]
+        description: "Kafka - consume and produce order events"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "AWS services via VPC endpoints (S3, SQS, CloudWatch)"
+
+  notification-service:
+    description: "Customer notification service - email, SMS, push (EKS pods)"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        security_groups: ["payments-internal-alb"]
+        description: "HTTPS from internal ALB"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "SES, SNS, SQS via VPC endpoints"
+
+  ci-runner:
+    description: "CI/CD runner for DB migrations and deployments (EKS pods)"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-rds"]
+        description: "Liquibase DB migrations (replaces GitHub CIDR direct access)"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "ECR image pull, S3 artifact fetch"
+
+  # ── Frontend Tier ─────────────────────────────────────────────────
+  # Internal ALB fronting the compute tier. Baseline NLBs and Istio
+  # gateways handle external/intranet ingress (deployed via AFT).
+
+  payments-internal-alb:
+    description: "Internal ALB - routes to payments compute services"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["corporate-networks"]
+        description: "HTTPS from corporate networks"
+    egress:
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        security_groups: ["payments-api"]
+        description: "Route to payments API"
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        security_groups: ["order-processor"]
+        description: "Route to order processor"
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        security_groups: ["notification-service"]
+        description: "Route to notification service"
+
+  # ── Data Tier ─────────────────────────────────────────────────────
+  # Databases, caches, and event streams. Ingress ONLY from specific
+  # compute services - no broad tier-to-tier access.
+
+  payments-rds:
+    description: "Payments PostgreSQL RDS - primary + read replicas"
+    ingress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-api"]
+        description: "From payments API (read/write)"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["order-processor"]
+        description: "From order processor (read replica)"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["ci-runner"]
+        description: "From CI runner (Liquibase migrations)"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-webhook-lambda"]
+        description: "From webhook Lambda (write payment events)"
+
+  payments-cache:
+    description: "Payments Redis ElastiCache - session store and rate limiting"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        security_groups: ["payments-api"]
+        description: "From payments API only"
+
+  payments-msk:
+    description: "Order events MSK/Kafka - event streaming backbone"
+    ingress:
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["payments-api"]
+        description: "From payments API (producer)"
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["order-processor"]
+        description: "From order processor (consumer/producer)"
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["report-generator-lambda"]
+        description: "From reporting Lambda (consumer)"
+
+  # ── Lambda ────────────────────────────────────────────────────────
+  # Serverless functions in VPC for data plane access.
+
+  payments-webhook-lambda:
+    description: "Stripe webhook handler - payment event ingestion"
+    egress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["payments-rds"]
+        description: "Write payment events to database"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "KMS for payload decryption, CloudWatch for logging"
+
+  report-generator-lambda:
+    description: "Scheduled report generation - consumes Kafka, writes to S3"
+    egress:
+      - protocol: "tcp"
+        from_port: 9092
+        to_port: 9092
+        security_groups: ["payments-msk"]
+        description: "Consume order events from Kafka"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "S3 for report storage, CloudWatch for logging"
+
+  # ── Observability ─────────────────────────────────────────────────
+
+  monitoring-collector:
+    description: "Prometheus collector - scrapes compute tier metrics"
+    egress:
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["payments-api"]
+        description: "Scrape payments API"
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        security_groups: ["order-processor"]
+        description: "Scrape order processor"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "CloudWatch metrics push via VPC endpoint"
