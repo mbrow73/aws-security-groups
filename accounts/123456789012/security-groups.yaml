@@ -1,0 +1,70 @@
+account_id: "123456789012"
+environment: "dev"
+carid: "600001725"
+default_region: "us-east-1"
+
+tags:
+  CostCenter: "netsec-poc"
+  Owner: "cloud-platform"
+
+security_groups:
+
+  app-api:
+    description: "Test app API SG for self-service framework validation"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        cidr_blocks: ["10.200.0.0/16"]
+        description: "API traffic from internal test range"
+
+      - protocol: "tcp"
+        from_port: 9090
+        to_port: 9090
+        self: true
+        description: "Self-reference for local health/sidecar traffic"
+
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["shared-onprem-networks"]
+        description: "HTTPS to on-prem via shared prefix list"
+
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        baseline_ref: "vpc-endpoints"
+        description: "AWS service access via baseline VPC endpoints SG"
+
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["app-db"]
+        description: "Postgres to app-db SG"
+
+  app-db:
+    description: "Test database SG for framework validation"
+    ingress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["app-api"]
+        description: "Postgres from app-api"
+
+  west-cache:
+    region: "us-west-2"
+    description: "Test west-region cache SG for multi-region validation"
+    ingress:
+      - protocol: "tcp"
+        from_port: 6379
+        to_port: 6379
+        cidr_blocks: ["10.210.0.0/16"]
+        description: "Redis from west internal test range"
+
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["shared-onprem-networks"]
+        description: "HTTPS to on-prem via shared prefix list in us-west-2"
