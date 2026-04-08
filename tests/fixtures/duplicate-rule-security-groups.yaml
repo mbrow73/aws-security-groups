@@ -1,0 +1,17 @@
+account_id: "123456789012"
+environment: "dev"
+carid: "600001725"
+security_groups:
+  dupe-api:
+    description: "Duplicate rule fixture"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/24"]
+        description: "First"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/24"]
+        description: "Duplicate"
