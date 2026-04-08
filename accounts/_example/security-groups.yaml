@@ -36,7 +36,7 @@ security_groups:
       - protocol: "tcp"
         from_port: 443
         to_port: 443
-        prefix_list_ids: ["corporate-networks"]
+        prefix_list_ids: ["shared-onprem-networks"]
         description: "On-prem services via TGW"
       - protocol: "tcp"
         from_port: 443

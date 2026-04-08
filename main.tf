@@ -126,6 +126,18 @@ locals {
   # Known prefix list names — auto-discovered by AWS name in each region
   # These are created by the baseline module (AFT) and referenced by name in YAML
   known_prefix_list_names = yamldecode(file("${path.root}/known-prefix-lists.yaml")).known_prefix_lists
+
+  # Shared repo-managed prefix lists — created by this repo in each account/region
+  shared_prefix_lists_config = fileexists("${path.root}/shared-prefix-lists.yaml") ? yamldecode(file("${path.root}/shared-prefix-lists.yaml")) : { shared_prefix_lists = {} }
+  shared_prefix_lists = lookup(local.shared_prefix_lists_config, "shared_prefix_lists", {})
+
+  shared_prefix_lists_by_region = {
+    for r in distinct([for pl in values(local.shared_prefix_lists) : lookup(pl, "region", "us-east-1")]) :
+    r => {
+      for name, pl in local.shared_prefix_lists :
+      name => pl if lookup(pl, "region", "us-east-1") == r
+    }
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -146,6 +158,7 @@ module "us_east_1" {
   prefix_list_mappings     = var.prefix_list_mappings
   known_prefix_list_names  = local.known_prefix_list_names
   baseline_ref_allowlist   = local.baseline_ref_allowlist
+  shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-east-1", {})
 }
 
 module "us_west_2" {

@@ -7,3 +7,4 @@
 
 known_prefix_lists:
   - corporate-networks
+  # AWS/baseline-managed names only. Repo-managed shared prefix lists live in shared-prefix-lists.yaml.

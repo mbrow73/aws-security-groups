@@ -8,7 +8,8 @@
 #   2. Pass mapping to SG rule module so rules can reference SGs by name
 #
 # Baselines are deployed separately via terraform-aws-eks-baseline-sgs module.
-# This module handles team-requested custom security groups only.
+# This module handles team-requested custom security groups plus repo-managed
+# shared prefix lists.
 
 terraform {
   required_version = ">= 1.6"
@@ -29,7 +30,7 @@ data "aws_vpc" "discovered" {
 }
 
 # ---------------------------------------------------------------------------
-# Step 1: Create SG shells to establish name→ID mappings
+# Step 1: Create SG shells and shared prefix lists for this region
 # ---------------------------------------------------------------------------
 
 resource "aws_security_group" "this" {
@@ -48,7 +49,47 @@ resource "aws_security_group" "this" {
   }
 }
 
-# Name→ID mapping for cross-SG references
+resource "aws_ec2_managed_prefix_list" "shared" {
+  for_each = var.shared_prefix_lists
+
+  name           = each.key
+  address_family = lookup(each.value, "address_family", "IPv4")
+  max_entries    = lookup(each.value, "max_entries", length(lookup(each.value, "entries", [])))
+
+  tags = merge(var.tags, lookup(each.value, "tags", {}), {
+    Name = each.key
+    Type = "shared-prefix-list"
+  })
+}
+
+locals {
+  shared_prefix_list_entries = merge(
+    {},
+    [
+      for pl_name, pl in var.shared_prefix_lists : {
+        for idx, entry in lookup(pl, "entries", []) :
+        "${pl_name}:${idx}" => {
+          prefix_list_name = pl_name
+          cidr             = entry.cidr
+          description      = lookup(entry, "description", null)
+        }
+      }
+    ]...
+  )
+}
+
+resource "aws_ec2_managed_prefix_list_entry" "shared" {
+  for_each = local.shared_prefix_list_entries
+
+  cidr           = each.value.cidr
+  description    = each.value.description
+  prefix_list_id = aws_ec2_managed_prefix_list.shared[each.value.prefix_list_name].id
+}
+
+# ---------------------------------------------------------------------------
+# Name→ID mappings and reference resolution
+# ---------------------------------------------------------------------------
+
 locals {
   security_group_mappings = {
     for name, sg in aws_security_group.this :
@@ -59,7 +100,7 @@ locals {
   baseline_refs_used = distinct(flatten([
     for sg_name, sg in var.security_groups : concat(
       [for rule in lookup(sg, "ingress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null],
-      [for rule in lookup(sg, "egress", [])  : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
+      [for rule in lookup(sg, "egress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
     )
   ]))
 
@@ -67,7 +108,7 @@ locals {
   prefix_list_refs_used = distinct(flatten([
     for sg_name, sg in var.security_groups : concat(
       flatten([for rule in lookup(sg, "ingress", []) : lookup(rule, "prefix_list_ids", [])]),
-      flatten([for rule in lookup(sg, "egress", [])  : lookup(rule, "prefix_list_ids", [])])
+      flatten([for rule in lookup(sg, "egress", []) : lookup(rule, "prefix_list_ids", [])])
     )
   ]))
 
@@ -77,35 +118,37 @@ locals {
     if contains(var.baseline_ref_allowlist, ref)
   ])
 
-  # Only auto-discover prefix lists that are both known and actually referenced.
+  # Only auto-discover baseline/known prefix lists that are both known and actually referenced.
   prefix_lists_to_lookup = toset([
     for name in local.prefix_list_refs_used : name
     if contains(var.known_prefix_list_names, name)
   ])
 
-  # Baseline SG name→ID mapping (looked up by tag)
   baseline_sg_mappings = {
     for name, sg in data.aws_security_group.baseline :
     name => sg.id
   }
 
-  # Prefix list name→ID mapping (auto-discovered + static overrides)
+  shared_prefix_list_mappings = {
+    for name, pl in aws_ec2_managed_prefix_list.shared :
+    name => pl.id
+  }
+
   discovered_prefix_list_mappings = {
     for name, pl in data.aws_ec2_managed_prefix_list.known :
     name => pl.id
   }
 
-  # Merge: static overrides win over auto-discovered
-  all_prefix_list_mappings = merge(local.discovered_prefix_list_mappings, var.prefix_list_mappings)
+  # Merge order: repo-created shared lists > static overrides > auto-discovered baseline lists
+  all_prefix_list_mappings = merge(
+    local.discovered_prefix_list_mappings,
+    var.prefix_list_mappings,
+    local.shared_prefix_list_mappings,
+  )
 }
 
 # ---------------------------------------------------------------------------
-# Baseline SG Lookups — discover deployed baseline SGs by tag
-# Only looks up baseline refs that are in the allowlist
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Prefix List Lookups — discover managed prefix lists by name
+# External lookups — only when actually referenced
 # ---------------------------------------------------------------------------
 
 data "aws_ec2_managed_prefix_list" "known" {

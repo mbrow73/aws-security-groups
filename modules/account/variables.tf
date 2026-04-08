@@ -31,3 +31,9 @@ variable "baseline_ref_allowlist" {
   type        = list(string)
   default     = []
 }
+
+variable "shared_prefix_lists" {
+  description = "Map of shared repo-managed prefix lists to create in this account/region"
+  type        = any
+  default     = {}
+}
