@@ -55,6 +55,34 @@ locals {
     name => sg.id
   }
 
+  # Baseline refs actually used by this region's SG rules.
+  baseline_refs_used = distinct(flatten([
+    for sg_name, sg in var.security_groups : concat(
+      [for rule in lookup(sg, "ingress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null],
+      [for rule in lookup(sg, "egress", [])  : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
+    )
+  ]))
+
+  # Prefix list names actually used by this region's SG rules.
+  prefix_list_refs_used = distinct(flatten([
+    for sg_name, sg in var.security_groups : concat(
+      flatten([for rule in lookup(sg, "ingress", []) : lookup(rule, "prefix_list_ids", [])]),
+      flatten([for rule in lookup(sg, "egress", [])  : lookup(rule, "prefix_list_ids", [])])
+    )
+  ]))
+
+  # Only look up baseline refs that are both allowed and actually referenced.
+  baseline_refs_to_lookup = toset([
+    for ref in local.baseline_refs_used : ref
+    if contains(var.baseline_ref_allowlist, ref)
+  ])
+
+  # Only auto-discover prefix lists that are both known and actually referenced.
+  prefix_lists_to_lookup = toset([
+    for name in local.prefix_list_refs_used : name
+    if contains(var.known_prefix_list_names, name)
+  ])
+
   # Baseline SG name→ID mapping (looked up by tag)
   baseline_sg_mappings = {
     for name, sg in data.aws_security_group.baseline :
@@ -81,7 +109,7 @@ locals {
 # ---------------------------------------------------------------------------
 
 data "aws_ec2_managed_prefix_list" "known" {
-  for_each = toset(var.known_prefix_list_names)
+  for_each = local.prefix_lists_to_lookup
 
   filter {
     name   = "prefix-list-name"
@@ -90,7 +118,7 @@ data "aws_ec2_managed_prefix_list" "known" {
 }
 
 data "aws_security_group" "baseline" {
-  for_each = toset(var.baseline_ref_allowlist)
+  for_each = local.baseline_refs_to_lookup
 
   filter {
     name   = "tag:Name"
