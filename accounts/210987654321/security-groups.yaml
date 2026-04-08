@@ -1,0 +1,33 @@
+account_id: "210987654321"
+environment: "dev"
+carid: "600001725"
+default_region: "us-east-1"
+
+security_groups:
+  app-db:
+    description: "Demo SG to showcase validation review findings"
+    ingress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "Broad internal DB access to trigger manual review"
+
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "Intentional duplicate to trigger blocking duplicate-rule check"
+
+    egress:
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "Broad non-HTTPS egress to trigger manual review"
+
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["shared-onprem-networks"]
+        description: "Named shared prefix list reference for context output"
