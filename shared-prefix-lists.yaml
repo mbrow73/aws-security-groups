@@ -7,8 +7,6 @@
 # Region support:
 # - Use `region:` for a single-region shared prefix list
 # - Use `regions:` for the same shared prefix list name in multiple regions
-#
-# Fill in the placeholder CIDRs below with the real on-prem ranges you want exposed.
 
 shared_prefix_lists:
   shared-onprem-networks:
@@ -16,12 +14,32 @@ shared_prefix_lists:
       - us-east-1
       - us-west-2
     address_family: IPv4
-    max_entries: 10
+    max_entries: 12
     tags:
       Owner: netsec
       Scope: shared
     entries:
-      - cidr: 10.255.0.0/16
-        description: PLACEHOLDER on-prem summary 1
-      - cidr: 10.254.0.0/16
-        description: PLACEHOLDER on-prem summary 2
+      - cidr: 10.0.0.0/11
+        description: On-prem summary 1
+      - cidr: 10.32.0.0/12
+        description: On-prem summary 2
+      - cidr: 10.48.0.0/13
+        description: On-prem summary 3
+      - cidr: 10.56.0.0/15
+        description: On-prem summary 4
+      - cidr: 10.60.0.0/14
+        description: On-prem summary 5
+      - cidr: 10.64.0.0/10
+        description: On-prem summary 6
+      - cidr: 10.128.0.0/9
+        description: On-prem summary 7
+      - cidr: 139.71.0.0/16
+        description: On-prem summary 8
+      - cidr: 148.171.0.0/16
+        description: On-prem summary 9
+      - cidr: 148.172.0.0/15
+        description: On-prem summary 10
+      - cidr: 172.16.0.0/12
+        description: On-prem summary 11
+      - cidr: 164.12.0.0/16
+        description: On-prem summary 12
