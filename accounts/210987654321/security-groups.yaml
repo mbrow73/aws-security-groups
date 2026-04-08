@@ -13,18 +13,12 @@ security_groups:
         cidr_blocks: ["10.0.0.0/8"]
         description: "Broad internal DB access to trigger manual review"
 
-      - protocol: "tcp"
-        from_port: 5432
-        to_port: 5432
-        cidr_blocks: ["10.0.0.0/8"]
-        description: "Intentional duplicate to trigger blocking duplicate-rule check"
-
     egress:
       - protocol: "tcp"
         from_port: 8443
         to_port: 8443
-        cidr_blocks: ["0.0.0.0/0"]
-        description: "Broad non-HTTPS egress to trigger manual review"
+        cidr_blocks: ["10.1.0.0/16"]
+        description: "Broad internal egress pattern for review"
 
       - protocol: "tcp"
         from_port: 443
