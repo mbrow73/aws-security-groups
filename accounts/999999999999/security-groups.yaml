@@ -1,0 +1,44 @@
+account_id: "999999999999"
+environment: "dev"
+carid: "abc123"
+default_region: "moon-west-1"
+
+security_groups:
+  bad_sg_name:
+    region: "us-central-1"
+    ingress:
+      - protocol: "ftp"
+        from_port: 70000
+        to_port: 10
+        cidr_blocks: "10.0.0.0/8"
+        description: "bad string cidr"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.0.0.0/8", "10.1.0.0/16"]
+        description: "multiple cidrs one rule"
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.0.0.0/8", "10.1.0.0/16"]
+        description: "duplicate rule"
+    egress:
+      - protocol: "tcp"
+        from_port: 22
+        to_port: 22
+        cidr_blocks: ["0.0.0.0/0"]
+        description: "blocked and open"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["does-not-exist"]
+        description: "bad prefix ref"
+
+  baseline-test:
+    description: "Reserved prefix and missing egress warning"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8080
+        to_port: 8080
+        baseline_ref: 123
+        description: "bad baseline type"
