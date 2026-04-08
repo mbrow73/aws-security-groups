@@ -219,6 +219,7 @@ class SecurityGroupValidator:
         self._validate_regions(data, summary)
         self._validate_security_groups(data, summary)
         self._validate_naming_conventions(data, summary)
+        self._validate_shared_prefix_lists(summary)
         self._validate_prefix_list_references(data, summary)
         self._validate_unicode_characters(data, summary)
         
@@ -1228,6 +1229,236 @@ class SecurityGroupValidator:
                             for j, cidr in enumerate(rule[cidr_field]):
                                 if isinstance(cidr, str):
                                     check_ascii(cidr, f"security_group.{sg_name}.{rule_type}[{i}].{cidr_field}[{j}]")
+
+    def _validate_shared_prefix_lists(self, summary: ValidationSummary):
+        """Validate shared prefix list definitions in shared-prefix-lists.yaml"""
+        shared_path = self.repo_root / 'shared-prefix-lists.yaml'
+        if not shared_path.exists():
+            return
+
+        try:
+            with open(shared_path, 'r') as f:
+                data = yaml.safe_load(f) or {}
+        except yaml.YAMLError as e:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Invalid YAML syntax in shared-prefix-lists.yaml: {e}",
+                rule='shared_prefix_lists_yaml_syntax'
+            ))
+            return
+        except Exception as e:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Failed to read shared-prefix-lists.yaml: {e}",
+                rule='shared_prefix_lists_file_read'
+            ))
+            return
+
+        if not isinstance(data, dict):
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"shared-prefix-lists.yaml top-level must be a mapping/object, got {type(data).__name__}",
+                rule='shared_prefix_lists_schema_type'
+            ))
+            return
+
+        shared = data.get('shared_prefix_lists')
+        if shared is None:
+            summary.add_result(ValidationResult(
+                level='error',
+                message="shared-prefix-lists.yaml must define top-level key 'shared_prefix_lists'",
+                rule='shared_prefix_lists_required_key'
+            ))
+            return
+
+        if not isinstance(shared, dict):
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"'shared_prefix_lists' must be a mapping/object, got {type(shared).__name__}",
+                rule='shared_prefix_lists_schema_type'
+            ))
+            return
+
+        allowed_regions = set(self.guardrails.get('validation', {}).get('allowed_regions', []))
+        reserved_prefixes = ('pl-', 'aws:', 'baseline-')
+
+        for name, cfg in shared.items():
+            context = f"shared_prefix_list.{name}"
+
+            if any(name.startswith(prefix) for prefix in reserved_prefixes):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' uses reserved prefix ({', '.join(reserved_prefixes)})",
+                    rule='shared_prefix_list_name_collision',
+                    context=context
+                ))
+
+            if not isinstance(cfg, dict):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' must be an object, got {type(cfg).__name__}",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+                continue
+
+            has_region = 'region' in cfg
+            has_regions = 'regions' in cfg
+            if has_region and has_regions:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' must use either 'region' or 'regions', not both",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+
+            if has_region:
+                region = cfg.get('region')
+                if not isinstance(region, str):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' field 'region' must be a string",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=context
+                    ))
+                elif allowed_regions and region not in allowed_regions:
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' uses disallowed region '{region}'",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=context
+                    ))
+            elif has_regions:
+                regions = cfg.get('regions')
+                if not isinstance(regions, list) or len(regions) == 0:
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' field 'regions' must be a non-empty list",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=context
+                    ))
+                else:
+                    seen_regions = set()
+                    for idx, region in enumerate(regions):
+                        item_context = f"{context}.regions[{idx}]"
+                        if not isinstance(region, str):
+                            summary.add_result(ValidationResult(
+                                level='error',
+                                message=f"Shared prefix list '{name}' region entry at index {idx} must be a string",
+                                rule='shared_prefix_list_invalid_definition',
+                                context=item_context
+                            ))
+                            continue
+                        if region in seen_regions:
+                            summary.add_result(ValidationResult(
+                                level='error',
+                                message=f"Shared prefix list '{name}' contains duplicate region '{region}'",
+                                rule='shared_prefix_list_invalid_definition',
+                                context=item_context
+                            ))
+                        seen_regions.add(region)
+                        if allowed_regions and region not in allowed_regions:
+                            summary.add_result(ValidationResult(
+                                level='error',
+                                message=f"Shared prefix list '{name}' uses disallowed region '{region}'",
+                                rule='shared_prefix_list_invalid_definition',
+                                context=item_context
+                            ))
+            else:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' must define either 'region' or 'regions'",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+
+            if 'address_family' in cfg and cfg['address_family'] not in ['IPv4', 'IPv6']:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' address_family must be 'IPv4' or 'IPv6'",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+
+            entries = cfg.get('entries')
+            if not isinstance(entries, list) or len(entries) == 0:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' must define a non-empty 'entries' list",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+                continue
+
+            max_entries = cfg.get('max_entries')
+            if not isinstance(max_entries, int) or max_entries <= 0:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' max_entries must be a positive integer",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+            elif max_entries < len(entries):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' max_entries ({max_entries}) is smaller than number of entries ({len(entries)})",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+
+            seen_cidrs = set()
+            for idx, entry in enumerate(entries):
+                entry_context = f"{context}.entries[{idx}]"
+                if not isinstance(entry, dict):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' entry {idx} must be an object",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=entry_context
+                    ))
+                    continue
+                if 'cidr' not in entry:
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' entry {idx} is missing required field 'cidr'",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=entry_context
+                    ))
+                    continue
+                cidr = entry['cidr']
+                if not isinstance(cidr, str):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' entry {idx} cidr must be a string",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=entry_context
+                    ))
+                    continue
+                try:
+                    ipaddress.ip_network(cidr, strict=False)
+                except Exception as e:
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' entry {idx} has invalid CIDR '{cidr}': {e}",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=entry_context
+                    ))
+                    continue
+                if cidr in seen_cidrs:
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' contains duplicate CIDR '{cidr}'",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=entry_context
+                    ))
+                seen_cidrs.add(cidr)
+                if 'description' in entry and not isinstance(entry['description'], str):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' entry {idx} description must be a string",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=entry_context
+                    ))
 
     def _validate_prefix_list_references(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate that all referenced prefix lists are defined"""
