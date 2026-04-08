@@ -4,11 +4,17 @@
 # Example:
 #   prefix_list_ids: ["shared-onprem-networks"]
 #
+# Region support:
+# - Use `region:` for a single-region shared prefix list
+# - Use `regions:` for the same shared prefix list name in multiple regions
+#
 # Fill in the placeholder CIDRs below with the real on-prem ranges you want exposed.
 
 shared_prefix_lists:
   shared-onprem-networks:
-    region: us-east-1
+    regions:
+      - us-east-1
+      - us-west-2
     address_family: IPv4
     max_entries: 10
     tags:

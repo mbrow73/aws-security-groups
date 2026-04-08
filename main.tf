@@ -175,6 +175,7 @@ module "us_west_2" {
   prefix_list_mappings     = var.prefix_list_mappings
   known_prefix_list_names  = local.known_prefix_list_names
   baseline_ref_allowlist   = local.baseline_ref_allowlist
+  shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-west-2", {})
 }
 
 # ---------------------------------------------------------------------------
@@ -182,6 +183,18 @@ module "us_west_2" {
 # ---------------------------------------------------------------------------
 
 output "security_group_ids" {
+  description = "Map of SG name to SG ID for this account (all regions)"
+  value = merge(
+    length(module.us_east_1) > 0 ? module.us_east_1[0].security_group_ids : {},
+    length(module.us_west_2) > 0 ? module.us_west_2[0].security_group_ids : {},
+  )
+}
+
+output "account_id" {
+  description = "The account ID this workspace manages"
+  value       = local.account_id
+}
+ity_group_ids" {
   description = "Map of SG name to SG ID for this account (all regions)"
   value = merge(
     length(module.us_east_1) > 0 ? module.us_east_1[0].security_group_ids : {},
