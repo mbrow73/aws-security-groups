@@ -116,26 +116,40 @@ locals {
   baseline_refs_used = distinct(flatten([
     for sg_name, sg in local.security_groups : concat(
       [for rule in lookup(sg, "ingress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null],
-      [for rule in lookup(sg, "egress", [])  : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
+      [for rule in lookup(sg, "egress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
     )
   ]))
 
   # Allowlist — only these baseline refs are permitted
   baseline_ref_allowlist = ["vpc-endpoints"]
 
-  # Known prefix list names — auto-discovered by AWS name in each region
-  # These are created by the baseline module (AFT) and referenced by name in YAML
-  known_prefix_list_names = yamldecode(file("${path.root}/known-prefix-lists.yaml")).known_prefix_lists
-
   # Shared repo-managed prefix lists — created by this repo in each account/region
   shared_prefix_lists_config = fileexists("${path.root}/shared-prefix-lists.yaml") ? yamldecode(file("${path.root}/shared-prefix-lists.yaml")) : { shared_prefix_lists = {} }
   shared_prefix_lists = lookup(local.shared_prefix_lists_config, "shared_prefix_lists", {})
 
+  # Expand shared prefix lists into per-region instances while keeping the same reference name.
+  # Supports either:
+  #   region: us-east-1
+  # or
+  #   regions: [us-east-1, us-west-2]
+  shared_prefix_lists_expanded = merge(
+    {},
+    [
+      for name, pl in local.shared_prefix_lists : {
+        for region in lookup(pl, "regions", [lookup(pl, "region", "us-east-1")]) :
+        "${name}:${region}" => merge(pl, {
+          name    = name
+          _region = region
+        })
+      }
+    ]...
+  )
+
   shared_prefix_lists_by_region = {
-    for r in distinct([for pl in values(local.shared_prefix_lists) : lookup(pl, "region", "us-east-1")]) :
+    for r in distinct([for pl in values(local.shared_prefix_lists_expanded) : pl._region]) :
     r => {
-      for name, pl in local.shared_prefix_lists :
-      name => pl if lookup(pl, "region", "us-east-1") == r
+      for key, pl in local.shared_prefix_lists_expanded :
+      pl.name => pl if pl._region == r
     }
   }
 }
@@ -152,12 +166,12 @@ module "us_east_1" {
     aws = aws.us-east-1
   }
 
-  security_groups          = lookup(local.sgs_by_region, "us-east-1", {})
-  account_id               = local.account_id
-  tags                     = local.common_tags
-  prefix_list_mappings     = var.prefix_list_mappings
-  baseline_ref_allowlist   = local.baseline_ref_allowlist
-  shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-east-1", {})
+  security_groups        = lookup(local.sgs_by_region, "us-east-1", {})
+  account_id             = local.account_id
+  tags                   = local.common_tags
+  prefix_list_mappings   = var.prefix_list_mappings
+  baseline_ref_allowlist = local.baseline_ref_allowlist
+  shared_prefix_lists    = lookup(local.shared_prefix_lists_by_region, "us-east-1", {})
 }
 
 module "us_west_2" {
@@ -168,13 +182,12 @@ module "us_west_2" {
     aws = aws.us-west-2
   }
 
-  security_groups          = lookup(local.sgs_by_region, "us-west-2", {})
-  account_id               = local.account_id
-  tags                     = local.common_tags
-  prefix_list_mappings     = var.prefix_list_mappings
-  known_prefix_list_names  = local.known_prefix_list_names
-  baseline_ref_allowlist   = local.baseline_ref_allowlist
-  shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-west-2", {})
+  security_groups        = lookup(local.sgs_by_region, "us-west-2", {})
+  account_id             = local.account_id
+  tags                   = local.common_tags
+  prefix_list_mappings   = var.prefix_list_mappings
+  baseline_ref_allowlist = local.baseline_ref_allowlist
+  shared_prefix_lists    = lookup(local.shared_prefix_lists_by_region, "us-west-2", {})
 }
 
 # ---------------------------------------------------------------------------
@@ -182,18 +195,6 @@ module "us_west_2" {
 # ---------------------------------------------------------------------------
 
 output "security_group_ids" {
-  description = "Map of SG name to SG ID for this account (all regions)"
-  value = merge(
-    length(module.us_east_1) > 0 ? module.us_east_1[0].security_group_ids : {},
-    length(module.us_west_2) > 0 ? module.us_west_2[0].security_group_ids : {},
-  )
-}
-
-output "account_id" {
-  description = "The account ID this workspace manages"
-  value       = local.account_id
-}
-ity_group_ids" {
   description = "Map of SG name to SG ID for this account (all regions)"
   value = merge(
     length(module.us_east_1) > 0 ? module.us_east_1[0].security_group_ids : {},
