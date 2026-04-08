@@ -7,7 +7,6 @@ on:
       - 'accounts/**'
       - 'guardrails.yaml'
       - 'known-prefix-lists.yaml'
-      - 'shared-prefix-lists.yaml'
       - 'modules/**'
       - 'scripts/**'
 
@@ -40,16 +39,9 @@ jobs:
           echo "$CHANGED_FILES"
           
           ACCOUNTS=$(echo "$CHANGED_FILES" | grep -E '^accounts/[0-9]+/' | cut -d'/' -f2 | sort -u | tr '\n' ',' | sed 's/,$//')
-          SHARED_CHANGED=false
-          if echo "$CHANGED_FILES" | grep -qE '^(shared-prefix-lists.yaml|known-prefix-lists.yaml|guardrails.yaml|scripts/|modules/)'; then
-            SHARED_CHANGED=true
-          fi
-
+          
           if [ -n "$ACCOUNTS" ]; then
             echo "accounts=$ACCOUNTS" >> $GITHUB_OUTPUT
-            echo "has_accounts=true" >> $GITHUB_OUTPUT
-          elif [ "$SHARED_CHANGED" = true ]; then
-            echo "accounts=_example" >> $GITHUB_OUTPUT
             echo "has_accounts=true" >> $GITHUB_OUTPUT
           else
             echo "accounts=" >> $GITHUB_OUTPUT
