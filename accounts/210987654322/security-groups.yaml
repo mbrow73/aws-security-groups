@@ -1,0 +1,27 @@
+account_id: "210987654322"
+environment: "dev"
+carid: "600001725"
+default_region: "us-east-1"
+
+security_groups:
+  app-db:
+    description: "Demo SG to showcase blast-radius-aware review findings"
+    ingress:
+      - protocol: "tcp"
+        from_port: 5432
+        to_port: 5432
+        cidr_blocks: ["10.0.0.0/9"]
+        description: "Broad private DB ingress to trigger review"
+
+    egress:
+      - protocol: "tcp"
+        from_port: 3306
+        to_port: 3306
+        cidr_blocks: ["10.0.0.0/10"]
+        description: "Broad private DB egress to trigger review"
+
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["shared-onprem-networks"]
+        description: "Named shared prefix list reference for context output"

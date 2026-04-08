@@ -845,25 +845,32 @@ class SecurityGroupValidator:
                     context=context
                 ))
         
-        # Context-aware review finding: sensitive ingress from broad CIDR
+        # Context-aware review findings using blast-radius thresholds instead of exact-match CIDRs
         cidr_list = rule.get('cidr_blocks', [])
         if not isinstance(cidr_list, list):
             cidr_list = [cidr_list] if isinstance(cidr_list, str) else []
         sensitive_ports = {22: 'SSH', 3389: 'RDP', 3306: 'MySQL', 5432: 'PostgreSQL', 1433: 'MSSQL', 27017: 'MongoDB', 6379: 'Redis'}
-        broad_cidrs = {'10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'}
+        matched = [name for port, name in sensitive_ports.items() if from_port <= port <= to_port]
 
-        if rule_type == 'ingress' and cidr_list and any(c in broad_cidrs for c in cidr_list):
-            matched = [name for port, name in sensitive_ports.items() if from_port <= port <= to_port]
-            if matched:
-                summary.add_result(ValidationResult(
-                    level='warning',
-                    message=(
-                        f"Broad CIDR ingress to sensitive service(s) {', '.join(matched)} detected in {sg_name} {rule_type}[{rule_index}] — "
-                        f"manual review recommended due to wider-than-usual blast radius."
-                    ),
-                    rule='review_broad_sensitive_access',
-                    context=context
-                ))
+        if matched and cidr_list:
+            for cidr in cidr_list:
+                try:
+                    network = ipaddress.ip_network(cidr, strict=False)
+                except Exception:
+                    continue
+
+                if self._is_broad_private_network(network):
+                    direction = 'ingress' if rule_type == 'ingress' else 'egress'
+                    summary.add_result(ValidationResult(
+                        level='warning',
+                        message=(
+                            f"Broad private CIDR {cidr} on sensitive service(s) {', '.join(matched)} detected in {sg_name} {rule_type}[{rule_index}] — "
+                            f"manual review recommended due to wider-than-usual {direction} blast radius."
+                        ),
+                        rule='review_broad_sensitive_access',
+                        context=context
+                    ))
+                    break
 
     def _validate_rule_sources(self, sg_name: str, rule_type: str, rule_index: int, 
                              rule: Dict[str, Any], summary: ValidationSummary):
@@ -1086,6 +1093,19 @@ class SecurityGroupValidator:
                     context=context
                 ))
     
+    def _is_broad_private_network(self, network) -> bool:
+        """Return True when a private CIDR is broad enough to deserve manual review."""
+        if getattr(network, 'version', None) != 4 or not network.is_private:
+            return False
+
+        if network.subnet_of(ipaddress.ip_network('10.0.0.0/8')):
+            return network.prefixlen <= 12
+        if network.subnet_of(ipaddress.ip_network('172.16.0.0/12')):
+            return network.prefixlen <= 16
+        if network.subnet_of(ipaddress.ip_network('192.168.0.0/16')):
+            return network.prefixlen <= 20
+        return False
+
     def _validate_security_group_reference(self, sg_name: str, rule_type: str, rule_index: int, 
                                          sg_ref: str, summary: ValidationSummary):
         """Validate security group reference"""
