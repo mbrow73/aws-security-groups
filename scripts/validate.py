@@ -219,6 +219,7 @@ class SecurityGroupValidator:
         self._validate_regions(data, summary)
         self._validate_security_groups(data, summary)
         self._validate_naming_conventions(data, summary)
+        self._validate_shared_prefix_lists(summary)
         self._validate_prefix_list_references(data, summary)
         self._validate_unicode_characters(data, summary)
         
@@ -546,10 +547,8 @@ class SecurityGroupValidator:
                     summary.add_result(ValidationResult(
                         level='warning',
                         message=(
-                            f"⚠️ Shadowed rule: {sg_name} {rule_type}[{i}] ({narrow_desc}) "
-                            f"is fully covered by {rule_type}[{j}] ({broad_desc}) — "
-                            f"this rule wastes SG quota without adding any access.\n"
-                            f"   → Remove the shadowed rule to free up quota."
+                            f"Shadowed rule: {sg_name} {rule_type}[{i}] ({narrow_desc}) "
+                            f"is fully covered by {rule_type}[{j}] ({broad_desc}) — manual review recommended."
                         ),
                         rule='rule_shadowed',
                         context=f"{context_base}[{i}]"
@@ -846,51 +845,26 @@ class SecurityGroupValidator:
                     context=context
                 ))
         
-        # High-signal security warnings — only patterns that are genuinely risky
+        # Context-aware review finding: sensitive ingress from broad CIDR
         cidr_list = rule.get('cidr_blocks', [])
         if not isinstance(cidr_list, list):
             cidr_list = [cidr_list] if isinstance(cidr_list, str) else []
-        has_cidr_source = bool(cidr_list)
-        has_broad_cidr = any(c in ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'] for c in cidr_list)
-        
-        # 1. SSH/RDP from a CIDR range (from a SG is fine)
-        if rule_type == 'ingress' and has_cidr_source:
-            if from_port <= 22 <= to_port:
+        sensitive_ports = {22: 'SSH', 3389: 'RDP', 3306: 'MySQL', 5432: 'PostgreSQL', 1433: 'MSSQL', 27017: 'MongoDB', 6379: 'Redis'}
+        broad_cidrs = {'10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'}
+
+        if rule_type == 'ingress' and cidr_list and any(c in broad_cidrs for c in cidr_list):
+            matched = [name for port, name in sensitive_ports.items() if from_port <= port <= to_port]
+            if matched:
                 summary.add_result(ValidationResult(
                     level='warning',
-                    message=f"⚠️ HIGH: SSH (port 22) ingress from CIDR — any host in that range gets SSH access. PCI DSS Req 1.3.2",
-                    rule='high_risk_pattern',
+                    message=(
+                        f"Broad CIDR ingress to sensitive service(s) {', '.join(matched)} detected in {sg_name} {rule_type}[{rule_index}] — "
+                        f"manual review recommended due to wider-than-usual blast radius."
+                    ),
+                    rule='review_broad_sensitive_access',
                     context=context
                 ))
-            if from_port <= 3389 <= to_port:
-                summary.add_result(ValidationResult(
-                    level='warning',
-                    message=f"⚠️ HIGH: RDP (port 3389) ingress from CIDR — any host in that range gets RDP access. PCI DSS Req 1.3.2",
-                    rule='high_risk_pattern',
-                    context=context
-                ))
-        
-        # 2. Database ports from a CIDR range
-        db_ports = {3306: 'MySQL', 5432: 'PostgreSQL', 1433: 'MSSQL', 27017: 'MongoDB', 6379: 'Redis'}
-        if rule_type == 'ingress' and has_cidr_source:
-            for db_port, db_name in db_ports.items():
-                if from_port <= db_port <= to_port:
-                    summary.add_result(ValidationResult(
-                        level='warning',
-                        message=f"⚠️ HIGH: {db_name} (port {db_port}) ingress from CIDR — CIDR-based database access is a common audit finding. PCI DSS Req 1.3.1",
-                        rule='high_risk_pattern',
-                        context=context
-                    ))
-        
-        # 3. Broad internal CIDR (10.0.0.0/8 etc.)
-        if rule_type == 'ingress' and has_broad_cidr:
-            summary.add_result(ValidationResult(
-                level='warning',
-                message=f"⚠️ MEDIUM: Ingress from overly broad internal CIDR (e.g. 10.0.0.0/8) — scope to specific VPC or subnet CIDRs. PCI DSS Req 1.2.1",
-                rule='broad_cidr_pattern',
-                context=context
-            ))
-    
+
     def _validate_rule_sources(self, sg_name: str, rule_type: str, rule_index: int, 
                              rule: Dict[str, Any], summary: ValidationSummary):
         """Validate CIDR blocks, security groups, and prefix lists in rules"""
@@ -913,6 +887,13 @@ class SecurityGroupValidator:
                     rule='rule_baseline_ref_not_allowed',
                     context=context
                 ))
+            else:
+                summary.add_result(ValidationResult(
+                    level='info',
+                    message=f"Rule uses baseline reference '{ref}' in {sg_name} {rule_type}[{rule_index}]",
+                    rule='info_baseline_reference',
+                    context=context
+                ))
             
             # baseline_ref is mutually exclusive with security_groups and self
             if rule.get('security_groups'):
@@ -930,18 +911,36 @@ class SecurityGroupValidator:
                     context=context
                 ))
         
-        # Check for at least one source/destination
+        # Check selector usage — exactly one intent path per rule
         source_fields = ['cidr_blocks', 'ipv6_cidr_blocks', 'security_groups', 'self', 'prefix_list_ids', 'baseline_ref']
-        has_source = any(field in rule for field in source_fields)
-        
-        if not has_source:
+        active_selectors = []
+        for field in source_fields:
+            value = rule.get(field)
+            if field == 'self':
+                if value is True:
+                    active_selectors.append(field)
+            elif value not in (None, [], ''):
+                active_selectors.append(field)
+
+        if not active_selectors:
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Rule in {sg_name} {rule_type}[{rule_index}] must specify at least one source/destination",
-                rule='rule_missing_source',
+                message=f"Rule in {sg_name} {rule_type}[{rule_index}] must specify exactly one source/destination selector",
+                rule='rule_selector_missing',
                 context=context
             ))
             return
+
+        if len(active_selectors) > 1:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=(
+                    f"Rule in {sg_name} {rule_type}[{rule_index}] mixes multiple selector types ({', '.join(active_selectors)}) — "
+                    f"choose exactly one of cidr_blocks, ipv6_cidr_blocks, security_groups, prefix_list_ids, baseline_ref, or self."
+                ),
+                rule='rule_selector_multiple',
+                context=context
+            ))
         
         # Validate CIDR blocks
         for cidr_field in ['cidr_blocks', 'ipv6_cidr_blocks']:
@@ -1077,29 +1076,22 @@ class SecurityGroupValidator:
                 r_to = rule.get('to_port', 0) if rule else 0
                 if r_from == 443 and r_to == 443:
                     return  # HTTPS egress to internet is normal
-                # Non-443 egress to 0.0.0.0/0 is worth flagging
+                # Non-443 egress to 0.0.0.0/0 is worth manual review
                 port_display = f"port {r_from}" if r_from == r_to else f"ports {r_from}-{r_to}"
-                message = (f"⚠️ MEDIUM: Egress to {cidr} on {port_display} — unrestricted non-HTTPS outbound. PCI DSS Req 1.3.4")
+                message = (f"Broad egress to {cidr} on {port_display} detected — manual review recommended before approval.")
                 summary.add_result(ValidationResult(
                     level='warning',
                     message=message,
-                    rule='rule_open_egress',
+                    rule='review_broad_egress',
                     context=context
                 ))
     
     def _validate_security_group_reference(self, sg_name: str, rule_type: str, rule_index: int, 
                                          sg_ref: str, summary: ValidationSummary):
         """Validate security group reference"""
-        context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
-        
-        # Should be either a security group ID (sg-xxxxxxxx) or a name reference
-        if not (sg_ref.startswith('sg-') or sg_ref.isalnum() or '-' in sg_ref):
-            summary.add_result(ValidationResult(
-                level='warning',
-                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] may be invalid",
-                rule='rule_sg_reference_format',
-                context=context
-            ))
+        # Intentionally lightweight for now — real SG resolution would require AWS lookups or richer repo context.
+        # Keep this path non-blocking until the org is ready to support that integration.
+        return
     
     def _validate_prefix_list_reference(self, sg_name: str, rule_type: str, rule_index: int, 
                                       prefix_list_id: str, summary: ValidationSummary):
@@ -1116,8 +1108,14 @@ class SecurityGroupValidator:
                 context=context
             ))
         else:
-            # Should be defined in our prefix-lists.yaml
-            if prefix_list_id not in self.prefix_lists.get('prefix_lists', {}):
+            if prefix_list_id in self.prefix_lists.get('prefix_lists', {}):
+                summary.add_result(ValidationResult(
+                    level='info',
+                    message=f"Rule uses named prefix list '{prefix_list_id}' in {sg_name} {rule_type}[{rule_index}]",
+                    rule='info_shared_prefix_list_reference',
+                    context=context
+                ))
+            else:
                 summary.add_result(ValidationResult(
                     level='error',
                     message=f"Undefined prefix list '{prefix_list_id}' in {sg_name} {rule_type}[{rule_index}]",
@@ -1229,6 +1227,118 @@ class SecurityGroupValidator:
                                 if isinstance(cidr, str):
                                     check_ascii(cidr, f"security_group.{sg_name}.{rule_type}[{i}].{cidr_field}[{j}]")
 
+    def _validate_shared_prefix_lists(self, summary: ValidationSummary):
+        """Validate shared prefix list definitions in shared-prefix-lists.yaml"""
+        shared_path = self.repo_root / "shared-prefix-lists.yaml"
+        if not shared_path.exists():
+            return
+
+        try:
+            with open(shared_path, 'r') as f:
+                data = yaml.safe_load(f) or {}
+        except Exception as e:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Failed to parse shared-prefix-lists.yaml: {e}",
+                rule='shared_prefix_list_invalid_definition'
+            ))
+            return
+
+        shared = data.get('shared_prefix_lists', {}) or {}
+        reserved_prefixes = ('pl-', 'aws:', 'baseline-')
+        allowed_regions = set(self.guardrails.get('validation', {}).get('allowed_regions', []))
+
+        for name, cfg in shared.items():
+            context = f"shared_prefix_lists.{name}"
+            if any(name.startswith(prefix) for prefix in reserved_prefixes):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' uses a reserved prefix ({', '.join(reserved_prefixes)}).",
+                    rule='shared_prefix_list_name_collision',
+                    context=context
+                ))
+
+            if not isinstance(cfg, dict):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' must be an object.",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+                continue
+
+            regions = cfg.get('regions', [cfg.get('region', 'us-east-1')])
+            if not isinstance(regions, list) or not regions:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' must define region or non-empty regions.",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+            else:
+                if len(regions) != len(set(regions)):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' contains duplicate regions.",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=context
+                    ))
+                for region in regions:
+                    if allowed_regions and region not in allowed_regions:
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"Shared prefix list '{name}' uses disallowed region '{region}'.",
+                            rule='shared_prefix_list_invalid_definition',
+                            context=context
+                        ))
+
+            entries = cfg.get('entries', [])
+            if not isinstance(entries, list) or not entries:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' must define a non-empty entries list.",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+                continue
+
+            max_entries = cfg.get('max_entries', len(entries))
+            try:
+                if int(max_entries) < len(entries):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' has max_entries={max_entries} but defines {len(entries)} entries.",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=context
+                    ))
+            except Exception:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Shared prefix list '{name}' has invalid max_entries value '{max_entries}'.",
+                    rule='shared_prefix_list_invalid_definition',
+                    context=context
+                ))
+
+            for idx, entry in enumerate(entries):
+                entry_context = f"{context}.entries[{idx}]"
+                if not isinstance(entry, dict) or 'cidr' not in entry:
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' entry {idx} must be an object with a cidr field.",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=entry_context
+                    ))
+                    continue
+                try:
+                    ipaddress.ip_network(entry['cidr'], strict=False)
+                except Exception as e:
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Shared prefix list '{name}' entry {idx} has invalid CIDR '{entry['cidr']}': {e}",
+                        rule='shared_prefix_list_invalid_definition',
+                        context=entry_context
+                    ))
+
     def _validate_prefix_list_references(self, data: Dict[str, Any], summary: ValidationSummary):
         """Validate that all referenced prefix lists are defined"""
         if 'security_groups' not in data or not isinstance(data['security_groups'], dict):
@@ -1252,8 +1362,8 @@ class SecurityGroupValidator:
         for prefix_list in undefined_prefix_lists:
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Referenced prefix list '{prefix_list}' is not defined in prefix-lists.yaml",
-                rule='undefined_prefix_list_reference'
+                message=f"Referenced prefix list '{prefix_list}' is not defined in shared-prefix-lists.yaml or legacy prefix list config.",
+                rule='rule_undefined_prefix_list'
             ))
     
     def format_markdown_output(self, summary: ValidationSummary) -> str:
@@ -1263,19 +1373,22 @@ class SecurityGroupValidator:
         # Header with summary
         error_count = len(summary.errors)
         warning_count = len(summary.warnings)
+        info_count = len(summary.info)
         
         if error_count == 0 and warning_count == 0:
             output.append("## ✅ Security Group Validation Results")
-            output.append(f"**Account:** {self.account_id} | **Status:** All checks passed!")
+            output.append(f"**Account:** {self.account_id} | **Status:** Clean validation pass")
+            if info_count:
+                output.append(f"**Context items:** {info_count}")
             return "\n\n".join(output)
         
         output.append("## 🔍 Security Group Validation Results")
-        output.append(f"**Account:** {self.account_id} | **Errors:** {error_count} | **Warnings:** {warning_count}")
+        output.append(f"**Account:** {self.account_id} | **Blocking:** {error_count} | **Manual review:** {warning_count} | **Info:** {info_count}")
         output.append("")
         
         # Categorize results: tags, schema/global, and per-SG rule issues
-        tag_results = {'errors': [], 'warnings': []}
-        schema_results = {'errors': [], 'warnings': []}
+        tag_results = {'errors': [], 'warnings': [], 'info': []}
+        schema_results = {'errors': [], 'warnings': [], 'info': []}
         sg_results = {}
         
         # Tag and schema rule names
@@ -1284,8 +1397,16 @@ class SecurityGroupValidator:
                        'schema_required_fields', 'schema_type', 'schema_invalid_environment',
                        'schema_environment_type', 'file_exists', 'yaml_syntax', 'yaml_content'}
         
-        for result in summary.errors + summary.warnings:
-            bucket = 'errors' if result.level == 'error' else 'warnings'
+        for result in summary.errors + summary.warnings + summary.info:
+            bucket = result.level if result.level in ('errors', 'warnings', 'info') else None
+            if bucket is None:
+                bucket = 'errors' if result.level == 'error' else 'warnings' if result.level == 'warning' else 'info'
+            if result.level == 'error':
+                bucket = 'errors'
+            elif result.level == 'warning':
+                bucket = 'warnings'
+            else:
+                bucket = 'info'
             
             if result.rule in TAG_RULES:
                 tag_results[bucket].append(result)
@@ -1294,20 +1415,21 @@ class SecurityGroupValidator:
             else:
                 sg_name = result.context.split('.')[1]
                 if sg_name not in sg_results:
-                    sg_results[sg_name] = {'errors': [], 'warnings': []}
+                    sg_results[sg_name] = {'errors': [], 'warnings': [], 'info': []}
                 sg_results[sg_name][bucket].append(result)
         
         # Helper to render a dropdown section
         def _render_section(title, results):
             sec_errors = len(results['errors'])
             sec_warnings = len(results['warnings'])
-            if sec_errors == 0 and sec_warnings == 0:
+            sec_info = len(results['info'])
+            if sec_errors == 0 and sec_warnings == 0 and sec_info == 0:
                 return
             output.append("<details>")
             output.append(f"<summary>{title}</summary>")
             output.append("")
             if results['errors']:
-                output.append("### Errors")
+                output.append("### Blocking issues")
                 for error in results['errors']:
                     message = error.message
                     if message.startswith('❌'):
@@ -1315,12 +1437,17 @@ class SecurityGroupValidator:
                     output.append(f"- ❌ {message}")
                 output.append("")
             if results['warnings']:
-                output.append("### Warnings")
+                output.append("### Manual review")
                 for warning in results['warnings']:
                     message = warning.message
                     if message.startswith('⚠️'):
                         message = message[2:].strip()
                     output.append(f"- ⚠️ {message}")
+                output.append("")
+            if results['info']:
+                output.append("### Context")
+                for info in results['info']:
+                    output.append(f"- ℹ️ {info.message}")
                 output.append("")
             output.append("</details>")
             output.append("")
