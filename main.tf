@@ -156,7 +156,6 @@ module "us_east_1" {
   account_id               = local.account_id
   tags                     = local.common_tags
   prefix_list_mappings     = var.prefix_list_mappings
-  known_prefix_list_names  = local.known_prefix_list_names
   baseline_ref_allowlist   = local.baseline_ref_allowlist
   shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-east-1", {})
 }

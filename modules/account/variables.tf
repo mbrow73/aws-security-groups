@@ -20,12 +20,6 @@ variable "prefix_list_mappings" {
   default     = {}
 }
 
-variable "known_prefix_list_names" {
-  description = "List of prefix list names to auto-discover by AWS name (e.g. corporate-networks)"
-  type        = list(string)
-  default     = []
-}
-
 variable "baseline_ref_allowlist" {
   description = "List of allowed baseline_ref names that can be referenced (e.g. vpc-endpoints)"
   type        = list(string)

@@ -104,24 +104,10 @@ locals {
     )
   ]))
 
-  # Prefix list names actually used by this region's SG rules.
-  prefix_list_refs_used = distinct(flatten([
-    for sg_name, sg in var.security_groups : concat(
-      flatten([for rule in lookup(sg, "ingress", []) : lookup(rule, "prefix_list_ids", [])]),
-      flatten([for rule in lookup(sg, "egress", []) : lookup(rule, "prefix_list_ids", [])])
-    )
-  ]))
-
   # Only look up baseline refs that are both allowed and actually referenced.
   baseline_refs_to_lookup = toset([
     for ref in local.baseline_refs_used : ref
     if contains(var.baseline_ref_allowlist, ref)
-  ])
-
-  # Only auto-discover baseline/known prefix lists that are both known and actually referenced.
-  prefix_lists_to_lookup = toset([
-    for name in local.prefix_list_refs_used : name
-    if contains(var.known_prefix_list_names, name)
   ])
 
   baseline_sg_mappings = {
@@ -134,31 +120,17 @@ locals {
     name => pl.id
   }
 
-  discovered_prefix_list_mappings = {
-    for name, pl in data.aws_ec2_managed_prefix_list.known :
-    name => pl.id
-  }
-
-  # Merge order: repo-created shared lists > static overrides > auto-discovered baseline lists
+  # Decoupled model: shared/self-service prefix lists are owned by this repo.
+  # Optional static mappings still work, but baseline/known prefix list lookup is no longer part of the main path.
   all_prefix_list_mappings = merge(
-    local.discovered_prefix_list_mappings,
     var.prefix_list_mappings,
     local.shared_prefix_list_mappings,
   )
 }
 
 # ---------------------------------------------------------------------------
-# External lookups — only when actually referenced
+# External lookups — only for baseline SG refs
 # ---------------------------------------------------------------------------
-
-data "aws_ec2_managed_prefix_list" "known" {
-  for_each = local.prefix_lists_to_lookup
-
-  filter {
-    name   = "prefix-list-name"
-    values = [each.value]
-  }
-}
 
 data "aws_security_group" "baseline" {
   for_each = local.baseline_refs_to_lookup

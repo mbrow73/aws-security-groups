@@ -7,6 +7,7 @@ carid: "600001725"   # Your application's CARID
 default_region: "us-east-1"  # Default region for SGs that don't specify one
 
 # Note: Baseline SGs (EKS, VPC endpoints) are managed by AFT — not this repo.
+# Note: Shared/self-service prefix lists are managed in shared-prefix-lists.yaml.
 # Note: Corporate mandatory tags are auto-generated from environment + carid.
 #       You do NOT need to specify them per security group.
 

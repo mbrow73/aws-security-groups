@@ -127,18 +127,13 @@ class SecurityGroupValidator:
     
     def _load_prefix_lists(self) -> Dict[str, Any]:
         """Load known prefix list names from allowlist"""
-        # Try allowlist + shared repo-managed prefix lists first, fall back to legacy prefix-lists.yaml
-        allowlist_path = self.repo_root / "known-prefix-lists.yaml"
+        # Shared/self-service prefix lists are first-class in this repo.
+        # Legacy prefix-lists.yaml is still tolerated for backward compatibility.
         shared_path = self.repo_root / "shared-prefix-lists.yaml"
         legacy_path = self.repo_root / "prefix-lists.yaml"
         
         try:
             names = set()
-
-            if allowlist_path.exists():
-                with open(allowlist_path, 'r') as f:
-                    data = yaml.safe_load(f) or {}
-                names.update(data.get('known_prefix_lists', []))
 
             if shared_path.exists():
                 with open(shared_path, 'r') as f:

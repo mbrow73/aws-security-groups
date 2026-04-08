@@ -1,10 +1,7 @@
-# Known Prefix Lists — managed by baseline configs (AFT)
-# The validator checks that prefix list references in security-groups.yaml
-# match a name here or an AWS prefix list ID (pl-xxx). This file does NOT
-# create prefix lists — it's an allowlist for validation only.
+# Known Prefix Lists — legacy compatibility file
 #
-# Update this when baselines add new prefix lists.
+# Prefix list ownership is now decoupled from the baseline model.
+# Shared/self-service prefix lists should live in shared-prefix-lists.yaml.
+# Keep this file only if you still need temporary static/manual mappings during transition.
 
-known_prefix_lists:
-  - corporate-networks
-  # AWS/baseline-managed names only. Repo-managed shared prefix lists live in shared-prefix-lists.yaml.
+known_prefix_lists: []
