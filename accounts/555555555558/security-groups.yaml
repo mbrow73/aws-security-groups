@@ -10,3 +10,8 @@ security_groups:
         to_port: 5432
         cidr_blocks: ["10.0.0.0/8"]
         description: "Pre-existing broad DB ingress"
+      - protocol: "tcp"
+        from_port: 22
+        to_port: 22
+        cidr_blocks: ["10.0.0.0/8"]
+        description: "Net-new SSH rule for diff demo"
