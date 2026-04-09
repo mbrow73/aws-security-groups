@@ -75,18 +75,6 @@ security_groups:
 | `corporate-networks` | Corporate offices + VPN |
 | `waf-saas-providers` | Cloudflare, Fastly ranges |
 
-## Baseline Profiles
-
-See [BASELINE-PROFILES.md](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs/blob/main/BASELINE-PROFILES.md) for full SG/rule tables.
-
-| Profile | What You Get |
-|---|---|
-| `eks-standard` | 4 EKS SGs + vpc-endpoints (intranet only) |
-| `eks-internet` | 6 EKS SGs + vpc-endpoints (internet + intranet) |
-| `vpc-endpoints` | 1 SG for VPC endpoint access (standalone) |
-
-Baselines are platform-managed. Don't add app-specific rules to them - create your own SG instead. See [Operational Model](operational-model.md).
-
 ## What Gets Blocked
 
 - `0.0.0.0/0` ingress (egress allowed only for HTTPS/443)
