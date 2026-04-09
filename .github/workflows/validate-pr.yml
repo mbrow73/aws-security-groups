@@ -130,17 +130,17 @@ jobs:
     steps:
       - name: Post summary comment
         uses: actions/github-script@v7
+        env:
+          VALIDATION_SUMMARY: ${{ needs.validate.outputs.summary }}
         with:
           script: |
-            // Get the summary from the validate job output
-            const summary = `${{ needs.validate.outputs.summary }}`;
+            const summary = process.env.VALIDATION_SUMMARY || '';
             
             if (!summary || summary.trim() === '') {
               console.log('No validation summary to post');
               return;
             }
             
-            // Delete previous validation comments from this workflow
             const comments = await github.rest.issues.listComments({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -158,7 +158,6 @@ jobs:
               }
             }
             
-            // Post new summary
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
