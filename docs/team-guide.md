@@ -1,4 +1,4 @@
-# Team Guide — Requesting Security Groups
+# Team Guide - Requesting Security Groups
 
 ## Quick Start
 
@@ -30,7 +30,7 @@
 
 3. Open a PR to `main`.
 
-4. Validation runs automatically — fix any errors and push.
+4. Validation runs automatically - fix any errors and push.
 
 5. Once approved and merged, Terraform Enterprise deploys your SGs.
 
@@ -43,7 +43,7 @@ carid: "600001725"                  # Required: your application's CARID
 default_region: "us-east-1"         # Optional: default region for SGs (defaults to us-east-1)
 
 # Corporate mandatory tags are AUTO-GENERATED from environment + carid.
-# Do NOT specify them per security group — they are computed by the platform.
+# Do NOT specify them per security group - they are computed by the platform.
 
 security_groups:
   sg-name:                           # Name becomes the SG name prefix
@@ -85,7 +85,7 @@ See [BASELINE-PROFILES.md](https://github.com/mbrow73/terraform-aws-eks-baseline
 | `eks-internet` | 6 EKS SGs + vpc-endpoints (internet + intranet) |
 | `vpc-endpoints` | 1 SG for VPC endpoint access (standalone) |
 
-Baselines are platform-managed. Don't add app-specific rules to them — create your own SG instead. See [Operational Model](operational-model.md).
+Baselines are platform-managed. Don't add app-specific rules to them - create your own SG instead. See [Operational Model](operational-model.md).
 
 ## What Gets Blocked
 
@@ -93,7 +93,7 @@ Baselines are platform-managed. Don't add app-specific rules to them — create 
 - Ports 23 (Telnet), 135 (RPC), 139 (NetBIOS), 445 (SMB)
 - Port ranges wider than 1000 ports
 - Database ports from wide CIDRs (warning)
-- SSH/RDP from CIDRs (warning) — use Session Manager
+- SSH/RDP from CIDRs (warning) - use Session Manager
 - Duplicate rules
 - Unknown/misspelled YAML keys
 
