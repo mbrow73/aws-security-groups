@@ -465,9 +465,11 @@ class WorkspaceProvisioner:
     def _execute_action(self, action: PlanAction) -> Dict[str, Any]:
         """Execute a single action. Thread-safe — client auth is cached.
 
-        For new workspaces, triggers an initial TFE run via native API
-        since the VCS commit that triggered provisioning already happened
-        before the workspace existed.
+        Resiliency pattern:
+        1. Look up existing workspace in TFE first
+        2. Only call CloudIaC create if the workspace is missing
+        3. Re-look up in TFE after create
+        4. Upload config + trigger runs once a workspace ID is available
         """
         result = {"action": action.action, "workspace": action.workspace,
                   "account_id": action.account_id, "status": "pending"}
@@ -476,61 +478,71 @@ class WorkspaceProvisioner:
             if action.action == "create":
                 ws_request = self.build_workspace_request(action.account_id)
                 logger.info(f"📋 Account {action.account_id}: env={ws_request.env} (auth: {AUTH_ENV})")
-                try:
-                    self.client.create_workspace(ws_request)
-                    result["status"] = "created"
-                    logger.info(f"✅ Created workspace {action.workspace}")
-                except HTTPError as e:
-                    if e.code == 409:
-                        result["status"] = "exists"
-                        logger.info(f"ℹ️  Workspace {action.workspace} already exists")
-                    else:
-                        raise
 
-                # Upload config and trigger run via Configuration Versions API
                 # CloudIaC names workspaces as: <car_id>-<env>-<suffix>
                 tfe_workspace_name = f"{self.car_id}-{ws_request.env}-{action.workspace}"
-                logger.info(f"🔍 Looking up TFE workspace: {tfe_workspace_name}")
-                if self.tfe_client and self.config_tarball:
+                ws_id = None
+
+                if self.tfe_client:
+                    logger.info(f"🔍 STEP 1: Looking up existing TFE workspace: {tfe_workspace_name}")
+                    ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
+
+                if ws_id:
+                    result["status"] = "exists"
+                    result["workspace_resolution"] = "existing"
+                    logger.info(f"✅ STEP 2: Found existing workspace {action.workspace} in TFE — skipping CloudIaC create")
+                else:
+                    logger.info(f"🛠️  STEP 2: Workspace {action.workspace} not found in TFE — creating via CloudIaC")
                     try:
-                        ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
-                        if ws_id:
-                            # Create config version (don't auto-queue — we trigger manually with auto-apply)
-                            cv_resp = self.tfe_client.create_config_version(ws_id, auto_queue=False)
-                            upload_url = cv_resp["data"]["attributes"]["upload-url"]
-                            cv_id = cv_resp["data"]["id"]
-
-                            # Upload the tarball and wait for TFE to process it
-                            self.tfe_client.upload_config(upload_url, self.config_tarball)
-                            self.tfe_client.wait_for_config_version(cv_id)
-
-                            # Trigger two runs — first often fails a blank Sentinel
-                            # policy on newly provisioned workspaces, second passes.
-                            import time
-                            self.tfe_client.trigger_run(
-                                ws_id,
-                                message=f"[1/2] Initial run for account {action.account_id}",
-                                auto_apply=True,
-                            )
-                            logger.info(f"🚀 First run triggered on {action.workspace} — queuing retry")
-                            time.sleep(5)
-                            self.tfe_client.trigger_run(
-                                ws_id,
-                                message=f"[2/2] Retry run for account {action.account_id}",
-                                auto_apply=True,
-                            )
-
-                            result["run_triggered"] = True
-                            result["config_version"] = cv_id
-                            logger.info(f"🚀 Both runs queued on {action.workspace} (cv: {cv_id})")
+                        self.client.create_workspace(ws_request)
+                        result["status"] = "created"
+                        result["workspace_resolution"] = "created"
+                        logger.info(f"✅ Created workspace {action.workspace}")
+                    except HTTPError as e:
+                        if e.code == 409:
+                            result["status"] = "exists"
+                            result["workspace_resolution"] = "exists_via_create_conflict"
+                            logger.info(f"ℹ️  Workspace {action.workspace} already exists (CloudIaC 409)")
                         else:
-                            result["run_triggered"] = False
-                            result["run_warning"] = "Workspace created but not found in TFE — config not uploaded"
-                            logger.warning(f"⚠️  Workspace {action.workspace} not found in TFE after creation")
-                    except Exception as e:
-                        result["run_triggered"] = False
-                        result["run_error"] = str(e)
-                        logger.warning(f"⚠️  Failed to upload config to {action.workspace}: {e}")
+                            raise
+
+                    if self.tfe_client:
+                        logger.info(f"🔍 STEP 3: Re-checking TFE workspace after create: {tfe_workspace_name}")
+                        ws_id = self.tfe_client.get_workspace_id(tfe_workspace_name)
+                        if not ws_id:
+                            raise RuntimeError(f"Workspace {action.workspace} is not discoverable in TFE after create/exist check")
+
+                if self.tfe_client and self.config_tarball:
+                    logger.info(f"📦 STEP 4: Creating config version for {action.workspace}")
+                    cv_resp = self.tfe_client.create_config_version(ws_id, auto_queue=False)
+                    upload_url = cv_resp["data"]["attributes"]["upload-url"]
+                    cv_id = cv_resp["data"]["id"]
+
+                    logger.info(f"⬆️  STEP 5: Uploading config tarball for {action.workspace}")
+                    self.tfe_client.upload_config(upload_url, self.config_tarball)
+                    self.tfe_client.wait_for_config_version(cv_id)
+
+                    # Trigger two runs — first often fails a blank Sentinel
+                    # policy on newly provisioned workspaces, second passes.
+                    import time
+                    logger.info(f"🚀 STEP 6: Triggering first run for {action.workspace}")
+                    self.tfe_client.trigger_run(
+                        ws_id,
+                        message=f"[1/2] Initial run for account {action.account_id}",
+                        auto_apply=True,
+                    )
+                    logger.info(f"🚀 First run triggered on {action.workspace} — queuing retry")
+                    time.sleep(5)
+                    logger.info(f"🚀 STEP 7: Triggering second run for {action.workspace}")
+                    self.tfe_client.trigger_run(
+                        ws_id,
+                        message=f"[2/2] Retry run for account {action.account_id}",
+                        auto_apply=True,
+                    )
+
+                    result["run_triggered"] = True
+                    result["config_version"] = cv_id
+                    logger.info(f"🚀 Both runs queued on {action.workspace} (cv: {cv_id})")
                 elif self.tfe_client and not self.config_tarball:
                     logger.warning(f"⚠️  No config tarball provided — skipping upload for {action.workspace}")
                     result["run_triggered"] = False
