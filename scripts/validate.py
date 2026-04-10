@@ -686,7 +686,7 @@ class SecurityGroupValidator:
                     reason = "it is blocked by guardrail policy"
                     suggestion = "Remove the rule or get explicit approval."
                 summary.add_result(ValidationResult(
-                    level='error',
+                    level='warning',
                     message=f"Blocked {port_desc} in {sg_name} {rule_type}[{rule_index}] — {reason}. {suggestion}",
                     rule='rule_blocked_port',
                     context=context
