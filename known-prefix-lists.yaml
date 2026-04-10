@@ -4,4 +4,6 @@
 # Shared/self-service prefix lists should live in shared-prefix-lists.yaml.
 # Keep this file only if you still need temporary static/manual mappings during transition.
 
-known_prefix_lists: []
+known_prefix_lists:
+  - dynamodb
+  - s3

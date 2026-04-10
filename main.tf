@@ -123,6 +123,20 @@ locals {
   # Allowlist — only these baseline refs are permitted
   baseline_ref_allowlist = ["vpc-endpoints"]
 
+  # AWS-managed prefix list aliases by region.
+  # Lets requesters use friendly names like "s3" and "dynamodb"
+  # while still resolving to the correct regional managed prefix list ID.
+  aws_managed_prefix_list_mappings_by_region = {
+    "us-east-1" = {
+      dynamodb = "pl-02cd2c6b"
+      s3       = "pl-63a5400a"
+    }
+    "us-west-2" = {
+      dynamodb = "pl-00a54069"
+      s3       = "pl-68a54001"
+    }
+  }
+
   # Shared repo-managed prefix lists — created by this repo in each account/region
   shared_prefix_lists_config = fileexists("${path.root}/shared-prefix-lists.yaml") ? yamldecode(file("${path.root}/shared-prefix-lists.yaml")) : { shared_prefix_lists = {} }
   shared_prefix_lists = lookup(local.shared_prefix_lists_config, "shared_prefix_lists", {})
@@ -169,7 +183,10 @@ module "us_east_1" {
   security_groups        = lookup(local.sgs_by_region, "us-east-1", {})
   account_id             = local.account_id
   tags                   = local.common_tags
-  prefix_list_mappings   = var.prefix_list_mappings
+  prefix_list_mappings = merge(
+    var.prefix_list_mappings,
+    lookup(local.aws_managed_prefix_list_mappings_by_region, "us-east-1", {})
+  )
   baseline_ref_allowlist = local.baseline_ref_allowlist
   shared_prefix_lists    = lookup(local.shared_prefix_lists_by_region, "us-east-1", {})
 }
@@ -185,7 +202,10 @@ module "us_west_2" {
   security_groups        = lookup(local.sgs_by_region, "us-west-2", {})
   account_id             = local.account_id
   tags                   = local.common_tags
-  prefix_list_mappings   = var.prefix_list_mappings
+  prefix_list_mappings = merge(
+    var.prefix_list_mappings,
+    lookup(local.aws_managed_prefix_list_mappings_by_region, "us-west-2", {})
+  )
   baseline_ref_allowlist = local.baseline_ref_allowlist
   shared_prefix_lists    = lookup(local.shared_prefix_lists_by_region, "us-west-2", {})
 }
