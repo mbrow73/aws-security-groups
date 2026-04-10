@@ -74,6 +74,8 @@ security_groups:
 |---|---|
 | `corporate-networks` | Corporate offices + VPN |
 | `waf-saas-providers` | Cloudflare, Fastly ranges |
+| `s3` | AWS-managed S3 prefix list (resolved per region) |
+| `dynamodb` | AWS-managed DynamoDB prefix list (resolved per region) |
 
 ## What Gets Blocked
 
