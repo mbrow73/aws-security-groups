@@ -32,7 +32,7 @@ def repo_root():
                 'max_egress_rules': 60,
             },
             'naming': {
-                'security_group_pattern': r'^[a-z0-9][a-z0-9-]*[a-z0-9]$',
+                'security_group_pattern': r'^[a-z0-9][a-z0-9_-]*[a-z0-9]$',
                 'max_name_length': 63,
                 'required_tags': [],  # disabled for unit tests
             },

@@ -984,7 +984,7 @@ class SecurityGroupValidator:
         if 'security_groups' not in data or not isinstance(data['security_groups'], dict):
             return
         naming_config = self.guardrails.get('validation', {}).get('naming', {})
-        sg_pattern = naming_config.get('security_group_pattern', r'^[a-z0-9][a-z0-9-]*[a-z0-9]$')
+        sg_pattern = naming_config.get('security_group_pattern', r'^[a-z0-9][a-z0-9_-]*[a-z0-9]$')
         max_length = naming_config.get('max_name_length', 63)
         for sg_name in data['security_groups']:
             if not re.match(sg_pattern, sg_name):
