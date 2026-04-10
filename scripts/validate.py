@@ -955,7 +955,7 @@ class SecurityGroupValidator:
                     context=context
                 ))
             return
-        if not re.match(r'^[A-Za-z0-9][A-Za-z0-9-]*$', sg_ref):
+        if not re.match(r'^[A-Za-z0-9][A-Za-z0-9_-]*$', sg_ref):
             summary.add_result(ValidationResult(
                 level='warning',
                 message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] may be invalid",
