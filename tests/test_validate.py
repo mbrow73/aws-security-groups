@@ -423,6 +423,29 @@ class TestRefTypeValidation:
         rules = [e.rule for e in summary.errors]
         assert 'rule_prefix_list_type' in rules
 
+    def test_security_group_ref_with_underscore_is_allowed(self, repo_root):
+        data = {
+            'account_id': '100000000001',
+            'security_groups': {
+                'app_sg': {
+                    'description': 'test',
+                    'ingress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'security_groups': ['shared_api_sg'],
+                    }],
+                },
+                'shared_api_sg': {
+                    'description': 'peer sg',
+                    'ingress': [],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        warn_rules = [w.rule for w in summary.warnings]
+        assert 'rule_sg_reference_format' not in warn_rules
+
 
 # ============================================================
 # Clean pass test
@@ -484,7 +507,7 @@ class TestGuardrails:
             },
         }
         summary = _validate(repo_root, '100000000001', data)
-        rules = [e.rule for e in summary.errors]
+        rules = [w.rule for w in summary.warnings]
         assert 'rule_blocked_port' in rules
 
     def test_quad_zero_ingress_blocked(self, repo_root):
