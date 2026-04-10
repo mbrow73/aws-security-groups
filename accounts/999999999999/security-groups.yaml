@@ -1,0 +1,20 @@
+account_id: "999999999999"
+environment: "dev"
+carid: "600009999"
+default_region: "us-east-1"
+
+security_groups:
+  comment-upsert-test:
+    description: "Test SG for validating PR comment replacement behavior"
+    ingress:
+      - protocol: "tcp"
+        from_port: 8443
+        to_port: 8443
+        cidr_blocks: ["10.10.0.0/16"]
+        description: "Internal test ingress"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids: ["s3"]
+        description: "AWS service access"
