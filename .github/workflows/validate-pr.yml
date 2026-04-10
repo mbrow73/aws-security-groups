@@ -134,36 +134,62 @@ jobs:
           VALIDATION_SUMMARY: ${{ needs.validate.outputs.summary }}
         with:
           script: |
-            const summary = process.env.VALIDATION_SUMMARY || '';
-            
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const marker = '<!-- sg-validation-summary-bot -->';
+            let summary = process.env.VALIDATION_SUMMARY || '';
+
             if (!summary || summary.trim() === '') {
               console.log('No validation summary to post');
               return;
             }
-            
+
+            if (!summary.includes(marker)) {
+              summary = `${marker}\n${summary}`;
+            }
+
             const comments = await github.rest.issues.listComments({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
+              issue_number,
+              owner,
+              repo,
             });
-            
+
+            let existingComment = null;
             for (const comment of comments.data) {
-              if (comment.user.login === 'github-actions[bot]' && 
-                  comment.body.includes('Security Group Validation Results')) {
+              const isLegacyValidationComment =
+                comment.user.login === 'github-actions[bot]' &&
+                comment.body.includes('Security Group Validation Results');
+              const isMarkedValidationComment = comment.body.includes(marker);
+
+              if (isMarkedValidationComment && !existingComment) {
+                existingComment = comment;
+                continue;
+              }
+
+              if (isMarkedValidationComment || isLegacyValidationComment) {
                 await github.rest.issues.deleteComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
+                  owner,
+                  repo,
                   comment_id: comment.id,
                 });
               }
             }
-            
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: summary
-            });
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existingComment.id,
+                body: summary,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number,
+                owner,
+                repo,
+                body: summary,
+              });
+            }
 
   change-summary:
     name: "Post Change Summary"
@@ -197,12 +223,23 @@ jobs:
             const pr_number = context.payload.pull_request.number;
             const marker = '<!-- sg-change-summary-bot -->';
 
-            // Delete any existing summary comment first
             const comments = await github.rest.issues.listComments({
               issue_number: pr_number, owner, repo
             });
+
+            let existingComment = null;
             for (const comment of comments.data) {
-              if (comment.body.includes(marker)) {
+              const isMarkedSummaryComment = comment.body.includes(marker);
+              const isLegacySummaryComment =
+                comment.user.login === 'github-actions[bot]' &&
+                comment.body.includes('## 📊 GitOps Review Summary');
+
+              if (isMarkedSummaryComment && !existingComment) {
+                existingComment = comment;
+                continue;
+              }
+
+              if (isMarkedSummaryComment || isLegacySummaryComment) {
                 await github.rest.issues.deleteComment({
                   owner, repo, comment_id: comment.id
                 });
@@ -230,10 +267,16 @@ jobs:
               });
 
               if (summary && summary.includes(marker)) {
-                await github.rest.issues.createComment({
-                  issue_number: pr_number, owner, repo,
-                  body: summary
-                });
+                if (existingComment) {
+                  await github.rest.issues.updateComment({
+                    owner, repo, comment_id: existingComment.id, body: summary
+                  });
+                } else {
+                  await github.rest.issues.createComment({
+                    issue_number: pr_number, owner, repo,
+                    body: summary
+                  });
+                }
                 console.log('✅ Change summary posted');
               } else {
                 console.log('No changes detected — no summary posted');
