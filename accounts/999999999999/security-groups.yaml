@@ -11,7 +11,7 @@ security_groups:
         from_port: 8443
         to_port: 8443
         cidr_blocks: ["10.10.0.0/16"]
-        description: "Internal test ingress"
+        description: "Internal test ingress (follow-up commit)"
     egress:
       - protocol: "tcp"
         from_port: 443
