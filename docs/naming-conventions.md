@@ -5,7 +5,7 @@
 | Pattern | Example | Used By |
 |---|---|---|
 | `baseline-{component}` | `baseline-eks-workers` | Baseline profiles |
-| `{team}-{app}-{purpose}` | `payments-api-db-access` | Team SGs |
+| `{team}-{app}-{purpose}` or `{team}_{app}_{purpose}` | `payments-api-db-access`, `payments_api_db_access` | Team SGs |
 
 ## Prefix List Names
 

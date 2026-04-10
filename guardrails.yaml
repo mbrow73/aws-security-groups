@@ -32,7 +32,7 @@ validation:
 
   # Naming conventions
   naming:
-    security_group_pattern: "^[a-z0-9][a-z0-9-]*[a-z0-9]$"
+    security_group_pattern: "^[a-z0-9][a-z0-9_-]*[a-z0-9]$"
     max_name_length: 63
     # Corporate mandatory tags are auto-generated from top-level carid + environment.
     # No per-SG tag validation needed — the account module computes all 8 tags.
