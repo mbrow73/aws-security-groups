@@ -15,7 +15,7 @@ variable "tags" {
 }
 
 variable "prefix_list_mappings" {
-  description = "Map of prefix list names to IDs (static overrides — prefer known_prefix_list_names for auto-lookup)"
+  description = "Map of prefix list names to IDs for this specific region (static/external mappings must already be region-resolved before reaching the account module)"
   type        = map(string)
   default     = {}
 }
