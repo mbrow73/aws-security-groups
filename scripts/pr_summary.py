@@ -201,15 +201,22 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
         # Group by region
         regions_in_account = {}
         for sg_name, sg_data in account.get("changes", {}).items():
-            region = sg_data.get("region", account.get("default_region", "us-east-1"))
-            regions.add(region)
-            if region not in regions_in_account:
-                regions_in_account[region] = []
-            regions_in_account[region].append((sg_name, sg_data))
+            sg_regions = sg_data.get("regions", []) or [account.get("default_region", "us-east-1")]
+            for region in sg_regions:
+                regions.add(region)
+                if region not in regions_in_account:
+                    regions_in_account[region] = []
+                regions_in_account[region].append((sg_name, sg_data))
 
         for region, sgs in sorted(regions_in_account.items()):
             default = account.get("default_region", "us-east-1")
-            region_label = f"{region} (default region)" if region == default else f"{region} (explicit override)"
+            account_regions = account.get("regions", []) or [default]
+            if len(account_regions) > 1 and region in account_regions:
+                region_label = f"{region} (account regions)"
+            elif region == default:
+                region_label = f"{region} (default region)"
+            else:
+                region_label = f"{region} (explicit override)"
             lines.append(f"### 📍 {region_label}\n")
 
             for sg_name, sg_data in sgs:
@@ -335,6 +342,7 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
         "env": head_data.get("environment", base_data.get("environment", "unknown")),
         "carid": head_data.get("carid", base_data.get("carid", "—")),
         "default_region": head_data.get("default_region", base_data.get("default_region", "us-east-1")),
+        "regions": head_data.get("regions", base_data.get("regions", [])),
         "changes": {},
     }
 
@@ -350,7 +358,7 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
             result["changes"][sg_name] = {
                 "change_type": "new",
                 "description": new_config.get("description", ""),
-                "region": new_config.get("region", result["default_region"]),
+                "regions": new_config.get("regions") or ([new_config["region"]] if "region" in new_config else result["regions"] or [result["default_region"]]),
                 "new_config": new_config,
             }
 
@@ -360,7 +368,7 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
             result["changes"][sg_name] = {
                 "change_type": "deleted",
                 "description": old_config.get("description", ""),
-                "region": old_config.get("region", result["default_region"]),
+                "regions": old_config.get("regions") or ([old_config["region"]] if "region" in old_config else result["regions"] or [result["default_region"]]),
                 "old_config": old_config,
             }
 
@@ -385,7 +393,7 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
                 result["changes"][sg_name] = {
                     "change_type": "modified",
                     "description": new_config.get("description", ""),
-                    "region": new_config.get("region", result["default_region"]),
+                    "regions": new_config.get("regions") or ([new_config["region"]] if "region" in new_config else result["regions"] or [result["default_region"]]),
                     "ingress_diff": (ingress_added, ingress_removed, []),
                     "egress_diff": (egress_added, egress_removed, []),
                     "old_config": old_config,

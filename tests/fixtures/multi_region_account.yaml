@@ -1,0 +1,26 @@
+account_id: "123456789012"
+environment: "prod"
+carid: 9999
+default_region: "us-west-2"
+regions:
+  - us-west-2
+  - us-east-1
+security_groups:
+  app:
+    description: "App SG in both prod regions"
+    ingress:
+      - description: "HTTPS"
+        protocol: tcp
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/8"]
+  db:
+    description: "DB SG west only"
+    regions:
+      - us-west-2
+    ingress:
+      - description: "Postgres"
+        protocol: tcp
+        from_port: 5432
+        to_port: 5432
+        security_groups: ["app"]

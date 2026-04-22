@@ -4,7 +4,8 @@
 account_id: "123456789012"
 environment: "prod"  # prod | test | dev
 carid: "600001725"   # Your application's CARID
-default_region: "us-east-1"  # Default region for SGs that don't specify one
+default_region: "us-east-1"  # Legacy fallback when account-level regions is not set
+regions: ["us-east-1", "us-west-2"]  # Optional account-wide deployment regions for SGs without explicit region(s)
 
 # Note: Baseline SGs (EKS, VPC endpoints) are managed by AFT — not this repo.
 # Note: Shared/self-service prefix lists are managed in shared-prefix-lists.yaml.
@@ -14,7 +15,7 @@ default_region: "us-east-1"  # Default region for SGs that don't specify one
 # Team security groups
 security_groups:
 
-  # Example: Application behind NLB (inherits default_region: us-east-1)
+  # Example: Application behind NLB (inherits account-level regions above)
   app-backend:
     description: "Backend API service"
     ingress:
@@ -50,7 +51,7 @@ security_groups:
         cidr_blocks: ["10.0.0.0/8"]
         description: "DNS resolution"
 
-  # Example: Database (inherits default_region: us-east-1)
+  # Example: Database (inherits account-level regions above)
   rds-postgres:
     description: "PostgreSQL RDS"
     ingress:
@@ -60,9 +61,9 @@ security_groups:
         security_groups: ["app-backend"]
         description: "PostgreSQL from app servers"
 
-  # Example: Cache in a different region (explicit region override)
+  # Example: Cache in a single region (explicit SG-level regions override)
   west-cache:
-    region: "us-west-2"
+    regions: ["us-west-2"]
     description: "Redis cache in us-west-2"
     ingress:
       - protocol: "tcp"

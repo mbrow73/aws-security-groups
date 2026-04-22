@@ -77,10 +77,10 @@ class SecurityGroupValidator:
     ]
 
     ALLOWED_TOP_LEVEL_KEYS = {
-        'account_id', 'environment', 'carid', 'default_region', 'tags', 'security_groups'
+        'account_id', 'environment', 'carid', 'default_region', 'regions', 'tags', 'security_groups'
     }
     ALLOWED_SG_KEYS = {
-        'description', 'region', 'vpc_id', 'tags', 'ingress', 'egress'
+        'description', 'region', 'regions', 'vpc_id', 'tags', 'ingress', 'egress'
     }
     ALLOWED_RULE_KEYS = {
         'description', 'protocol', 'from_port', 'to_port',
@@ -274,42 +274,64 @@ class SecurityGroupValidator:
 
     def _validate_regions(self, data: Dict[str, Any], summary: ValidationSummary):
         allowed_regions = self.guardrails.get('validation', {}).get('allowed_regions', ['us-east-1', 'us-west-2'])
-        if 'default_region' in data:
-            region = data['default_region']
+
+        def validate_region_value(region, rule_invalid, rule_disallowed, message_prefix, context=None):
             if not isinstance(region, str) or not re.match(r'^[a-z]{2}-[a-z]+-\d+$', region):
                 summary.add_result(ValidationResult(
                     level='error',
-                    message=f"Invalid default_region format: {region}",
-                    rule='invalid_default_region'
+                    message=f"{message_prefix}: {region}",
+                    rule=rule_invalid,
+                    context=context
                 ))
             elif region not in allowed_regions:
                 summary.add_result(ValidationResult(
                     level='error',
-                    message=f"default_region '{region}' is not allowed. Allowed regions: {', '.join(allowed_regions)}",
-                    rule='disallowed_default_region'
+                    message=f"{message_prefix} '{region}' is not allowed. Allowed regions: {', '.join(allowed_regions)}",
+                    rule=rule_disallowed,
+                    context=context
                 ))
+
+        if 'default_region' in data:
+            validate_region_value(data['default_region'], 'invalid_default_region', 'disallowed_default_region', 'default_region')
+
+        if 'regions' in data:
+            regions = data['regions']
+            if not isinstance(regions, list) or not regions:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message='regions must be a non-empty list of AWS regions',
+                    rule='invalid_regions_list'
+                ))
+            else:
+                for region in regions:
+                    validate_region_value(region, 'invalid_regions_value', 'disallowed_regions_value', 'Account region')
 
         if 'security_groups' not in data or not isinstance(data['security_groups'], dict):
             return
         for sg_name, sg in data['security_groups'].items():
             if not isinstance(sg, dict):
                 continue
+            if 'region' in sg and 'regions' in sg:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Security group '{sg_name}' cannot define both 'region' and 'regions'",
+                    rule='conflicting_sg_region_keys',
+                    context=f"security_group.{sg_name}"
+                ))
             if 'region' in sg:
-                region = sg['region']
-                if not isinstance(region, str) or not re.match(r'^[a-z]{2}-[a-z]+-\d+$', region):
+                validate_region_value(sg['region'], 'invalid_sg_region', 'disallowed_sg_region', f"Region in security group '{sg_name}'", f"security_group.{sg_name}")
+            if 'regions' in sg:
+                regions = sg['regions']
+                if not isinstance(regions, list) or not regions:
                     summary.add_result(ValidationResult(
                         level='error',
-                        message=f"Invalid region format in security group '{sg_name}': {region}",
-                        rule='invalid_sg_region',
+                        message=f"Security group '{sg_name}' regions must be a non-empty list",
+                        rule='invalid_sg_regions_list',
                         context=f"security_group.{sg_name}"
                     ))
-                elif region not in allowed_regions:
-                    summary.add_result(ValidationResult(
-                        level='error',
-                        message=f"Region '{region}' in security group '{sg_name}' is not allowed. Allowed regions: {', '.join(allowed_regions)}",
-                        rule='disallowed_sg_region',
-                        context=f"security_group.{sg_name}"
-                    ))
+                else:
+                    for region in regions:
+                        validate_region_value(region, 'invalid_sg_regions_value', 'disallowed_sg_regions_value', f"Region in security group '{sg_name}'", f"security_group.{sg_name}")
 
     def _validate_security_groups(self, data: Dict[str, Any], summary: ValidationSummary):
         if 'security_groups' not in data or not isinstance(data['security_groups'], dict):

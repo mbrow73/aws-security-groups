@@ -51,22 +51,42 @@ locals {
 
   # Account-level defaults
   default_region = lookup(local.config, "default_region", "us-east-1")
+  regions        = lookup(local.config, "regions", null)
   environment    = lookup(local.config, "environment", "unknown")
   carid          = tostring(local.config.carid)
 
-  # Resolve each SG's region (explicit or default)
+  # Resolve each SG's region list with backward-compatible precedence:
+  # sg.regions -> sg.region -> account.regions -> account.default_region
   security_groups = {
     for name, sg in lookup(local.config, "security_groups", {}) :
     name => merge(sg, {
-      _region = lookup(sg, "region", local.default_region)
+      _regions = lookup(sg, "regions", null) != null ? lookup(sg, "regions", []) : (
+        lookup(sg, "region", null) != null ? [lookup(sg, "region", null)] : (
+          local.regions != null ? local.regions : [local.default_region]
+        )
+      )
     })
   }
 
+  # Expand SGs into per-region instances while preserving logical name
+  expanded_security_groups = merge(
+    {},
+    [
+      for name, sg in local.security_groups : {
+        for region in sg._regions :
+        "${name}:${region}" => merge(sg, {
+          _region       = region,
+          _logical_name = name
+        })
+      }
+    ]...
+  )
+
   # Group SGs by region
   sgs_by_region = {
-    for r in distinct([for sg in local.security_groups : sg._region]) :
+    for r in distinct([for sg in local.expanded_security_groups : sg._region]) :
     r => {
-      for name, sg in local.security_groups :
+      for name, sg in local.expanded_security_groups :
       name => sg if sg._region == r
     }
   }
