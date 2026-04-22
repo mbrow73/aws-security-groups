@@ -36,12 +36,12 @@ data "aws_vpc" "discovered" {
 resource "aws_security_group" "this" {
   for_each = var.security_groups
 
-  name_prefix = "${each.key}-"
+  name_prefix = "${lookup(each.value, "_logical_name", each.key)}-"
   description = each.value.description
   vpc_id      = lookup(each.value, "vpc_id", data.aws_vpc.discovered.id)
 
   tags = merge(var.tags, lookup(each.value, "tags", {}), {
-    Name = each.key
+    Name = lookup(each.value, "_logical_name", each.key)
   })
 
   lifecycle {
@@ -91,10 +91,16 @@ resource "aws_ec2_managed_prefix_list_entry" "shared" {
 # ---------------------------------------------------------------------------
 
 locals {
-  security_group_mappings = {
-    for name, sg in aws_security_group.this :
-    name => sg.id
-  }
+  security_group_mappings = merge(
+    {
+      for name, sg in aws_security_group.this :
+      name => sg.id
+    },
+    {
+      for name, sg in aws_security_group.this :
+      lookup(var.security_groups[name], "_logical_name", name) => sg.id
+    }
+  )
 
   # Baseline refs actually used by this region's SG rules.
   baseline_refs_used = distinct(flatten([
@@ -160,7 +166,7 @@ module "security_group_rules" {
   source   = "../security-group-rules"
 
   security_group_id       = aws_security_group.this[each.key].id
-  security_group_config   = merge(each.value, { name = each.key })
+  security_group_config   = merge(each.value, { name = lookup(each.value, "_logical_name", each.key) })
   security_group_mappings = local.security_group_mappings
   prefix_list_mappings    = local.all_prefix_list_mappings
   baseline_sg_mappings    = local.baseline_sg_mappings
