@@ -312,4 +312,5 @@ jobs:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           VALIDATE_RESULT: ${{ needs.validate.result }}
           HAS_WARNINGS: ${{ needs.validate.outputs.has_warnings }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: python scripts/slack_notify.py
