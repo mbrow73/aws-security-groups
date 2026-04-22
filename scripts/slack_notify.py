@@ -44,7 +44,7 @@ def build_delta_blocks(changed_accounts: str, base_ref: str) -> tuple[list, str,
             changes = account.get("changes", {})
             total_sgs = len(changes)
             total_rules = sum(count_rules(change.get("new_config", {})) for change in changes.values())
-            lines.append(f"• new account onboarding — {total_sgs} SG(s) defined, {total_rules} total rule(s)")
+            lines.append(f"• new account config — {total_sgs} SG(s), {total_rules} total rule(s)")
             preview_names = list(changes.keys())[:5]
             if preview_names:
                 lines.append(f"  SGs: {', '.join(f'`{name}`' for name in preview_names)}")
@@ -120,7 +120,7 @@ def build_payload(changed_accounts: str, base_ref: str, has_warnings: bool) -> d
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*Delta:*\n{delta_text}",
+                "text": f"*Summary:*\n{delta_text}",
             },
         },
         {"type": "divider"},
