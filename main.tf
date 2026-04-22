@@ -120,8 +120,8 @@ locals {
 }
 
 variable "prefix_list_mappings" {
-  description = "Map of prefix list friendly names to AWS prefix list IDs"
-  type        = map(string)
+  description = "Map of prefix list friendly names to AWS prefix list IDs. Supports either flat single-region mappings or region-aware nested mappings like { us-east-1 = { pl-name = pl-xxx } }"
+  type        = any
   default     = {}
 }
 
@@ -204,7 +204,7 @@ module "us_east_1" {
   account_id             = local.account_id
   tags                   = local.common_tags
   prefix_list_mappings = merge(
-    var.prefix_list_mappings,
+    can(var.prefix_list_mappings["us-east-1"]) ? var.prefix_list_mappings["us-east-1"] : var.prefix_list_mappings,
     lookup(local.aws_managed_prefix_list_mappings_by_region, "us-east-1", {})
   )
   baseline_ref_allowlist = local.baseline_ref_allowlist
@@ -223,7 +223,7 @@ module "us_west_2" {
   account_id             = local.account_id
   tags                   = local.common_tags
   prefix_list_mappings = merge(
-    var.prefix_list_mappings,
+    can(var.prefix_list_mappings["us-west-2"]) ? var.prefix_list_mappings["us-west-2"] : var.prefix_list_mappings,
     lookup(local.aws_managed_prefix_list_mappings_by_region, "us-west-2", {})
   )
   baseline_ref_allowlist = local.baseline_ref_allowlist
