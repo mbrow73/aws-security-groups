@@ -39,8 +39,8 @@ def load_yaml_file(path: str) -> dict:
         return {}
 
 
-def get_base_yaml(account_id: str, base_ref: str) -> dict:
-    """Get the account YAML from the base branch."""
+def get_base_yaml(account_id: str, base_ref: str) -> tuple[dict, bool]:
+    """Get the account YAML from the base branch. Returns (yaml, found)."""
     file_path = f"accounts/{account_id}/security-groups.yaml"
     try:
         result = subprocess.run(
@@ -48,10 +48,10 @@ def get_base_yaml(account_id: str, base_ref: str) -> dict:
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
-            return yaml.safe_load(result.stdout) or {}
+            return yaml.safe_load(result.stdout) or {}, True
     except Exception:
         pass
-    return {}
+    return {}, False
 
 
 def format_source(rule: dict) -> str:
@@ -332,7 +332,7 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
 def analyze_account(account_id: str, base_ref: str) -> dict:
     """Analyze changes for a single account between base and head."""
     head_data = load_yaml_file(f"accounts/{account_id}/security-groups.yaml")
-    base_data = get_base_yaml(account_id, base_ref)
+    base_data, base_found = get_base_yaml(account_id, base_ref)
 
     head_sgs = head_data.get("security_groups", {})
     base_sgs = base_data.get("security_groups", {})
@@ -344,6 +344,7 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
         "default_region": head_data.get("default_region", base_data.get("default_region", "us-east-1")),
         "regions": head_data.get("regions", base_data.get("regions", [])),
         "changes": {},
+        "base_found": base_found,
     }
 
     all_sg_names = set(list(head_sgs.keys()) + list(base_sgs.keys()))

@@ -14,6 +14,12 @@ from datetime import datetime, timezone
 from pr_summary import analyze_account
 
 
+def count_rules(sg_config: dict) -> int:
+    ingress = sg_config.get("ingress", []) or []
+    egress = sg_config.get("egress", []) or []
+    return len(ingress) + len(egress)
+
+
 def build_delta_blocks(changed_accounts: str, base_ref: str) -> tuple[list, str, bool]:
     account_ids = [a.strip() for a in changed_accounts.split(",") if a.strip()]
     summaries = [analyze_account(aid, base_ref) for aid in account_ids]
@@ -34,6 +40,18 @@ def build_delta_blocks(changed_accounts: str, base_ref: str) -> tuple[list, str,
         account_regions = account.get("regions", []) or [account.get("default_region", "us-east-1")]
         lines.append(f"*`{account['id']}`* ({env}) — regions: {', '.join(account_regions)}")
 
+        if not account.get("base_found", True):
+            changes = account.get("changes", {})
+            total_sgs = len(changes)
+            total_rules = sum(count_rules(change.get("new_config", {})) for change in changes.values())
+            lines.append(f"• new account onboarding — {total_sgs} SG(s) defined, {total_rules} total rule(s)")
+            preview_names = list(changes.keys())[:5]
+            if preview_names:
+                lines.append(f"  SGs: {', '.join(f'`{name}`' for name in preview_names)}")
+            if total_sgs > len(preview_names):
+                lines.append(f"  _...{total_sgs - len(preview_names)} additional SG(s) omitted for brevity_")
+            continue
+
         for sg_name, sg_data in list(account.get("changes", {}).items()):
             if sg_counter >= max_sgs:
                 lines.append("_...additional SG changes omitted for brevity_")
@@ -46,7 +64,8 @@ def build_delta_blocks(changed_accounts: str, base_ref: str) -> tuple[list, str,
             added = len(ingress[0]) + len(egress[0])
             removed = len(ingress[1]) + len(egress[1])
             if change_type == "new":
-                lines.append(f"  new SG, {added} rule(s) proposed")
+                new_config = sg_data.get("new_config", {})
+                lines.append(f"  new SG, {count_rules(new_config)} rule(s) proposed")
             elif change_type == "deleted":
                 lines.append(f"  SG removed, {removed} rule(s) disappear")
             else:
