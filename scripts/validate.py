@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
+from account_config import load_account_config, AccountConfigError, AccountConfigConflict
 
 
 @dataclass
@@ -79,6 +80,7 @@ class SecurityGroupValidator:
     ALLOWED_TOP_LEVEL_KEYS = {
         'account_id', 'environment', 'carid', 'default_region', 'regions', 'tags', 'security_groups', 'owner_team', 'tenant'
     }
+    INTERNAL_TOP_LEVEL_KEYS = {'_sources', '_layout', '_tenants'}
     ALLOWED_SG_KEYS = {
         'description', 'region', 'regions', 'vpc_id', 'tags', 'ingress', 'egress'
     }
@@ -162,35 +164,10 @@ class SecurityGroupValidator:
         except Exception:
             return {'owners': {}, 'tenants': {}}
 
-    def _load_merged_config(self) -> Dict[str, Any]:
-        with open(self.config_file, 'r') as f:
-            data = yaml.safe_load(f)
-
-        if not data or not isinstance(data, dict):
-            return data
-
-        if 'tenant' not in data and self.tenant_file.exists():
-            try:
-                with open(self.tenant_file, 'r') as f:
-                    tenant_data = yaml.safe_load(f) or {}
-                if isinstance(tenant_data, dict) and tenant_data.get('tenant'):
-                    data['tenant'] = tenant_data['tenant']
-            except Exception:
-                pass
-
-        if 'owner_team' not in data:
-            tenant = data.get('tenant')
-            if tenant:
-                derived_owner = self.owner_registry.get('tenants', {}).get(tenant, {}).get('owner_team')
-                if derived_owner:
-                    data['owner_team'] = derived_owner
-
-        return data
-
     def validate(self) -> ValidationSummary:
         summary = ValidationSummary()
 
-        if not self.config_file.exists():
+        if not self.config_file.exists() and not list(self.account_dir.glob('*/security-groups.yaml')):
             summary.add_result(ValidationResult(
                 level='error',
                 message=f"Config file not found: {self.config_file}",
@@ -199,12 +176,26 @@ class SecurityGroupValidator:
             return summary
 
         try:
-            data = self._load_merged_config()
+            data = load_account_config(self.account_dir)
         except yaml.YAMLError as e:
             summary.add_result(ValidationResult(
                 level='error',
                 message=f"Invalid YAML syntax: {e}",
                 rule='yaml_syntax'
+            ))
+            return summary
+        except AccountConfigConflict as e:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=str(e),
+                rule='account_layout_conflict'
+            ))
+            return summary
+        except AccountConfigError as e:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=str(e),
+                rule='account_config_error'
             ))
             return summary
         except Exception as e:
@@ -253,6 +244,8 @@ class SecurityGroupValidator:
                 ))
 
         for key in data.keys():
+            if key in self.INTERNAL_TOP_LEVEL_KEYS:
+                continue
             if key not in self.ALLOWED_TOP_LEVEL_KEYS:
                 summary.add_result(ValidationResult(
                     level='error',

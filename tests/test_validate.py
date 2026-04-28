@@ -86,6 +86,14 @@ def _write_tenant_file(repo_root, account_id, tenant):
         yaml.dump({'tenant': tenant}, f)
 
 
+def _write_tenant_split_yaml(repo_root, account_id, tenant, data):
+    tenant_dir = os.path.join(repo_root, 'accounts', account_id, tenant)
+    os.makedirs(tenant_dir, exist_ok=True)
+    with open(os.path.join(tenant_dir, 'security-groups.yaml'), 'w') as f:
+        yaml.dump(data, f)
+    return os.path.join(repo_root, 'accounts', account_id)
+
+
 # ============================================================
 # Schema validation tests
 # ============================================================
@@ -150,7 +158,7 @@ class TestSchemaValidation:
 
     def test_tenant_derived_owner_from_registry(self, repo_root):
         _write_owner_registry(repo_root, {
-            'owners': {'team-default': {'github_reviewers': ['org/default'] }},
+            'owners': {'team-default': {'github_reviewers': ['org/default']}},
             'tenants': {'default': {'owner_team': 'team-default', 'allowed_accounts': ['100000000001']}},
         })
         _write_tenant_file(repo_root, '100000000001', 'default')
@@ -179,6 +187,42 @@ class TestSchemaValidation:
         rules = [e.rule for e in summary.errors]
         assert 'tenant_registry_unknown' in rules
 
+    def test_tenant_split_layout_validates(self, repo_root):
+        _write_owner_registry(repo_root, {
+            'owners': {'team-default': {'github_reviewers': ['org/default']}},
+            'tenants': {'default': {'owner_team': 'team-default', 'allowed_accounts': ['100000000001']}},
+        })
+        account_dir = _write_tenant_split_yaml(repo_root, '100000000001', 'default', {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {'app': {'description': 'x', 'ingress': [], 'egress': []}},
+        })
+        validator = SecurityGroupValidator(account_dir)
+        summary = validator.validate()
+        assert len(summary.errors) == 0
+
+    def test_mixed_layout_fails(self, repo_root):
+        _write_owner_registry(repo_root, {
+            'owners': {'team-default': {'github_reviewers': ['org/default']}},
+            'tenants': {'default': {'owner_team': 'team-default', 'allowed_accounts': ['100000000001']}},
+        })
+        _write_sg_yaml(repo_root, '100000000001', {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {},
+        })
+        account_dir = _write_tenant_split_yaml(repo_root, '100000000001', 'default', {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {'app': {'description': 'x', 'ingress': [], 'egress': []}},
+        })
+        validator = SecurityGroupValidator(account_dir)
+        summary = validator.validate()
+        rules = [e.rule for e in summary.errors]
+        assert 'account_layout_conflict' in rules
 
 # ============================================================
 # Environment validation tests

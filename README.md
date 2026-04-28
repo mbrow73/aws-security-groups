@@ -8,7 +8,7 @@ Self-service security group management across AWS accounts via GitOps. Teams wri
 Team YAML → GitHub PR → Validation (Actions) → Terraform Enterprise → AWS Security Groups
 ```
 
-1. **Teams** edit `accounts/<account-id>/security-groups.yaml` and, when needed, set `accounts/<account-id>/tenant.yaml`
+1. **Teams** edit either `accounts/<account-id>/security-groups.yaml` or tenant-split files under `accounts/<account-id>/<tenant>/security-groups.yaml`
 2. **GitHub Actions** validates schema, guardrails, naming on PR
 3. **Terraform Enterprise** runs speculative plan on PR, applies on merge
 
@@ -24,7 +24,7 @@ cp -r accounts/_example accounts/<your-account-id>
 # 2. Edit your config
 vim accounts/<your-account-id>/security-groups.yaml
 
-# 2a. Optional, set tenant slug (derived owner mapping comes from owners.yaml)
+# Optional compatibility bridge for legacy single-tenant accounts
 echo 'tenant: default' > accounts/<your-account-id>/tenant.yaml
 
 # 3. Open a PR
@@ -41,7 +41,9 @@ git push origin team/my-sg-request
 │   ├── _example/              # Template — copy this
 │   └── <account-id>/          # One dir per AWS account
 │       ├── security-groups.yaml
-│       └── tenant.yaml        # Optional compatibility bridge, tenant slug only
+│       ├── tenant.yaml        # Optional legacy bridge, tenant slug only
+│       └── <tenant>/
+│           └── security-groups.yaml
 ├── owners.yaml                # Tenant and owner registry
 ├── modules/
 │   ├── security-group/        # Generic SG from YAML
@@ -68,6 +70,7 @@ PR validation catches:
 - Duplicate rule detection
 - Tag compliance
 - Unknown tenant / owner mappings
+- Mixed legacy + tenant-split layout conflicts
 
 ```bash
 # Run locally
@@ -85,27 +88,30 @@ pytest tests/test_validate.py -v
 - [Naming Conventions](docs/naming-conventions.md) — Standards and patterns
 - [TFE Setup](docs/tfe-setup.md) — Terraform Enterprise workspace configuration
 
-## Tenant Compatibility Mode
+## Tenant Compatibility and Tenant-Split Layout
 
-The platform now supports a backward-compatible tenant registry path for future multi-tenant evolution without breaking existing single-tenant accounts.
+The platform supports both layouts, but an account must use exactly one at a time.
 
-- `owners.yaml` defines approved tenant slugs and their owner mappings.
-- `accounts/<account-id>/tenant.yaml` is optional and contains only the tenant slug.
-- `owner_team` can be derived from the tenant registry instead of being typed into each account YAML.
+### Legacy single-file layout
 
-Current compatibility mode keeps the live account config shape stable:
-
-```yaml
-# accounts/<account-id>/tenant.yaml
-tenant: default
+```text
+accounts/
+  123456789012/
+    security-groups.yaml
+    tenant.yaml   # optional
 ```
 
-Future tenant split layout is not yet active. The current supported account config remains:
+### Tenant-split layout
 
-```yaml
-# accounts/<account-id>/security-groups.yaml
-account_id: "123456789012"
-environment: "prod"
-carid: "600001725"
-security_groups: {}
+```text
+accounts/
+  123456789012/
+    payments/security-groups.yaml
+    data-platform/security-groups.yaml
 ```
+
+Rules:
+- tenant slugs must exist in `owners.yaml`
+- legacy and tenant-split files cannot coexist in the same account dir
+- tenant files are merged into one normalized account config before Terraform runs
+- future requester YAML can stay lean, with tenant identity driven by directory slug and registry metadata
