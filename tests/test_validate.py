@@ -74,6 +74,18 @@ def _validate(repo_root, account_id, data):
     return validator.validate()
 
 
+def _write_owner_registry(repo_root, data):
+    with open(os.path.join(repo_root, 'owners.yaml'), 'w') as f:
+        yaml.dump(data, f)
+
+
+def _write_tenant_file(repo_root, account_id, tenant):
+    account_dir = os.path.join(repo_root, 'accounts', account_id)
+    os.makedirs(account_dir, exist_ok=True)
+    with open(os.path.join(account_dir, 'tenant.yaml'), 'w') as f:
+        yaml.dump({'tenant': tenant}, f)
+
+
 # ============================================================
 # Schema validation tests
 # ============================================================
@@ -135,6 +147,37 @@ class TestSchemaValidation:
         summary = _validate(repo_root, '100000000001', data)
         rules = [e.rule for e in summary.errors]
         assert 'schema_unknown_rule_key' in rules
+
+    def test_tenant_derived_owner_from_registry(self, repo_root):
+        _write_owner_registry(repo_root, {
+            'owners': {'team-default': {'github_reviewers': ['org/default'] }},
+            'tenants': {'default': {'owner_team': 'team-default', 'allowed_accounts': ['100000000001']}},
+        })
+        _write_tenant_file(repo_root, '100000000001', 'default')
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {},
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        tenant_errors = [e for e in summary.errors if e.rule and 'tenant_' in e.rule]
+        owner_errors = [e for e in summary.errors if e.rule and 'owner_' in e.rule]
+        assert len(tenant_errors) == 0
+        assert len(owner_errors) == 0
+
+    def test_unknown_tenant_fails(self, repo_root):
+        _write_owner_registry(repo_root, {'owners': {}, 'tenants': {}})
+        _write_tenant_file(repo_root, '100000000001', 'nope')
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {},
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        rules = [e.rule for e in summary.errors]
+        assert 'tenant_registry_unknown' in rules
 
 
 # ============================================================
