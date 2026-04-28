@@ -62,7 +62,6 @@ from typing import Any, Dict, List, Optional
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError
-from account_config import load_account_config
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -397,14 +396,17 @@ class WorkspaceProvisioner:
         return sorted([
             d.name for d in accounts_dir.iterdir()
             if d.is_dir() and re.match(r'^\d{12}$', d.name)
-            and ((d / "security-groups.yaml").exists() or list(d.glob('*/security-groups.yaml')))
+            and (d / "security-groups.yaml").exists()
         ])
 
     def _read_account_env(self, account_id: str) -> str:
         """Read the environment from an account's YAML."""
+        import yaml
+        yaml_path = self.repo_root / "accounts" / account_id / "security-groups.yaml"
         try:
-            data = load_account_config(self.repo_root / "accounts" / account_id)
-            return str(data.get("environment", "dev")).lower().strip()
+            with open(yaml_path) as f:
+                data = yaml.safe_load(f)
+                return data.get("environment", "dev").lower().strip()
         except Exception:
             return "dev"
 

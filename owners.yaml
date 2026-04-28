@@ -1,8 +1,0 @@
-owners:
-  team-default:
-    github_reviewers:
-      - mbrow73
-
-tenants:
-  default:
-    owner_team: team-default

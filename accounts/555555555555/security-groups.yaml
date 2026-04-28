@@ -1,0 +1,18 @@
+account_id: "555555555555"
+environment: "prod"
+carid: 1234
+default_region: "us-west-2"
+security_groups:
+  app:
+    description: "app sg"
+    egress:
+      - description: https out
+        protocol: tcp
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/8"]
+      - description: app8080
+        protocol: tcp
+        from_port: 8080
+        to_port: 8080
+        cidr_blocks: ["10.20.30.0/24"]

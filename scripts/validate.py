@@ -18,7 +18,6 @@ import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
-from account_config import load_account_config, AccountConfigError, AccountConfigConflict
 
 
 @dataclass
@@ -78,9 +77,8 @@ class SecurityGroupValidator:
     ]
 
     ALLOWED_TOP_LEVEL_KEYS = {
-        'account_id', 'environment', 'carid', 'default_region', 'regions', 'tags', 'security_groups', 'owner_team', 'tenant'
+        'account_id', 'environment', 'carid', 'default_region', 'regions', 'tags', 'security_groups'
     }
-    INTERNAL_TOP_LEVEL_KEYS = {'_sources', '_layout', '_tenants'}
     ALLOWED_SG_KEYS = {
         'description', 'region', 'regions', 'vpc_id', 'tags', 'ingress', 'egress'
     }
@@ -93,11 +91,9 @@ class SecurityGroupValidator:
     def __init__(self, account_dir: str):
         self.account_dir = Path(account_dir)
         self.config_file = self.account_dir / 'security-groups.yaml'
-        self.tenant_file = self.account_dir / 'tenant.yaml'
         self.repo_root = self._find_repo_root()
         self.guardrails = self._load_guardrails()
         self.prefix_lists = self._load_prefix_lists()
-        self.owner_registry = self._load_owner_registry()
         self.account_id = self.account_dir.name if self.account_dir.name.isdigit() else None
 
     def _find_repo_root(self) -> Path:
@@ -150,24 +146,10 @@ class SecurityGroupValidator:
         except Exception:
             return {"prefix_lists": {}}
 
-    def _load_owner_registry(self) -> Dict[str, Any]:
-        registry_path = self.repo_root / 'owners.yaml'
-        if not registry_path.exists():
-            return {'owners': {}, 'tenants': {}}
-        try:
-            with open(registry_path, 'r') as f:
-                data = yaml.safe_load(f) or {}
-            return {
-                'owners': data.get('owners', {}) or {},
-                'tenants': data.get('tenants', {}) or {},
-            }
-        except Exception:
-            return {'owners': {}, 'tenants': {}}
-
     def validate(self) -> ValidationSummary:
         summary = ValidationSummary()
 
-        if not self.config_file.exists() and not list(self.account_dir.glob('*/security-groups.yaml')):
+        if not self.config_file.exists():
             summary.add_result(ValidationResult(
                 level='error',
                 message=f"Config file not found: {self.config_file}",
@@ -176,26 +158,13 @@ class SecurityGroupValidator:
             return summary
 
         try:
-            data = load_account_config(self.account_dir)
+            with open(self.config_file, 'r') as f:
+                data = yaml.safe_load(f)
         except yaml.YAMLError as e:
             summary.add_result(ValidationResult(
                 level='error',
                 message=f"Invalid YAML syntax: {e}",
                 rule='yaml_syntax'
-            ))
-            return summary
-        except AccountConfigConflict as e:
-            summary.add_result(ValidationResult(
-                level='error',
-                message=str(e),
-                rule='account_layout_conflict'
-            ))
-            return summary
-        except AccountConfigError as e:
-            summary.add_result(ValidationResult(
-                level='error',
-                message=str(e),
-                rule='account_config_error'
             ))
             return summary
         except Exception as e:
@@ -216,7 +185,6 @@ class SecurityGroupValidator:
 
         self._validate_schema(data, summary)
         self._validate_account_id(data, summary)
-        self._validate_tenant_metadata(data, summary)
         self._validate_regions(data, summary)
         self._validate_security_groups(data, summary)
         self._validate_naming_conventions(data, summary)
@@ -244,8 +212,6 @@ class SecurityGroupValidator:
                 ))
 
         for key in data.keys():
-            if key in self.INTERNAL_TOP_LEVEL_KEYS:
-                continue
             if key not in self.ALLOWED_TOP_LEVEL_KEYS:
                 summary.add_result(ValidationResult(
                     level='error',
@@ -287,61 +253,6 @@ class SecurityGroupValidator:
                 level='error',
                 message=f"tags must be a mapping/object, got: {type(data['tags']).__name__}",
                 rule='schema_type'
-            ))
-
-        if 'tenant' in data and not isinstance(data['tenant'], str):
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"tenant must be a string, got: {type(data['tenant']).__name__}",
-                rule='schema_tenant_type'
-            ))
-
-        if 'owner_team' in data and not isinstance(data['owner_team'], str):
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"owner_team must be a string, got: {type(data['owner_team']).__name__}",
-                rule='schema_owner_team_type'
-            ))
-
-    def _validate_tenant_metadata(self, data: Dict[str, Any], summary: ValidationSummary):
-        tenant = data.get('tenant')
-        owner_team = data.get('owner_team')
-        tenants = self.owner_registry.get('tenants', {})
-        owners = self.owner_registry.get('owners', {})
-
-        if tenant:
-            if tenant not in tenants:
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"tenant '{tenant}' is not defined in owners.yaml",
-                    rule='tenant_registry_unknown',
-                    context=tenant
-                ))
-            else:
-                expected_owner = tenants[tenant].get('owner_team')
-                if expected_owner and owner_team and owner_team != expected_owner:
-                    summary.add_result(ValidationResult(
-                        level='error',
-                        message=f"owner_team '{owner_team}' does not match tenant '{tenant}' owner '{expected_owner}'",
-                        rule='tenant_owner_mismatch',
-                        context=tenant
-                    ))
-
-                allowed_accounts = tenants[tenant].get('allowed_accounts', []) or []
-                if allowed_accounts and data.get('account_id') and str(data['account_id']) not in [str(a) for a in allowed_accounts]:
-                    summary.add_result(ValidationResult(
-                        level='error',
-                        message=f"account_id {data['account_id']} is not allowed for tenant '{tenant}'",
-                        rule='tenant_account_scope',
-                        context=tenant
-                    ))
-
-        if owner_team and owner_team not in owners:
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"owner_team '{owner_team}' is not defined in owners.yaml",
-                rule='owner_registry_unknown',
-                context=owner_team
             ))
 
     def _validate_account_id(self, data: Dict[str, Any], summary: ValidationSummary):

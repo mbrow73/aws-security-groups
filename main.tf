@@ -46,8 +46,8 @@ locals {
   #   - "<car_id>-<env>-sg-123456789012"   (CloudIaC provisioned)
   account_id = regex("sg-(\\d{12})$", terraform.workspace)[0]
 
-  # Read normalized account YAML rendered from either legacy or tenant-split layout
-  config = yamldecode(file("${path.root}/.generated/${local.account_id}/security-groups.yaml"))
+  # Read account YAML
+  config = yamldecode(file("${path.root}/accounts/${local.account_id}/security-groups.yaml"))
 
   # Account-level defaults
   default_region = lookup(local.config, "default_region", "us-east-1")

@@ -25,7 +25,6 @@ import sys
 from pathlib import Path
 
 import yaml
-from account_config import load_account_config
 
 
 COMMENT_MARKER = "<!-- sg-change-summary-bot -->"
@@ -40,69 +39,16 @@ def load_yaml_file(path: str) -> dict:
         return {}
 
 
-def load_registry() -> dict:
-    try:
-        with open('owners.yaml') as f:
-            data = yaml.safe_load(f) or {}
-            return {
-                'owners': data.get('owners', {}) or {},
-                'tenants': data.get('tenants', {}) or {},
-            }
-    except Exception:
-        return {'owners': {}, 'tenants': {}}
-
-
-REGISTRY = load_registry()
-
-
-def enrich_with_tenant_metadata(account_id: str, data: dict) -> dict:
-    if not data or not isinstance(data, dict):
-        return data
-    tenant_file = Path(f'accounts/{account_id}/tenant.yaml')
-    if 'tenant' not in data and tenant_file.exists():
-        try:
-            tenant_data = yaml.safe_load(tenant_file.read_text()) or {}
-            if isinstance(tenant_data, dict) and tenant_data.get('tenant'):
-                data['tenant'] = tenant_data['tenant']
-        except Exception:
-            pass
-    if 'owner_team' not in data:
-        tenant = data.get('tenant')
-        if tenant:
-            data['owner_team'] = REGISTRY.get('tenants', {}).get(tenant, {}).get('owner_team')
-    return data
-
-
 def get_base_yaml(account_id: str, base_ref: str) -> tuple[dict, bool]:
     """Get the account YAML from the base branch. Returns (yaml, found)."""
     file_path = f"accounts/{account_id}/security-groups.yaml"
     try:
-        tenant_dirs = subprocess.run(
-            ["git", "ls-tree", "-r", "--name-only", f"origin/{base_ref}", f"accounts/{account_id}"],
-            capture_output=True, text=True, timeout=10
-        )
-        paths = [p.strip() for p in tenant_dirs.stdout.splitlines() if p.strip().endswith('security-groups.yaml')]
-        if any(p.count('/') == 3 for p in paths):
-            tmpdir = Path('.tmp-pr-summary') / account_id
-            if tmpdir.exists():
-                subprocess.run(['rm', '-rf', str(tmpdir)])
-            tmpdir.mkdir(parents=True, exist_ok=True)
-            for rel in [p for p in paths if p.startswith(f'accounts/{account_id}/')]:
-                out = subprocess.run(["git", "show", f"origin/{base_ref}:{rel}"], capture_output=True, text=True, timeout=10)
-                if out.returncode == 0:
-                    target = tmpdir / Path(rel).relative_to(f'accounts/{account_id}')
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_text(out.stdout)
-            tenant_meta = subprocess.run(["git", "show", f"origin/{base_ref}:owners.yaml"], capture_output=True, text=True, timeout=10)
-            if tenant_meta.returncode == 0:
-                Path('.tmp-pr-summary/owners.yaml').write_text(tenant_meta.stdout)
-            return load_account_config(tmpdir), True
         result = subprocess.run(
             ["git", "show", f"origin/{base_ref}:{file_path}"],
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
-            return enrich_with_tenant_metadata(account_id, yaml.safe_load(result.stdout) or {}), True
+            return yaml.safe_load(result.stdout) or {}, True
     except Exception:
         pass
     return {}, False
@@ -385,7 +331,7 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
 
 def analyze_account(account_id: str, base_ref: str) -> dict:
     """Analyze changes for a single account between base and head."""
-    head_data = load_account_config(Path('accounts') / account_id)
+    head_data = load_yaml_file(f"accounts/{account_id}/security-groups.yaml")
     base_data, base_found = get_base_yaml(account_id, base_ref)
 
     head_sgs = head_data.get("security_groups", {})
@@ -395,8 +341,6 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
         "id": account_id,
         "env": head_data.get("environment", base_data.get("environment", "unknown")),
         "carid": head_data.get("carid", base_data.get("carid", "—")),
-        "tenant": head_data.get("tenant", base_data.get("tenant", "—")),
-        "owner_team": head_data.get("owner_team", base_data.get("owner_team", "—")),
         "default_region": head_data.get("default_region", base_data.get("default_region", "us-east-1")),
         "regions": head_data.get("regions", base_data.get("regions", [])),
         "changes": {},
