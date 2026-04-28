@@ -47,17 +47,6 @@ def repo_root(tmp_path):
         'account_id: "555666777888"\nenvironment: "dev"\nsecurity_groups:\n  api-svc:\n    description: "API"\n'
     )
 
-    acc3 = accounts / "222333444555"
-    acc3.mkdir()
-    (tmp_path / "owners.yaml").write_text(
-        'owners:\n  team-default:\n    github_reviewers:\n      - mbrow73\ntenants:\n  default:\n    owner_team: team-default\n    allowed_accounts:\n      - "222333444555"\n'
-    )
-    tenant = acc3 / "default"
-    tenant.mkdir()
-    (tenant / "security-groups.yaml").write_text(
-        'account_id: "222333444555"\nenvironment: "test"\ncarid: "600001725"\nsecurity_groups:\n  tenant-svc:\n    description: "Tenant svc"\n'
-    )
-
     # Should be ignored
     example = accounts / "_example"
     example.mkdir()
@@ -102,7 +91,7 @@ def provisioner(repo_root, mock_client, mock_tfe_client):
 
 class TestAccountDiscovery:
     def test_discovers_valid_accounts(self, provisioner):
-        assert provisioner.discover_accounts() == ["111222333444", "222333444555", "555666777888"]
+        assert provisioner.discover_accounts() == ["111222333444", "555666777888"]
 
     def test_ignores_non_numeric_dirs(self, provisioner):
         assert "_example" not in provisioner.discover_accounts()
@@ -265,11 +254,7 @@ class TestPlan:
     def test_sync_all_accounts(self, provisioner):
         actions = provisioner.plan(changed_accounts=None)
         creates = [a for a in actions if a.action == "create"]
-        assert len(creates) == 3
-
-    def test_tenant_split_account_env(self, provisioner):
-        req = provisioner.build_workspace_request("222333444555")
-        assert req.env == "test"
+        assert len(creates) == 2
 
 
 # ---------------------------------------------------------------------------

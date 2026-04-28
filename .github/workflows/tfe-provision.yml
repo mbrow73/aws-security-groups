@@ -61,15 +61,6 @@ jobs:
       - name: Install dependencies
         run: pip install pyyaml
 
-      - name: Render normalized account configs
-        run: |
-          mkdir -p .generated
-          IFS=',' read -ra ACCOUNT_ARRAY <<< "${{ needs.detect-changes.outputs.changed-accounts }}"
-          for ACCOUNT in "${ACCOUNT_ARRAY[@]}"; do
-            mkdir -p ".generated/${ACCOUNT}"
-            python scripts/render_account_config.py "accounts/${ACCOUNT}" > ".generated/${ACCOUNT}/security-groups.yaml"
-          done
-
       - name: Provision workspaces and upload config
         env:
           CLDIAC_URL: ${{ secrets.CLDIAC_URL }}
