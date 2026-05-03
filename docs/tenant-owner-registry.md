@@ -182,8 +182,9 @@ Future owner-aware review should use the registry as input.
 
 Suggested review classes:
 
-1. **Baseline references**
-   - platform-owned refs such as `baseline_ref: vpc-endpoints`
+1. **Platform built-in SG references**
+   - platform-owned SGs such as `vpc-endpoints`
+   - requestors reference them with normal `security_groups` syntax
    - may become auto-approval eligible after a separate trust/reference policy is defined
 
 2. **Same-tenant references**
@@ -239,7 +240,8 @@ egress:
   - protocol: "tcp"
     from_port: 443
     to_port: 443
-    baseline_ref: "vpc-endpoints"
+    security_groups:
+      - "vpc-endpoints"
     description: "Access AWS VPC endpoints"
 ```
 

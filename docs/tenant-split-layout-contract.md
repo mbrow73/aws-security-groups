@@ -139,7 +139,7 @@ Initial tenant-split support should keep reference behavior conservative:
 
 - CIDR references are allowed under existing guardrails.
 - Prefix-list references are allowed under existing guardrails.
-- Baseline references are allowed only for known baseline refs.
+- Platform built-in SG references, such as `vpc-endpoints`, are cataloged in [Platform Security Groups](platform-security-groups.md) and referenced like normal SGs.
 - Same-account SG references need tenant-aware classification before enforcement changes.
 - Cross-tenant SG references should be explicit review-policy work, not implicit side effects.
 - Cross-account SG references remain discouraged; use CIDR or prefix-list boundaries by default.
