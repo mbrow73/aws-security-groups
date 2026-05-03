@@ -328,14 +328,16 @@ Recommended implementation order:
 
 1. document current single-tenant contract
 2. document future API/schema contract
-3. add optional ownership metadata to current YAML
-4. add lightweight owner registry
-5. validate metadata against registry
-6. improve PR/Slack summary output
-7. add owner-aware review hints
-8. design dormant tenant model
-9. add tenant split tests behind internal fixtures
-10. feature-flag tenant split per account
-11. migrate only when a real multi-tenant account appears
-12. enforce owner review
-13. build thin API/UI front door
+3. define default tenant compatibility semantics
+4. document tenant/owner registry design
+5. add warning-only registry validation
+6. improve PR/Slack summary output with registry context
+7. add shared tenant context resolver
+8. enforce current reviewer authority through Review Gate
+9. document dormant tenant-split layout contract
+10. add internal tenant-split loader tests behind fixtures
+11. feature-flag tenant split per account
+12. migrate only when a real multi-tenant account appears
+13. define trust/reference policy for baseline, same-tenant, and cross-tenant references
+14. build thin API/UI front door
+15. add owner-aware review automation only after the core model is stable

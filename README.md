@@ -80,6 +80,7 @@ pytest tests/test_validate.py -v
 - [Current Supported Model](docs/current-supported-model.md) — Current single-tenant account contract
 - [Future API / Schema Contract](docs/future-api-schema-contract.md) — Target API/front-door schema contract
 - [Tenant / Owner Registry Design](docs/tenant-owner-registry.md) — Future tenant ownership and onboarding model
+- [Tenant-Split Layout Contract](docs/tenant-split-layout-contract.md) — Dormant V2 tenant layout contract
 - [Review Gate](docs/review-gate.md) — Reviewer authority enforcement
 - [Operational Model](docs/operational-model.md) — Two-layer SG model, baselines vs team SGs
 - [Anti-Patterns & Mitigations](docs/anti-patterns-and-mitigations.md) — Risks and layered defenses
