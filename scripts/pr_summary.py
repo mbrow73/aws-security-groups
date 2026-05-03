@@ -39,6 +39,31 @@ def load_yaml_file(path: str) -> dict:
         return {}
 
 
+def load_tenant_registry() -> dict:
+    """Load tenant registry, returning empty registry on failure."""
+    data = load_yaml_file("registry/tenants.yaml")
+    tenants = data.get("tenants", {}) if isinstance(data, dict) else {}
+    return tenants if isinstance(tenants, dict) else {}
+
+
+def tenant_context_for_account(account_id: str) -> dict:
+    """Resolve current legacy account layout to implicit default tenant metadata."""
+    tenant_slug = "default"
+    registry = load_tenant_registry()
+    tenant = registry.get(tenant_slug, {}) if isinstance(registry.get(tenant_slug, {}), dict) else {}
+    allowed_accounts = [str(a) for a in tenant.get("allowed_accounts", []) or []]
+    account_allowed = not allowed_accounts or str(account_id) in allowed_accounts
+    return {
+        "tenant": tenant_slug,
+        "tenant_display_name": tenant.get("display_name", "Default Single-Tenant Account"),
+        "tenant_status": tenant.get("status", "unknown"),
+        "owner_team": tenant.get("owner_team") or "—",
+        "github_reviewers": tenant.get("github_reviewers", []) or [],
+        "slack_channel": tenant.get("slack_channel") or "—",
+        "account_allowed": account_allowed,
+    }
+
+
 def get_base_yaml(account_id: str, base_ref: str) -> tuple[dict, bool]:
     """Get the account YAML from the base branch. Returns (yaml, found)."""
     file_path = f"accounts/{account_id}/security-groups.yaml"
@@ -194,8 +219,15 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
         env = account["env"]
         carid = account.get("carid", "—")
         env_emoji = "🔴" if env == "prod" else "🟢"
+        tenant = account.get("tenant", "default")
+        tenant_display = account.get("tenant_display_name", "Default Single-Tenant Account")
+        owner_team = account.get("owner_team", "—")
+        tenant_status = account.get("tenant_status", "unknown")
 
         lines.append(f"**Account:** `{account_id}` ({env}) | **CARID:** `{carid}`\n")
+        lines.append(f"**Tenant:** `{tenant}` ({tenant_display}) | **Owner:** `{owner_team}` | **Status:** `{tenant_status}`\n")
+        if not account.get("account_allowed", True):
+            lines.append("⚠️ **Registry warning:** account is not listed under this tenant's `allowed_accounts`.\n")
         lines.append("---\n")
 
         # Group by region
@@ -346,6 +378,7 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
         "changes": {},
         "base_found": base_found,
     }
+    result.update(tenant_context_for_account(account_id))
 
     all_sg_names = set(list(head_sgs.keys()) + list(base_sgs.keys()))
 
