@@ -56,7 +56,8 @@ This keeps GHE team details centralized and avoids repeating raw team URLs in te
 | Framework / registry / workflow change | 2 `platform-sg` |
 | Platform built-in SG ref, e.g. `vpc-endpoints` | no extra reviewer |
 | Same-tenant SG ref | no extra reviewer |
-| Cross-tenant SG ref | 1 referenced/target tenant `review_authority` |
+| Cross-tenant SG ref with matching target-owned reference grant | no extra reviewer |
+| Cross-tenant SG ref without matching grant | 1 referenced/target tenant `review_authority` |
 | Unknown SG ref | validation error |
 
 Review Gate combines requirements by authority and uses the highest required count for each authority.
@@ -66,7 +67,7 @@ Example: if a prod tenant change requires 2 approvals from `payments-sg` and als
 - 2 approvals from `payments-sg`
 - 1 approval from `data-platform` authority
 
-It does not add requester-side review sprawl for cross-tenant references; only the referenced owner is mandatory beyond the source change's normal policy.
+It does not add requester-side review sprawl for cross-tenant references; only the referenced owner is mandatory beyond the source change's normal policy. If the target tenant publishes a matching [Reference Grant](reference-grants.md), the extra target-owner approval is skipped.
 
 ## Tenant onboarding
 
