@@ -193,12 +193,25 @@ Suggested review classes:
 4. **Cross-account references**
    - should remain CIDR/prefix-list based unless explicitly approved by platform/security
 
+## Current Warning-Only Validation
+
+The first implementation phase creates `registry/tenants.yaml` and validates the current legacy layout against the implicit `default` tenant.
+
+Current behavior:
+
+- `accounts/<account-id>/security-groups.yaml` resolves as tenant `default`
+- malformed `registry/tenants.yaml` is an error
+- missing `default` tenant is a warning
+- account not listed in `default.allowed_accounts` is a warning
+- deprecated/disabled tenant status is a warning
+
+Warnings are non-blocking in PR validation.
+
 ## Out of Scope for This Step
 
 This registry design does not yet implement:
 
-- active validator enforcement
-- actual `registry/tenants.yaml` runtime loading
+- hard validator enforcement
 - owner-aware PR review requests
 - auto-approval logic
 - tenant-split deployment layout

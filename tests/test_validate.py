@@ -67,6 +67,13 @@ def _write_sg_yaml(repo_root, account_id, data):
     return account_dir
 
 
+def _write_tenant_registry(repo_root, tenants):
+    registry_dir = os.path.join(repo_root, 'registry')
+    os.makedirs(registry_dir, exist_ok=True)
+    with open(os.path.join(registry_dir, 'tenants.yaml'), 'w') as f:
+        yaml.dump({'tenants': tenants}, f)
+
+
 def _validate(repo_root, account_id, data):
     """Helper to write yaml, validate, and return summary."""
     account_dir = _write_sg_yaml(repo_root, account_id, data)
@@ -135,6 +142,74 @@ class TestSchemaValidation:
         summary = _validate(repo_root, '100000000001', data)
         rules = [e.rule for e in summary.errors]
         assert 'schema_unknown_rule_key' in rules
+
+
+class TestTenantRegistryValidation:
+    def test_default_tenant_registry_allows_account(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'default': {
+                'status': 'legacy',
+                'allowed_accounts': ['100000000001'],
+            },
+        })
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {},
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        rules = [w.rule for w in summary.warnings]
+        assert 'tenant_registry_account_scope' not in rules
+
+    def test_default_tenant_registry_warns_on_account_scope(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'default': {
+                'status': 'legacy',
+                'allowed_accounts': ['100000000002'],
+            },
+        })
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {},
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        rules = [w.rule for w in summary.warnings]
+        assert 'tenant_registry_account_scope' in rules
+
+    def test_missing_default_tenant_warns(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'payments-platform': {
+                'status': 'active',
+                'allowed_accounts': ['100000000001'],
+            },
+        })
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {},
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        rules = [w.rule for w in summary.warnings]
+        assert 'tenant_registry_missing_default' in rules
+
+    def test_invalid_tenant_registry_errors(self, repo_root):
+        registry_dir = os.path.join(repo_root, 'registry')
+        os.makedirs(registry_dir, exist_ok=True)
+        with open(os.path.join(registry_dir, 'tenants.yaml'), 'w') as f:
+            f.write('tenants: [not-a-map]\n')
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {},
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        rules = [e.rule for e in summary.errors]
+        assert 'tenant_registry_invalid' in rules
 
 
 # ============================================================

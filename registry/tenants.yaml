@@ -1,0 +1,16 @@
+tenants:
+  default:
+    display_name: "Default Single-Tenant Account"
+    description: "Compatibility tenant for current single-file account configs."
+    status: "legacy"
+    owner_team: null
+    github_reviewers: []
+    slack_channel: null
+    carids:
+      - "600001725"
+    allowed_accounts:
+      - "100000000001"
+      - "100000000002"
+      - "222333444555"
+      - "555555555558"
+      - "999888777666"
