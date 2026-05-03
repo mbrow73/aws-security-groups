@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 
+from tenant_context import resolve_tenant_context
+
 
 @dataclass
 class ValidationResult:
@@ -94,8 +96,8 @@ class SecurityGroupValidator:
         self.repo_root = self._find_repo_root()
         self.guardrails = self._load_guardrails()
         self.prefix_lists = self._load_prefix_lists()
-        self.tenant_registry, self.tenant_registry_error = self._load_tenant_registry()
-        self.account_id = self.account_dir.name if self.account_dir.name.isdigit() else None
+        self.tenant_context = resolve_tenant_context(self.config_file, self.repo_root)
+        self.account_id = self.tenant_context.account_id
 
     def _find_repo_root(self) -> Path:
         current = self.account_dir.resolve()
@@ -146,26 +148,6 @@ class SecurityGroupValidator:
                 return {"prefix_lists": {}}
         except Exception:
             return {"prefix_lists": {}}
-
-    def _load_tenant_registry(self) -> tuple[Dict[str, Any], Optional[str]]:
-        registry_path = self.repo_root / 'registry' / 'tenants.yaml'
-        if not registry_path.exists():
-            return {}, None
-        try:
-            with open(registry_path, 'r') as f:
-                data = yaml.safe_load(f) or {}
-            if not isinstance(data, dict):
-                return {}, "registry/tenants.yaml must be a mapping/object"
-            tenants = data.get('tenants')
-            if tenants is None:
-                return {}, "registry/tenants.yaml missing required top-level 'tenants' mapping"
-            if not isinstance(tenants, dict):
-                return {}, "registry/tenants.yaml 'tenants' must be a mapping/object"
-            return tenants, None
-        except yaml.YAMLError as e:
-            return {}, f"Invalid YAML syntax in registry/tenants.yaml: {e}"
-        except Exception as e:
-            return {}, f"Failed to read registry/tenants.yaml: {e}"
 
     def validate(self) -> ValidationSummary:
         summary = ValidationSummary()
@@ -295,59 +277,52 @@ class SecurityGroupValidator:
             ))
 
     def _validate_tenant_registry(self, data: Dict[str, Any], summary: ValidationSummary):
-        if self.tenant_registry_error:
+        context = self.tenant_context
+
+        if context.registry_error:
             summary.add_result(ValidationResult(
                 level='error',
-                message=self.tenant_registry_error,
+                message=context.registry_error,
                 rule='tenant_registry_invalid'
             ))
             return
 
-        if not self.tenant_registry:
+        if not context.registry_found:
             return
 
-        # Current single-file account layout resolves as implicit default tenant.
-        tenant_slug = 'default'
-        tenant = self.tenant_registry.get(tenant_slug)
-
-        if tenant is None:
+        if not context.tenant_found:
             summary.add_result(ValidationResult(
                 level='warning',
-                message="Implicit tenant 'default' is not defined in registry/tenants.yaml",
-                rule='tenant_registry_missing_default',
-                context=tenant_slug
+                message=f"Tenant '{context.tenant}' is not defined in registry/tenants.yaml",
+                rule='tenant_registry_missing_tenant',
+                context=context.tenant
             ))
+            if context.tenant == 'default':
+                summary.add_result(ValidationResult(
+                    level='warning',
+                    message="Implicit tenant 'default' is not defined in registry/tenants.yaml",
+                    rule='tenant_registry_missing_default',
+                    context=context.tenant
+                ))
             return
 
-        if not isinstance(tenant, dict):
-            summary.add_result(ValidationResult(
-                level='error',
-                message="Tenant registry entry 'default' must be a mapping/object",
-                rule='tenant_registry_invalid_tenant',
-                context=tenant_slug
-            ))
-            return
-
-        status = tenant.get('status')
+        status = context.status
         if status in ['deprecated', 'disabled']:
             summary.add_result(ValidationResult(
                 level='warning',
-                message=f"Implicit tenant 'default' has status '{status}' in registry/tenants.yaml",
+                message=f"Tenant '{context.tenant}' has status '{status}' in registry/tenants.yaml",
                 rule='tenant_registry_status',
-                context=tenant_slug
+                context=context.tenant
             ))
 
-        allowed_accounts = tenant.get('allowed_accounts', []) or []
-        if allowed_accounts and data.get('account_id'):
+        if context.allowed_accounts and data.get('account_id') and not context.account_allowed:
             account_id = str(data['account_id'])
-            allowed = [str(a) for a in allowed_accounts]
-            if account_id not in allowed:
-                summary.add_result(ValidationResult(
-                    level='warning',
-                    message=f"Account {account_id} is not listed under tenant 'default' allowed_accounts in registry/tenants.yaml",
-                    rule='tenant_registry_account_scope',
-                    context=account_id
-                ))
+            summary.add_result(ValidationResult(
+                level='warning',
+                message=f"Account {account_id} is not listed under tenant '{context.tenant}' allowed_accounts in registry/tenants.yaml",
+                rule='tenant_registry_account_scope',
+                context=account_id
+            ))
 
     def _validate_regions(self, data: Dict[str, Any], summary: ValidationSummary):
         allowed_regions = self.guardrails.get('validation', {}).get('allowed_regions', ['us-east-1', 'us-west-2'])

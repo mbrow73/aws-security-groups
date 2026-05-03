@@ -207,9 +207,10 @@ Current behavior:
 
 Warnings are non-blocking in PR validation.
 
-PR and Slack summaries include current registry context for each changed account:
+PR and Slack summaries use the shared tenant context resolver and include current registry context for each changed account:
 
-- implicit tenant slug
+- implicit legacy tenant slug (`default`) for `accounts/<account-id>/security-groups.yaml`
+- future path tenant slug for `accounts/<account-id>/<tenant>/security-groups.yaml`
 - tenant display name / status
 - owner team when present
 - whether the changed account is listed under tenant `allowed_accounts`
