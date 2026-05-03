@@ -24,8 +24,14 @@ jobs:
 
       - name: Check review requirements
         uses: actions/github-script@v7
+        env:
+          REVIEW_GATE_PAT: ${{ secrets.REVIEW_GATE_PAT }}
         with:
           script: |
+            const fs = require('fs');
+            const https = require('https');
+            const yaml = require('js-yaml');
+
             const { owner, repo } = context.repo;
             const pr_number = context.payload.pull_request?.number
               || context.payload.review?.pull_request?.number;
@@ -35,20 +41,27 @@ jobs:
               return;
             }
 
-            // Get the PR to find the head SHA
+            const registryPath = 'registry/review-authorities.yaml';
+            if (!fs.existsSync(registryPath)) {
+              core.setFailed(`${registryPath} is required for Review Gate`);
+              return;
+            }
+
+            const registry = yaml.load(fs.readFileSync(registryPath, 'utf8')) || {};
+            const authorities = registry.authorities || {};
+            const rules = registry.rules || {};
+            const token = process.env.REVIEW_GATE_PAT;
+
             const pr = await github.rest.pulls.get({
               owner, repo, pull_number: pr_number
             });
             const sha = pr.data.head.sha;
 
-            // Get changed files in the PR
             const files = await github.paginate(
               github.rest.pulls.listFiles,
               { owner, repo, pull_number: pr_number }
             );
 
-            // Check if any changed account YAML has environment: prod
-            const fs = require('fs');
             let hasProd = false;
             const prodAccounts = [];
             const nonprodAccounts = [];
@@ -63,13 +76,11 @@ jobs:
 
               try {
                 const content = fs.readFileSync(file.filename, 'utf8');
-                // Match environment value — tolerates quotes, trailing
-                // comments, whitespace, and \r\n line endings.
                 const envMatch = content.match(
                   /^environment:\s*["']?(\w+)["']?/m
                 );
                 const env = envMatch?.[1]?.toLowerCase() || 'prod';
-                console.log(`  ${file.filename}: environment=${env} (raw match: ${envMatch?.[0]})`);
+                console.log(`  ${file.filename}: environment=${env}`);
 
                 if (env === 'prod') {
                   hasProd = true;
@@ -78,16 +89,16 @@ jobs:
                   nonprodAccounts.push(accountId);
                 }
               } catch (e) {
-                console.log(
-                  `⚠️ Could not read ${file.filename}, assuming prod`
-                );
+                console.log(`⚠️ Could not read ${file.filename}, assuming prod`);
                 hasProd = true;
                 prodAccounts.push(accountId);
               }
             }
 
-            // Check if framework files changed (modules, scripts, workflows, etc.)
-            const FRAMEWORK_PATHS = ['modules/', 'scripts/', '.github/', 'guardrails.yaml', 'known-prefix-lists.yaml'];
+            const FRAMEWORK_PATHS = [
+              'modules/', 'scripts/', '.github/', 'registry/',
+              'guardrails.yaml', 'known-prefix-lists.yaml', 'shared-prefix-lists.yaml'
+            ];
             const frameworkFiles = files.filter(f =>
               FRAMEWORK_PATHS.some(p => f.filename.startsWith(p) || f.filename === p)
             );
@@ -98,14 +109,22 @@ jobs:
               frameworkFiles.forEach(f => console.log(`  ${f.filename}`));
             }
 
-            // Approval requirements:
-            //   prod account YAML     → 2 (high-risk change)
-            //   framework/modules     → 2 (affects all accounts)
-            //   nonprod account YAML  → 1
-            const required = (hasProd || frameworkChanged) ? 2 : 1;
-            const envLabel = hasProd ? 'prod' : frameworkChanged ? 'framework' : 'nonprod';
+            const ruleName = frameworkChanged ? 'framework' : hasProd ? 'prod_account' : 'nonprod_account';
+            const rule = rules[ruleName];
+            if (!rule) {
+              core.setFailed(`Missing review rule '${ruleName}' in ${registryPath}`);
+              return;
+            }
 
-            // Get current approvals (deduplicated by user)
+            const authority = authorities[rule.authority];
+            if (!authority) {
+              core.setFailed(`Missing review authority '${rule.authority}' in ${registryPath}`);
+              return;
+            }
+
+            const requiredAuthorityApprovals = Number(rule.required_authority_approvals || 1);
+            const envLabel = ruleName.replace('_', '-');
+
             const reviews = await github.rest.pulls.listReviews({
               owner, repo, pull_number: pr_number
             });
@@ -117,27 +136,78 @@ jobs:
               }
             }
 
-            const approvals = [...latestByUser.values()]
-              .filter(state => state === 'APPROVED').length;
+            const approvingUsers = [...latestByUser.entries()]
+              .filter(([, state]) => state === 'APPROVED')
+              .map(([login]) => login);
 
-            const passed = approvals >= required;
+            async function getTeamMembers(host, org, teamSlug, pat) {
+              if (!pat) {
+                throw new Error('REVIEW_GATE_PAT secret is required to resolve GHE team membership');
+              }
 
-            // Write a single commit status — this is what branch protection checks.
-            // Both pull_request and pull_request_review triggers update the SAME
-            // status on the SAME SHA, so there's only ever one check to evaluate.
+              const members = new Set();
+              let page = 1;
+              while (true) {
+                const path = `/api/v3/orgs/${org}/teams/${teamSlug}/members?per_page=100&page=${page}`;
+                const data = await new Promise((resolve, reject) => {
+                  const req = https.request({
+                    hostname: host,
+                    path,
+                    method: 'GET',
+                    headers: {
+                      'Authorization': `Bearer ${pat}`,
+                      'Accept': 'application/vnd.github+json',
+                      'User-Agent': 'aws-security-groups-review-gate'
+                    }
+                  }, res => {
+                    let body = '';
+                    res.on('data', chunk => body += chunk);
+                    res.on('end', () => {
+                      if (res.statusCode < 200 || res.statusCode >= 300) {
+                        reject(new Error(`GHE team lookup failed with HTTP ${res.statusCode}: ${body}`));
+                        return;
+                      }
+                      resolve(JSON.parse(body));
+                    });
+                  });
+                  req.on('error', reject);
+                  req.end();
+                });
+
+                for (const member of data) {
+                  if (member.login) members.add(member.login);
+                }
+                if (!Array.isArray(data) || data.length < 100) break;
+                page += 1;
+              }
+              return members;
+            }
+
+            const teamMembers = await getTeamMembers(
+              authority.ghe_host,
+              authority.org,
+              authority.team_slug,
+              token
+            );
+
+            const authorityApprovers = approvingUsers.filter(user => teamMembers.has(user));
+            const passed = authorityApprovers.length >= requiredAuthorityApprovals;
+            const teamRef = `${authority.org}/${authority.team_slug}`;
             const description = passed
-              ? `✅ ${approvals}/${required} approvals (${envLabel})`
-              : `❌ ${approvals}/${required} approvals needed (${envLabel})`;
+              ? `✅ ${authorityApprovers.length}/${requiredAuthorityApprovals} ${teamRef} approvals (${envLabel})`
+              : `❌ ${authorityApprovers.length}/${requiredAuthorityApprovals} ${teamRef} approvals needed (${envLabel})`;
 
             await github.rest.repos.createCommitStatus({
               owner, repo, sha,
               state: passed ? 'success' : 'pending',
               context: 'Review Gate',
               description: description.substring(0, 140),
-              target_url: `https://github.com/${owner}/${repo}/pull/${pr_number}#pullrequestreview`
+              target_url: `${pr.data.html_url}#pullrequestreview`
             });
 
             console.log(`Review Gate: ${description}`);
+            console.log(`Approving users: ${approvingUsers.join(', ') || 'none'}`);
+            console.log(`Authority approvers: ${authorityApprovers.join(', ') || 'none'}`);
 
             if (prodAccounts.length > 0) {
               console.log(`Prod accounts: ${prodAccounts.join(', ')}`);
