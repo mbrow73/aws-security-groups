@@ -38,7 +38,15 @@ def build_delta_blocks(changed_accounts: str, base_ref: str) -> tuple[list, str,
         if env == "prod":
             has_prod = True
         account_regions = account.get("regions", []) or [account.get("default_region", "us-east-1")]
-        lines.append(f"*`{account['id']}`* ({env}) — regions: {', '.join(account_regions)}")
+        tenant = account.get("tenant", "default")
+        tenant_status = account.get("tenant_status", "unknown")
+        owner_team = account.get("owner_team", "—")
+        allowed_icon = "✅" if account.get("account_allowed", True) else "⚠️"
+        lines.append(
+            f"*`{account['id']}`* ({env}) — tenant: `{tenant}` ({tenant_status}) — owner: `{owner_team}` — regions: {', '.join(account_regions)} {allowed_icon}"
+        )
+        if not account.get("account_allowed", True):
+            lines.append("  ⚠️ account not listed in tenant `allowed_accounts`")
 
         if not account.get("base_found", True):
             changes = account.get("changes", {})
