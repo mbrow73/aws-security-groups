@@ -211,6 +211,57 @@ class TestTenantRegistryValidation:
         rules = [e.rule for e in summary.errors]
         assert 'tenant_registry_invalid' in rules
 
+    def test_tenant_layout_is_detected_but_disabled(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'payments': {
+                'status': 'active',
+                'allowed_accounts': ['100000000001'],
+            },
+        })
+        account_dir = os.path.join(repo_root, 'accounts', '100000000001')
+        tenant_dir = os.path.join(account_dir, 'payments')
+        os.makedirs(tenant_dir, exist_ok=True)
+        with open(os.path.join(tenant_dir, 'security-groups.yaml'), 'w') as f:
+            yaml.dump({
+                'account_id': '100000000001',
+                'environment': 'prod',
+                'carid': '600001725',
+                'security_groups': {},
+            }, f)
+
+        validator = SecurityGroupValidator(account_dir)
+        summary = validator.validate()
+        rules = [e.rule for e in summary.errors]
+        assert 'tenant_layout_disabled' in rules
+
+    def test_mixed_layout_errors_through_loader(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'default': {
+                'status': 'legacy',
+                'allowed_accounts': ['100000000001'],
+            },
+            'payments': {
+                'status': 'active',
+                'allowed_accounts': ['100000000001'],
+            },
+        })
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {},
+        }
+        account_dir = _write_sg_yaml(repo_root, '100000000001', data)
+        tenant_dir = os.path.join(account_dir, 'payments')
+        os.makedirs(tenant_dir, exist_ok=True)
+        with open(os.path.join(tenant_dir, 'security-groups.yaml'), 'w') as f:
+            yaml.dump(data, f)
+
+        validator = SecurityGroupValidator(account_dir)
+        summary = validator.validate()
+        rules = [e.rule for e in summary.errors]
+        assert 'account_config_loader' in rules
+
 
 # ============================================================
 # Environment validation tests

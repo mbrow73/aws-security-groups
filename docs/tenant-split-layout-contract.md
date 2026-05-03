@@ -155,7 +155,7 @@ The tenant-aware loader in `scripts/account_config.py` should:
 7. produce the current Terraform-compatible normalized account config
 8. expose tenant/source metadata to PR summaries and future API responses
 
-The loader is foundation code only until a future feature flag wires tenant mode into validation and deployment flows.
+The loader is foundation code only. Validation now uses the loader as its input layer for legacy accounts, but tenant-split layout still returns a clear disabled-mode error until a future feature flag enables tenant validation/runtime for a specific account.
 
 ## Non-goals
 

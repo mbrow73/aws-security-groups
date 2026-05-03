@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 
+from account_config import load_account_config
 from tenant_context import resolve_tenant_context
 
 
@@ -96,6 +97,7 @@ class SecurityGroupValidator:
         self.repo_root = self._find_repo_root()
         self.guardrails = self._load_guardrails()
         self.prefix_lists = self._load_prefix_lists()
+        self.account_config = load_account_config(self.account_dir, self.repo_root)
         self.tenant_context = resolve_tenant_context(self.config_file, self.repo_root)
         self.account_id = self.tenant_context.account_id
 
@@ -152,31 +154,31 @@ class SecurityGroupValidator:
     def validate(self) -> ValidationSummary:
         summary = ValidationSummary()
 
-        if not self.config_file.exists():
+        for error in self.account_config.errors:
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Config file not found: {self.config_file}",
-                rule='file_exists'
+                message=error,
+                rule='account_config_loader'
             ))
+
+        for warning in self.account_config.warnings:
+            summary.add_result(ValidationResult(
+                level='warning',
+                message=warning,
+                rule='account_config_loader'
+            ))
+
+        if self.account_config.layout == 'tenant':
+            summary.add_result(ValidationResult(
+                level='error',
+                message="Tenant-split account layout is detected but not enabled for validation/runtime yet",
+                rule='tenant_layout_disabled'
+            ))
+
+        if self.account_config.errors or self.account_config.layout == 'tenant':
             return summary
 
-        try:
-            with open(self.config_file, 'r') as f:
-                data = yaml.safe_load(f)
-        except yaml.YAMLError as e:
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"Invalid YAML syntax: {e}",
-                rule='yaml_syntax'
-            ))
-            return summary
-        except Exception as e:
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"Failed to read config file: {e}",
-                rule='file_read'
-            ))
-            return summary
+        data = self.account_config.config
 
         if not data:
             summary.add_result(ValidationResult(
