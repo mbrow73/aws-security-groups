@@ -102,6 +102,41 @@ def test_classifies_cross_tenant(repo_root):
     assert result.target_tenant == 'data'
 
 
+def test_classifies_cross_tenant_granted(repo_root):
+    account_dir = _setup_tenant_account(repo_root)
+    registry_path = os.path.join(repo_root, 'registry', 'tenants.yaml')
+    with open(registry_path, 'r') as f:
+        registry = yaml.safe_load(f)
+    registry['tenants']['data']['reference_grants'] = [{
+        'name': 'allow-https-to-data-api',
+        'target_sgs': ['data-api'],
+        'source_tenants': ['payments'],
+        'protocols': ['tcp'],
+        'ports': [443],
+        'directions': ['egress'],
+        'decision': 'auto_approved',
+        'expires': None,
+    }]
+    with open(registry_path, 'w') as f:
+        yaml.safe_dump(registry, f)
+    loaded = load_account_config(account_dir, repo_root)
+
+    result = classify_sg_reference(
+        loaded,
+        {},
+        'payments-web',
+        'data-api',
+        tenant_registry=registry['tenants'],
+        direction='egress',
+        protocol='tcp',
+        from_port=443,
+        to_port=443,
+    )
+
+    assert result.ref_class == 'cross_tenant_granted'
+    assert result.grant_name == 'allow-https-to-data-api'
+
+
 def test_classifies_unknown(repo_root):
     account_dir = _setup_tenant_account(repo_root)
     loaded = load_account_config(account_dir, repo_root)
