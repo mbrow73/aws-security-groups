@@ -263,6 +263,68 @@ class TestTenantRegistryValidation:
         rules = [e.rule for e in summary.errors]
         assert 'account_config_loader' in rules
 
+    def test_unknown_sg_reference_errors(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'default': {
+                'status': 'legacy',
+                'allowed_accounts': ['100000000001'],
+            },
+        })
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {
+                'app-web': {
+                    'description': 'web',
+                    'egress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'security_groups': ['missing-sg'],
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        rules = [e.rule for e in summary.errors]
+        assert 'sg_ref_unknown' in rules
+
+    def test_platform_builtin_sg_reference_is_allowed(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'default': {
+                'status': 'legacy',
+                'allowed_accounts': ['100000000001'],
+            },
+        })
+        registry_dir = os.path.join(repo_root, 'registry')
+        os.makedirs(registry_dir, exist_ok=True)
+        with open(os.path.join(registry_dir, 'platform-security-groups.yaml'), 'w') as f:
+            yaml.dump({
+                'platform_security_groups': {
+                    'vpc-endpoints': {'owner_authority': 'platform-sg'},
+                },
+            }, f)
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {
+                'app-web': {
+                    'description': 'web',
+                    'egress': [{
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'security_groups': ['vpc-endpoints'],
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        assert 'sg_ref_unknown' not in [e.rule for e in summary.errors]
+        assert 'sg_ref_platform_builtin' in [i.rule for i in summary.info]
+
 
 # ============================================================
 # Environment validation tests
