@@ -211,7 +211,7 @@ class TestTenantRegistryValidation:
         rules = [e.rule for e in summary.errors]
         assert 'tenant_registry_invalid' in rules
 
-    def test_tenant_layout_is_detected_but_disabled(self, repo_root):
+    def test_tenant_layout_validates_when_layout_is_tenant_only(self, repo_root):
         _write_tenant_registry(repo_root, {
             'payments': {
                 'status': 'active',
@@ -232,7 +232,8 @@ class TestTenantRegistryValidation:
         validator = SecurityGroupValidator(account_dir)
         summary = validator.validate()
         rules = [e.rule for e in summary.errors]
-        assert 'tenant_layout_disabled' in rules
+        assert 'tenant_layout_disabled' not in rules
+        assert not summary.has_errors
 
     def test_mixed_layout_errors_through_loader(self, repo_root):
         _write_tenant_registry(repo_root, {
