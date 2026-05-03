@@ -4,6 +4,7 @@ tenants:
     description: "Compatibility tenant for current single-file account configs."
     status: "legacy"
     owner_team: null
+    review_authority: "platform-sg"
     github_reviewers: []
     slack_channel: null
     carids:

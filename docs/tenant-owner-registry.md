@@ -39,6 +39,7 @@ tenants:
     description: "Compatibility tenant for legacy single-file account configs."
     status: "legacy"
     owner_team: null
+    review_authority: "platform-sg"
     github_reviewers: []
     slack_channel: null
     carids: []
@@ -49,6 +50,7 @@ tenants:
     description: "Payments platform ownership domain."
     status: "active"
     owner_team: "payments-platform"
+    review_authority: "payments-sg"
     github_reviewers:
       - "org/payments-platform-approvers"
     slack_channel: "payments-platform-netsec"
@@ -87,10 +89,15 @@ Suggested values:
 ### `owner_team`
 Stable internal owner slug. This may match the tenant slug when that is cleanest.
 
-### `github_reviewers`
-GitHub users or teams to request for future owner-aware review.
+### `review_authority`
+Named authority from `registry/review-authorities.yaml`.
 
-Prefer GitHub teams over individual users.
+Review Gate uses this field for enforcement. It resolves the authority to actual GitHub Enterprise team membership using `REVIEW_GATE_PAT`.
+
+### `github_reviewers`
+GitHub users or teams to request for native reviewer UX.
+
+Prefer GitHub teams over individual users. Enforcement should use `review_authority`, not this field.
 
 ### `slack_channel`
 Optional notification target for future Slack/PR summary routing.
@@ -109,7 +116,7 @@ Requestors should be able to find their tenant by checking:
 
 - tenant slug
 - display name
-- GitHub reviewer team
+- review authority / GitHub reviewer team
 - CARID
 - AWS account ID
 

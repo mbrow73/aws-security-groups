@@ -41,59 +41,31 @@ jobs:
               return;
             }
 
-            const registryPath = 'registry/review-authorities.yaml';
-            if (!fs.existsSync(registryPath)) {
-              core.setFailed(`${registryPath} is required for Review Gate`);
-              return;
-            }
+            const authorityRegistryPath = 'registry/review-authorities.yaml';
+            const tenantRegistryPath = 'registry/tenants.yaml';
+            const platformSgRegistryPath = 'registry/platform-security-groups.yaml';
 
-            const registry = yaml.load(fs.readFileSync(registryPath, 'utf8')) || {};
-            const authorities = registry.authorities || {};
-            const rules = registry.rules || {};
-            const token = process.env.REVIEW_GATE_PAT;
-
-            const pr = await github.rest.pulls.get({
-              owner, repo, pull_number: pr_number
-            });
-            const sha = pr.data.head.sha;
-
-            const files = await github.paginate(
-              github.rest.pulls.listFiles,
-              { owner, repo, pull_number: pr_number }
-            );
-
-            let hasProd = false;
-            const prodAccounts = [];
-            const nonprodAccounts = [];
-
-            for (const file of files) {
-              const match = file.filename.match(
-                /^accounts\/(\d{12})(?:\/[^\/]+)?\/security-groups\.yaml$/
-              );
-              if (!match) continue;
-
-              const accountId = match[1];
-
-              try {
-                const content = fs.readFileSync(file.filename, 'utf8');
-                const envMatch = content.match(
-                  /^environment:\s*["']?(\w+)["']?/m
-                );
-                const env = envMatch?.[1]?.toLowerCase() || 'prod';
-                console.log(`  ${file.filename}: environment=${env}`);
-
-                if (env === 'prod') {
-                  hasProd = true;
-                  prodAccounts.push(accountId);
-                } else {
-                  nonprodAccounts.push(accountId);
-                }
-              } catch (e) {
-                console.log(`⚠️ Could not read ${file.filename}, assuming prod`);
-                hasProd = true;
-                prodAccounts.push(accountId);
+            for (const path of [authorityRegistryPath, tenantRegistryPath]) {
+              if (!fs.existsSync(path)) {
+                core.setFailed(`${path} is required for Review Gate`);
+                return;
               }
             }
+
+            const authorityRegistry = yaml.load(fs.readFileSync(authorityRegistryPath, 'utf8')) || {};
+            const authorities = authorityRegistry.authorities || {};
+            const rules = authorityRegistry.rules || {};
+            const tenantRegistry = yaml.load(fs.readFileSync(tenantRegistryPath, 'utf8')) || {};
+            const tenants = tenantRegistry.tenants || {};
+            const platformSgRegistry = fs.existsSync(platformSgRegistryPath)
+              ? (yaml.load(fs.readFileSync(platformSgRegistryPath, 'utf8')) || {})
+              : {};
+            const platformSecurityGroups = platformSgRegistry.platform_security_groups || {};
+            const token = process.env.REVIEW_GATE_PAT;
+
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number: pr_number });
+            const sha = pr.data.head.sha;
+            const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr_number });
 
             const FRAMEWORK_PATHS = [
               'modules/', 'scripts/', '.github/', 'registry/',
@@ -104,47 +76,136 @@ jobs:
             );
             const frameworkChanged = frameworkFiles.length > 0;
 
+            const requirements = new Map();
+            const requirementReasons = [];
+
+            function requireAuthority(authorityName, count, reason) {
+              if (!authorityName) authorityName = 'platform-sg';
+              if (!authorities[authorityName]) {
+                throw new Error(`Missing review authority '${authorityName}' in ${authorityRegistryPath}`);
+              }
+              const current = requirements.get(authorityName) || 0;
+              requirements.set(authorityName, Math.max(current, Number(count || 1)));
+              requirementReasons.push(`${authorityName}: ${count} (${reason})`);
+            }
+
+            function tenantAuthority(tenantSlug) {
+              const tenant = tenants[tenantSlug];
+              if (!tenant) return 'platform-sg';
+              return tenant.review_authority || 'platform-sg';
+            }
+
+            function envFromConfig(data) {
+              return String(data?.environment || 'prod').toLowerCase();
+            }
+
+            function accountFileParts(filename) {
+              const match = filename.match(/^accounts\/(\d{12})(?:\/([^\/]+))?\/security-groups\.yaml$/);
+              if (!match) return null;
+              return { accountId: match[1], tenant: match[2] || 'default' };
+            }
+
+            function discoverAccountFiles(accountId) {
+              const accountDir = `accounts/${accountId}`;
+              const legacyPath = `${accountDir}/security-groups.yaml`;
+              if (fs.existsSync(legacyPath)) return [{ path: legacyPath, tenant: 'default' }];
+              if (!fs.existsSync(accountDir)) return [];
+              return fs.readdirSync(accountDir, { withFileTypes: true })
+                .filter(entry => entry.isDirectory())
+                .map(entry => ({ path: `${accountDir}/${entry.name}/security-groups.yaml`, tenant: entry.name }))
+                .filter(entry => fs.existsSync(entry.path));
+            }
+
+            function loadYamlFile(path) {
+              return yaml.load(fs.readFileSync(path, 'utf8')) || {};
+            }
+
+            function buildSgTenantMap(accountId) {
+              const map = new Map();
+              for (const source of discoverAccountFiles(accountId)) {
+                const data = loadYamlFile(source.path);
+                const securityGroups = data.security_groups || {};
+                for (const sgName of Object.keys(securityGroups)) {
+                  map.set(sgName, source.tenant);
+                }
+              }
+              return map;
+            }
+
+            function referencedSecurityGroups(rule) {
+              if (!rule || typeof rule !== 'object') return [];
+              const refs = rule.security_groups || [];
+              return Array.isArray(refs) ? refs : [];
+            }
+
             if (frameworkChanged) {
-              console.log(`🔧 Framework files changed (${frameworkFiles.length}):`);
-              frameworkFiles.forEach(f => console.log(`  ${f.filename}`));
+              requireAuthority('platform-sg', rules.framework?.required_authority_approvals || 2, 'framework/registry/workflow change');
+              console.log(`🔧 Framework files changed (${frameworkFiles.length})`);
             }
 
-            const ruleName = frameworkChanged ? 'framework' : hasProd ? 'prod_account' : 'nonprod_account';
-            const rule = rules[ruleName];
-            if (!rule) {
-              core.setFailed(`Missing review rule '${ruleName}' in ${registryPath}`);
-              return;
+            const changedAccountFiles = files
+              .map(f => ({ file: f, parts: accountFileParts(f.filename) }))
+              .filter(item => item.parts);
+
+            const accountTenantMaps = new Map();
+            for (const item of changedAccountFiles) {
+              const { accountId, tenant } = item.parts;
+              const data = loadYamlFile(item.file.filename);
+              const env = envFromConfig(data);
+              const ruleName = env === 'prod' ? 'prod_account' : 'nonprod_account';
+              const required = rules[ruleName]?.required_authority_approvals || (env === 'prod' ? 2 : 1);
+              const sourceAuthority = tenantAuthority(tenant);
+              requireAuthority(sourceAuthority, required, `${env} ${tenant} account change`);
+
+              if (!accountTenantMaps.has(accountId)) {
+                accountTenantMaps.set(accountId, buildSgTenantMap(accountId));
+              }
+              const sgTenantMap = accountTenantMaps.get(accountId);
+              const securityGroups = data.security_groups || {};
+
+              for (const [sourceSg, sgConfig] of Object.entries(securityGroups)) {
+                for (const ruleType of ['ingress', 'egress']) {
+                  const rulesList = Array.isArray(sgConfig?.[ruleType]) ? sgConfig[ruleType] : [];
+                  for (const rule of rulesList) {
+                    for (const targetSg of referencedSecurityGroups(rule)) {
+                      if (platformSecurityGroups[targetSg]) {
+                        console.log(`No extra review for platform built-in SG ref ${sourceSg} -> ${targetSg}`);
+                        continue;
+                      }
+                      const targetTenant = sgTenantMap.get(targetSg);
+                      if (!targetTenant) {
+                        console.log(`Unknown SG ref ${sourceSg} -> ${targetSg}; validation should fail this PR`);
+                        continue;
+                      }
+                      if (targetTenant !== tenant) {
+                        requireAuthority(tenantAuthority(targetTenant), 1, `cross-tenant SG ref ${sourceSg} -> ${targetSg}`);
+                      }
+                    }
+                  }
+                }
+              }
             }
 
-            const authority = authorities[rule.authority];
-            if (!authority) {
-              core.setFailed(`Missing review authority '${rule.authority}' in ${registryPath}`);
-              return;
+            if (requirements.size === 0) {
+              requireAuthority('platform-sg', 1, 'default fallback');
             }
 
-            const requiredAuthorityApprovals = Number(rule.required_authority_approvals || 1);
-            const envLabel = ruleName.replace('_', '-');
-
-            const reviews = await github.rest.pulls.listReviews({
-              owner, repo, pull_number: pr_number
-            });
-
+            const reviews = await github.rest.pulls.listReviews({ owner, repo, pull_number: pr_number });
             const latestByUser = new Map();
             for (const review of reviews.data) {
               if (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
                 latestByUser.set(review.user.login, review.state);
               }
             }
-
             const approvingUsers = [...latestByUser.entries()]
               .filter(([, state]) => state === 'APPROVED')
               .map(([login]) => login);
 
+            const teamCache = new Map();
             async function getTeamMembers(host, org, teamSlug, pat) {
-              if (!pat) {
-                throw new Error('REVIEW_GATE_PAT secret is required to resolve GHE team membership');
-              }
-
+              if (!pat) throw new Error('REVIEW_GATE_PAT secret is required to resolve GHE team membership');
+              const cacheKey = `${host}/${org}/${teamSlug}`;
+              if (teamCache.has(cacheKey)) return teamCache.get(cacheKey);
               const members = new Set();
               let page = 1;
               while (true) {
@@ -173,29 +234,32 @@ jobs:
                   req.on('error', reject);
                   req.end();
                 });
-
-                for (const member of data) {
-                  if (member.login) members.add(member.login);
-                }
+                for (const member of data) if (member.login) members.add(member.login);
                 if (!Array.isArray(data) || data.length < 100) break;
                 page += 1;
               }
+              teamCache.set(cacheKey, members);
               return members;
             }
 
-            const teamMembers = await getTeamMembers(
-              authority.ghe_host,
-              authority.org,
-              authority.team_slug,
-              token
-            );
+            const failures = [];
+            const summaries = [];
+            for (const [authorityName, required] of requirements.entries()) {
+              const authority = authorities[authorityName];
+              const members = await getTeamMembers(authority.ghe_host, authority.org, authority.team_slug, token);
+              const authorityApprovers = approvingUsers.filter(user => members.has(user));
+              const teamRef = `${authority.org}/${authority.team_slug}`;
+              summaries.push(`${authorityApprovers.length}/${required} ${teamRef}`);
+              if (authorityApprovers.length < required) {
+                failures.push(`${authorityName} needs ${required}, has ${authorityApprovers.length}`);
+              }
+              console.log(`${authorityName}: ${authorityApprovers.join(', ') || 'none'} (${authorityApprovers.length}/${required})`);
+            }
 
-            const authorityApprovers = approvingUsers.filter(user => teamMembers.has(user));
-            const passed = authorityApprovers.length >= requiredAuthorityApprovals;
-            const teamRef = `${authority.org}/${authority.team_slug}`;
+            const passed = failures.length === 0;
             const description = passed
-              ? `✅ ${authorityApprovers.length}/${requiredAuthorityApprovals} ${teamRef} approvals (${envLabel})`
-              : `❌ ${authorityApprovers.length}/${requiredAuthorityApprovals} ${teamRef} approvals needed (${envLabel})`;
+              ? `✅ Review Gate passed: ${summaries.join('; ')}`
+              : `❌ Review Gate pending: ${summaries.join('; ')}`;
 
             await github.rest.repos.createCommitStatus({
               owner, repo, sha,
@@ -207,11 +271,5 @@ jobs:
 
             console.log(`Review Gate: ${description}`);
             console.log(`Approving users: ${approvingUsers.join(', ') || 'none'}`);
-            console.log(`Authority approvers: ${authorityApprovers.join(', ') || 'none'}`);
-
-            if (prodAccounts.length > 0) {
-              console.log(`Prod accounts: ${prodAccounts.join(', ')}`);
-            }
-            if (nonprodAccounts.length > 0) {
-              console.log(`Nonprod accounts: ${nonprodAccounts.join(', ')}`);
-            }
+            console.log(`Requirement reasons: ${requirementReasons.join('; ')}`);
+            if (failures.length) console.log(`Failures: ${failures.join('; ')}`);

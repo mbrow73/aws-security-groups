@@ -47,13 +47,22 @@ body:
       required: true
 
   - type: input
-    id: github_reviewers
+    id: review_authority
     attributes:
-      label: GitHub reviewer team(s)
-      description: Prefer GitHub teams over individual users. Comma-separated is fine.
-      placeholder: org/payments-platform-approvers
+      label: Review authority or GHE team URL
+      description: Existing authority from registry/review-authorities.yaml, or the GitHub Enterprise team URL/slug needed to create one.
+      placeholder: payments-sg or https://github.aexp.com/orgs/amex-eng/teams/payments-platform
     validations:
       required: true
+
+  - type: input
+    id: github_reviewers
+    attributes:
+      label: GitHub reviewer team(s) for native UX
+      description: Optional reviewer request targets. Enforcement uses review_authority.
+      placeholder: org/payments-platform-approvers
+    validations:
+      required: false
 
   - type: input
     id: carids
@@ -99,5 +108,5 @@ body:
           required: true
         - label: This tenant represents a durable platform ownership domain, not a temporary project name.
           required: true
-        - label: The listed GitHub reviewer team is able to review SG requests for this tenant.
+        - label: The listed review authority is able to review SG requests for this tenant.
           required: true
