@@ -33,6 +33,49 @@ data "aws_vpc" "discovered" {
 # Step 1: Create SG shells and shared prefix lists for this region
 # ---------------------------------------------------------------------------
 
+locals {
+  automatic_platform_security_groups = {
+    for name, sg in var.platform_security_groups :
+    name => sg
+    if lookup(sg, "provision", "manual") == "automatic"
+  }
+}
+
+resource "aws_security_group" "platform_builtin" {
+  for_each = local.automatic_platform_security_groups
+
+  name_prefix = "${each.key}-"
+  description = each.value.description
+  vpc_id      = data.aws_vpc.discovered.id
+
+  tags = merge(var.tags, {
+    Name        = each.key
+    Type        = "platform-builtin"
+    ManagedBy   = "sg-platform"
+    ReviewClass = lookup(each.value, "review_class", "platform_builtin")
+  })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_security_group_rule" "platform_builtin_vpc_cidr_ingress" {
+  for_each = {
+    for name, sg in local.automatic_platform_security_groups :
+    name => sg
+    if lookup(sg, "source", null) == "vpc_cidr"
+  }
+
+  type              = "ingress"
+  security_group_id = aws_security_group.platform_builtin[each.key].id
+  protocol          = "-1"
+  from_port         = 0
+  to_port           = 0
+  cidr_blocks       = [data.aws_vpc.discovered.cidr_block]
+  description       = "Platform-managed ingress from discovered VPC CIDR"
+}
+
 resource "aws_security_group" "this" {
   for_each = var.security_groups
 
@@ -92,6 +135,10 @@ resource "aws_ec2_managed_prefix_list_entry" "shared" {
 
 locals {
   security_group_mappings = merge(
+    {
+      for name, sg in aws_security_group.platform_builtin :
+      name => sg.id
+    },
     {
       for name, sg in aws_security_group.this :
       name => sg.id
