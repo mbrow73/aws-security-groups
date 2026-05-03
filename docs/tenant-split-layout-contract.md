@@ -157,7 +157,7 @@ The tenant-aware loader in `scripts/account_config.py` should:
 7. produce the current Terraform-compatible normalized account config
 8. expose tenant/source metadata to PR summaries and future API responses
 
-Validation uses the loader as its input layer for both legacy and tenant layouts. Tenant layout can validate, but deployment is not enabled until the render/TFE path consumes the normalized loader output.
+Validation uses the loader as its input layer for both legacy and tenant layouts. The TFE upload path stages normalized account YAML so Terraform can keep reading `accounts/<account-id>/security-groups.yaml` even when source config uses tenant folders.
 
 ## Non-goals
 
