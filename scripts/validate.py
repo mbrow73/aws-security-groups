@@ -20,6 +20,7 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 
 from account_config import load_account_config
+from reference_classifier import classify_sg_reference, load_platform_security_groups
 from tenant_context import resolve_tenant_context
 
 
@@ -98,6 +99,7 @@ class SecurityGroupValidator:
         self.guardrails = self._load_guardrails()
         self.prefix_lists = self._load_prefix_lists()
         self.account_config = load_account_config(self.account_dir, self.repo_root)
+        self.platform_security_groups = load_platform_security_groups(self.repo_root)
         self.tenant_context = resolve_tenant_context(self.config_file, self.repo_root)
         self.account_id = self.tenant_context.account_id
 
@@ -1029,6 +1031,41 @@ class SecurityGroupValidator:
                 level='warning',
                 message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] may be invalid",
                 rule='rule_sg_reference_format',
+                context=context
+            ))
+
+        classification = classify_sg_reference(
+            self.account_config,
+            self.platform_security_groups,
+            sg_name,
+            sg_ref,
+        )
+        if classification.ref_class == 'platform_builtin':
+            summary.add_result(ValidationResult(
+                level='info',
+                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] targets platform built-in SG owned by {classification.owner_authority or 'platform'}",
+                rule='sg_ref_platform_builtin',
+                context=context
+            ))
+        elif classification.ref_class == 'same_tenant':
+            summary.add_result(ValidationResult(
+                level='info',
+                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] stays within tenant '{classification.source_tenant}'",
+                rule='sg_ref_same_tenant',
+                context=context
+            ))
+        elif classification.ref_class == 'cross_tenant':
+            summary.add_result(ValidationResult(
+                level='warning',
+                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] crosses tenant boundary: {classification.source_tenant or 'unknown'} -> {classification.target_tenant}",
+                rule='sg_ref_cross_tenant',
+                context=context
+            ))
+        elif classification.ref_class == 'unknown':
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Unknown security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}]. Define it in this account or add it as a platform built-in SG.",
+                rule='sg_ref_unknown',
                 context=context
             ))
 
