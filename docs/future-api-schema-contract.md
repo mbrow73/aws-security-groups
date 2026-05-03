@@ -141,17 +141,24 @@ Requestors should not permanently free-type `owner_team` into every account or S
 account + tenant -> tenant registry -> owner_team -> reviewers / Slack / policy metadata
 ```
 
+See [Tenant / Owner Registry Design](tenant-owner-registry.md) for the registry contract.
+
 Future tenant registry shape:
 
 ```yaml
 tenants:
-  payments:
+  payments-platform:
+    display_name: "Payments Platform"
     owner_team: "payments-platform"
     service_name: "payments-api"
     data_classification: "internal"
     github_reviewers:
       - "org/payments-platform-approvers"
     slack_channel: "payments-platform-netsec"
+    carids:
+      - "600001725"
+    allowed_accounts:
+      - "123456789012"
 ```
 
 Implementation guidance:
