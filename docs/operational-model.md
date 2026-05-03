@@ -4,6 +4,7 @@
 
 > **Note:** Baseline SG code lives in `terraform-aws-eks-baseline-sgs` (TFE private registry). This repo manages team SGs only.
 
+- Current repo contract is **single tenant per account**: one account directory, one `security-groups.yaml`.
 - **Baselines are immutable.** Platform team owns them. Teams don't touch them.
 - **Teams create new SGs** for their workloads via PR.
 - **AWS merges rules additively** when multiple SGs attach to the same ENI.
