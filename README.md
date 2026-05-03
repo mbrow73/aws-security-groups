@@ -83,6 +83,7 @@ pytest tests/test_validate.py -v
 - [Tenant-Split Layout Contract](docs/tenant-split-layout-contract.md) — Dormant V2 tenant layout contract
 - [Review Gate](docs/review-gate.md) — Reviewer authority enforcement
 - [Platform Security Groups](docs/platform-security-groups.md) — Built-in SG catalog and reference model
+- [Reference Grants](docs/reference-grants.md) — Target-owned cross-tenant reference pre-approval model
 - [Operational Model](docs/operational-model.md) — Two-layer SG model, baselines vs team SGs
 - [Anti-Patterns & Mitigations](docs/anti-patterns-and-mitigations.md) — Risks and layered defenses
 - [Naming Conventions](docs/naming-conventions.md) — Standards and patterns

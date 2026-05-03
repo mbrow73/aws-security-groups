@@ -58,6 +58,21 @@ tenants:
       - "600001725"
     allowed_accounts:
       - "123456789012"
+    reference_grants:
+      - name: "allow-https-to-shared-api"
+        description: "Shared API accepts HTTPS from internal tenant SGs."
+        target_sgs:
+          - "shared-api"
+        source_tenants:
+          - "*"
+        protocols:
+          - "tcp"
+        ports:
+          - 443
+        directions:
+          - "egress"
+        decision: "auto_approved"
+        expires: null
 ```
 
 ## Field Definitions
@@ -109,6 +124,13 @@ CARIDs associated with this tenant. Used for discovery and sanity checks.
 AWS account IDs where this tenant is allowed to manage SGs.
 
 This should be optional at first and stricter later. It prevents a tenant from accidentally or casually requesting SGs in unrelated accounts.
+
+### `reference_grants`
+Target-owned grants that pre-approve specific cross-tenant SG references under constrained conditions.
+
+Use this only when the referenced tenant intentionally accepts common references, for example HTTPS to a shared service SG.
+
+See [Reference Grants](reference-grants.md).
 
 ## Discovery Model
 
