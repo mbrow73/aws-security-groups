@@ -20,7 +20,7 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 
 from account_config import load_account_config
-from reference_classifier import classify_sg_reference, load_platform_security_groups
+from reference_classifier import classify_sg_reference, load_platform_security_groups, load_tenant_registry
 from tenant_context import resolve_tenant_context
 
 
@@ -100,6 +100,7 @@ class SecurityGroupValidator:
         self.prefix_lists = self._load_prefix_lists()
         self.account_config = load_account_config(self.account_dir, self.repo_root)
         self.platform_security_groups = load_platform_security_groups(self.repo_root)
+        self.reference_tenant_registry = load_tenant_registry(self.repo_root)
         self.tenant_context = resolve_tenant_context(self.config_file, self.repo_root)
         self.account_id = self.tenant_context.account_id
 
@@ -934,7 +935,7 @@ class SecurityGroupValidator:
                             context=context
                         ))
                     seen_refs.add(sg_ref)
-                    self._validate_security_group_reference(sg_name, rule_type, rule_index, sg_ref, summary)
+                    self._validate_security_group_reference(sg_name, rule_type, rule_index, rule, sg_ref, summary)
 
         if 'prefix_list_ids' in rule:
             if not isinstance(rule['prefix_list_ids'], list):
@@ -1015,7 +1016,7 @@ class SecurityGroupValidator:
                     context=context
                 ))
 
-    def _validate_security_group_reference(self, sg_name: str, rule_type: str, rule_index: int, sg_ref: str, summary: ValidationSummary):
+    def _validate_security_group_reference(self, sg_name: str, rule_type: str, rule_index: int, rule: Dict[str, Any], sg_ref: str, summary: ValidationSummary):
         context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
         if sg_ref.startswith('sg-'):
             if not re.match(r'^sg-[0-9a-fA-F]{8,}$', sg_ref):
@@ -1039,6 +1040,11 @@ class SecurityGroupValidator:
             self.platform_security_groups,
             sg_name,
             sg_ref,
+            tenant_registry=self.reference_tenant_registry,
+            direction=rule_type,
+            protocol=rule.get('protocol'),
+            from_port=rule.get('from_port'),
+            to_port=rule.get('to_port'),
         )
         if classification.ref_class == 'platform_builtin':
             summary.add_result(ValidationResult(
@@ -1059,6 +1065,13 @@ class SecurityGroupValidator:
                 level='warning',
                 message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] crosses tenant boundary: {classification.source_tenant or 'unknown'} -> {classification.target_tenant}",
                 rule='sg_ref_cross_tenant',
+                context=context
+            ))
+        elif classification.ref_class == 'cross_tenant_granted':
+            summary.add_result(ValidationResult(
+                level='info',
+                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] crosses tenant boundary but matches target-owned reference grant '{classification.grant_name}'",
+                rule='sg_ref_cross_tenant_granted',
                 context=context
             ))
         elif classification.ref_class == 'unknown':

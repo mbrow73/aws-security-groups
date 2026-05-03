@@ -179,3 +179,11 @@ Do not allow grants to:
 ## Non-goals
 
 This document does not implement grant matching yet. It defines the schema/policy contract before Review Gate and validation consume it.
+
+## Implementation status
+
+Reference grant matching is implemented in validation and Review Gate:
+
+- validation emits `sg_ref_cross_tenant_granted` info when a cross-tenant SG ref matches a target-owned grant
+- Review Gate skips the extra target-tenant approval for matching grants
+- unmatched cross-tenant refs still require 1 approval from the referenced tenant's `review_authority`

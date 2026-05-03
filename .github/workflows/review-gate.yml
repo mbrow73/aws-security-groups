@@ -138,6 +138,44 @@ jobs:
               return Array.isArray(refs) ? refs : [];
             }
 
+            function portMatches(grant, fromPort, toPort) {
+              if (fromPort === undefined || toPort === undefined) return false;
+              const ports = grant.ports || [];
+              if (Number(fromPort) === Number(toPort) && ports.map(Number).includes(Number(fromPort))) {
+                return true;
+              }
+              for (const range of grant.port_ranges || []) {
+                if (Number(fromPort) >= Number(range.from) && Number(toPort) <= Number(range.to)) {
+                  return true;
+                }
+              }
+              return false;
+            }
+
+            function grantNotExpired(grant) {
+              if (!grant.expires) return true;
+              const expiry = new Date(`${grant.expires}T23:59:59Z`);
+              return expiry >= new Date();
+            }
+
+            function matchingReferenceGrant(sourceTenant, targetTenant, targetSg, ruleType, rule) {
+              const target = tenants[targetTenant] || {};
+              for (const grant of target.reference_grants || []) {
+                if (grant.decision !== 'auto_approved') continue;
+                if (!(grant.target_sgs || []).includes(targetSg)) continue;
+                const sourceTenants = grant.source_tenants || [];
+                if (!sourceTenants.includes('*') && !sourceTenants.includes(sourceTenant)) continue;
+                const protocols = (grant.protocols || []).map(p => String(p).toLowerCase());
+                if (protocols.length && !protocols.includes(String(rule.protocol || '').toLowerCase())) continue;
+                const directions = (grant.directions || []).map(d => String(d).toLowerCase());
+                if (directions.length && !directions.includes(String(ruleType).toLowerCase())) continue;
+                if (!portMatches(grant, rule.from_port, rule.to_port)) continue;
+                if (!grantNotExpired(grant)) continue;
+                return grant;
+              }
+              return null;
+            }
+
             if (frameworkChanged) {
               requireAuthority('platform-sg', rules.framework?.required_authority_approvals || 2, 'framework/registry/workflow change');
               console.log(`🔧 Framework files changed (${frameworkFiles.length})`);
@@ -178,6 +216,11 @@ jobs:
                         continue;
                       }
                       if (targetTenant !== tenant) {
+                        const grant = matchingReferenceGrant(tenant, targetTenant, targetSg, ruleType, rule);
+                        if (grant) {
+                          console.log(`No extra review for granted cross-tenant SG ref ${sourceSg} -> ${targetSg} via ${grant.name}`);
+                          continue;
+                        }
                         requireAuthority(tenantAuthority(targetTenant), 1, `cross-tenant SG ref ${sourceSg} -> ${targetSg}`);
                       }
                     }
