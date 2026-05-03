@@ -144,7 +144,7 @@ Initial tenant-split support should keep reference behavior conservative:
 
 ## Loader requirements
 
-A future tenant-aware loader should:
+The tenant-aware loader in `scripts/account_config.py` should:
 
 1. discover active layout for an account
 2. reject mixed active layouts unless migration mode is explicitly enabled
@@ -154,6 +154,8 @@ A future tenant-aware loader should:
 6. detect duplicate SG names across tenants
 7. produce the current Terraform-compatible normalized account config
 8. expose tenant/source metadata to PR summaries and future API responses
+
+The loader is foundation code only until a future feature flag wires tenant mode into validation and deployment flows.
 
 ## Non-goals
 
