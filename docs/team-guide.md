@@ -10,6 +10,8 @@ accounts/<account-id>/security-groups.yaml
 
 Do not add tenant subdirectories or multiple tenant-owned SG files yet. If an account is shared by multiple unrelated teams, treat it as a future multi-tenant candidate and coordinate with platform/security before onboarding at scale.
 
+For future compatibility, the platform treats current single-file accounts as an implicit `default` tenant internally. You do not need to add `tenant: default` to current YAML files.
+
 See [Current Supported Model](current-supported-model.md) for the full current contract.
 
 ## Quick Start

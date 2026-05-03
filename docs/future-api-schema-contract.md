@@ -48,17 +48,15 @@ default_region: "us-east-1"
 regions:
   - "us-east-1"
   - "us-west-2"
-owner_team: "payments-platform"
-service_name: "payments-api"
-tenant: null
 lifecycle_state: "active"
 ```
 
 Notes:
 
 - `account_id`, `environment`, and `carid` are current required fields.
-- `owner_team`, `service_name`, and `tenant` are future-facing metadata fields.
-- `tenant` should remain optional and dormant until tenant support is explicitly enabled.
+- Tenant/owner metadata should be resolved through tenant context and registry, not permanently hand-maintained at account scope.
+- Legacy single-file accounts are treated as an implicit `default` tenant for compatibility.
+- `tenant` should remain dormant until tenant support is explicitly enabled.
 
 ### Security Group
 
@@ -71,8 +69,6 @@ name: "app-backend"
 description: "Backend API service"
 regions:
   - "us-east-1"
-owner_team: "payments-platform"
-service_name: "payments-api"
 tags:
   cost-center: "example"
 ingress: []
@@ -93,7 +89,7 @@ Notes:
 
 - API objects may use explicit `name`; current YAML uses the security group map key as the name.
 - API should render current-compatible YAML until the runtime model changes.
-- `owner_team` and `service_name` may initially be account-level metadata before becoming SG-level metadata.
+- SG-level ownership is not the preferred model. Ownership should resolve from tenant context wherever possible.
 
 ### Rule
 
@@ -137,22 +133,22 @@ Rules:
 
 ## Ownership Metadata
 
-Future ownership metadata should be designed around stable slugs, not free-text prose.
+Ownership should be tenant-scoped.
 
-Recommended future fields:
+Requestors should not permanently free-type `owner_team` into every account or SG file. The preferred future model is:
 
-```yaml
-owner_team: "payments-platform"
-service_name: "payments-api"
-data_classification: "internal"
-change_risk: "standard"
+```text
+account + tenant -> tenant registry -> owner_team -> reviewers / Slack / policy metadata
 ```
 
-Ownership metadata should eventually map to a lightweight registry:
+Future tenant registry shape:
 
 ```yaml
-owners:
-  payments-platform:
+tenants:
+  payments:
+    owner_team: "payments-platform"
+    service_name: "payments-api"
+    data_classification: "internal"
     github_reviewers:
       - "org/payments-platform-approvers"
     slack_channel: "payments-platform-netsec"
@@ -160,8 +156,11 @@ owners:
 
 Implementation guidance:
 
-- start optional and warning-only
-- validate against registry after registry exists
+- legacy single-file accounts resolve to implicit tenant `default`
+- future tenant-split files resolve tenant from path
+- API may accept account and tenant once, then render path and YAML consistently
+- owner metadata should be derived from registry where possible
+- start warning-only when registry validation is introduced
 - move from warning to error only after metadata quality is good
 - derive review hints from ownership metadata before enforcing hard owner approval
 
@@ -175,6 +174,28 @@ Potential future fields:
 tenant: "payments"
 tenant_enabled: false
 ```
+
+Compatibility rule:
+
+```text
+accounts/<account-id>/security-groups.yaml
+```
+
+resolves internally as:
+
+```yaml
+tenant: "default"
+```
+
+This preserves the current single-tenant model without forcing requestors to add tenant metadata now.
+
+Future tenant-split path:
+
+```text
+accounts/<account-id>/<tenant>/security-groups.yaml
+```
+
+resolves tenant from the path. Requestors should express tenant intent once through the API; the API owns path rendering.
 
 Tenant rules:
 
@@ -243,8 +264,7 @@ Example future request payload:
 account_id: "123456789012"
 environment: "prod"
 carid: "600001725"
-owner_team: "payments-platform"
-service_name: "payments-api"
+tenant: "default"
 security_groups:
   - name: "app-backend"
     description: "Backend API service"

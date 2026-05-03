@@ -72,6 +72,30 @@ Today, ownership is implied by the account context, PR author/review path, CARID
 
 Until ownership metadata is added, reviewers should treat account onboarding and large rule changes as the control point for confirming who owns the account and workload.
 
+## Legacy Tenant Compatibility
+
+For future design purposes, the current single-file account layout is considered an implicit `default` tenant.
+
+```text
+accounts/<account-id>/security-groups.yaml
+```
+
+resolves conceptually as:
+
+```yaml
+tenant: "default"
+```
+
+This is a compatibility rule only. Requestors do not need to add `tenant: default` to current YAML files.
+
+Future tenant-split support, when explicitly enabled, can use:
+
+```text
+accounts/<account-id>/<tenant>/security-groups.yaml
+```
+
+At that point, tenant ownership should resolve from a registry rather than from free-text owner fields in every SG definition.
+
 ## Guardrails
 
 Current guardrails:
