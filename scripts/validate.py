@@ -168,14 +168,7 @@ class SecurityGroupValidator:
                 rule='account_config_loader'
             ))
 
-        if self.account_config.layout == 'tenant':
-            summary.add_result(ValidationResult(
-                level='error',
-                message="Tenant-split account layout is detected but not enabled for validation/runtime yet",
-                rule='tenant_layout_disabled'
-            ))
-
-        if self.account_config.errors or self.account_config.layout == 'tenant':
+        if self.account_config.errors:
             return summary
 
         data = self.account_config.config

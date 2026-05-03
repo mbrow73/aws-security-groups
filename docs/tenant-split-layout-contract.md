@@ -2,7 +2,7 @@
 
 This document defines the dormant V2 tenant layout contract.
 
-It does **not** enable tenant-split deployment. The current supported runtime remains the legacy single-file account model until tenant split is explicitly feature-flagged.
+It does **not** enable tenant-split deployment. Validation can understand tenant layout, but Terraform/runtime deployment remains legacy until the render/deploy path is wired to the normalized loader output.
 
 ## Current legacy layout
 
@@ -33,20 +33,22 @@ The tenant slug is resolved from the path and must exist in `registry/tenants.ya
 
 ## Activation rule
 
-Tenant split is dormant by default.
+Layout selects mode automatically:
 
-An account must not use tenant subdirectories unless tenant mode is explicitly enabled for that account by a future feature flag.
+- `accounts/<account-id>/security-groups.yaml` means legacy mode.
+- `accounts/<account-id>/<tenant>/security-groups.yaml` means tenant mode.
+- both layouts in the same account is invalid.
 
-Until that flag exists, tenant-path support is only a parsing/resolution contract for validation, summaries, tests, and API design.
+There is no static per-account feature flag. Safety comes from validation, registry checks, merge checks, and later render/deploy wiring.
 
 ## Layout exclusivity
 
-Once tenant mode is enabled for an account, the account should use one layout at a time:
+An account should use one layout at a time:
 
 - legacy mode: `accounts/<account-id>/security-groups.yaml`
 - tenant mode: `accounts/<account-id>/<tenant>/security-groups.yaml`
 
-Mixed active layouts in the same account should be rejected or blocked by validation once tenant mode is implemented.
+Mixed active layouts in the same account are rejected by validation.
 
 A migration may temporarily stage both layouts in a dedicated migration branch, but Terraform/runtime should consume only one normalized account config.
 
@@ -155,14 +157,13 @@ The tenant-aware loader in `scripts/account_config.py` should:
 7. produce the current Terraform-compatible normalized account config
 8. expose tenant/source metadata to PR summaries and future API responses
 
-The loader is foundation code only. Validation now uses the loader as its input layer for legacy accounts, but tenant-split layout still returns a clear disabled-mode error until a future feature flag enables tenant validation/runtime for a specific account.
+Validation uses the loader as its input layer for both legacy and tenant layouts. Tenant layout can validate, but deployment is not enabled until the render/TFE path consumes the normalized loader output.
 
 ## Non-goals
 
 This contract does not implement:
 
 - tenant split deployment
-- tenant split feature flags
 - tenant owner review enforcement
 - cross-tenant approval policy
 - API/UI rendering
