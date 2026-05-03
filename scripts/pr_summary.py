@@ -26,6 +26,8 @@ from pathlib import Path
 
 import yaml
 
+from tenant_context import resolve_tenant_context
+
 
 COMMENT_MARKER = "<!-- sg-change-summary-bot -->"
 
@@ -39,28 +41,18 @@ def load_yaml_file(path: str) -> dict:
         return {}
 
 
-def load_tenant_registry() -> dict:
-    """Load tenant registry, returning empty registry on failure."""
-    data = load_yaml_file("registry/tenants.yaml")
-    tenants = data.get("tenants", {}) if isinstance(data, dict) else {}
-    return tenants if isinstance(tenants, dict) else {}
-
-
 def tenant_context_for_account(account_id: str) -> dict:
-    """Resolve current legacy account layout to implicit default tenant metadata."""
-    tenant_slug = "default"
-    registry = load_tenant_registry()
-    tenant = registry.get(tenant_slug, {}) if isinstance(registry.get(tenant_slug, {}), dict) else {}
-    allowed_accounts = [str(a) for a in tenant.get("allowed_accounts", []) or []]
-    account_allowed = not allowed_accounts or str(account_id) in allowed_accounts
+    """Resolve tenant summary context for current account config path."""
+    context = resolve_tenant_context(Path(f"accounts/{account_id}/security-groups.yaml"), Path.cwd())
     return {
-        "tenant": tenant_slug,
-        "tenant_display_name": tenant.get("display_name", "Default Single-Tenant Account"),
-        "tenant_status": tenant.get("status", "unknown"),
-        "owner_team": tenant.get("owner_team") or "—",
-        "github_reviewers": tenant.get("github_reviewers", []) or [],
-        "slack_channel": tenant.get("slack_channel") or "—",
-        "account_allowed": account_allowed,
+        "tenant": context.tenant,
+        "tenant_display_name": context.display_name,
+        "tenant_status": context.status,
+        "owner_team": context.owner_team,
+        "github_reviewers": context.github_reviewers,
+        "slack_channel": context.slack_channel,
+        "account_allowed": context.account_allowed,
+        "tenant_layout": context.layout,
     }
 
 
