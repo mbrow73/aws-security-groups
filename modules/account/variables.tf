@@ -31,3 +31,9 @@ variable "shared_prefix_lists" {
   type        = any
   default     = {}
 }
+
+variable "platform_security_groups" {
+  description = "Map of platform built-in security groups to create automatically in this account/region"
+  type        = any
+  default     = {}
+}

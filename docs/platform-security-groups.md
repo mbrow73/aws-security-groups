@@ -33,7 +33,7 @@ platform_security_groups:
 Target behavior:
 
 - platform creates it automatically when a new account/region is onboarded
-- ingress is populated from the account/region VPC CIDR
+- ingress is populated from the discovered account/region VPC CIDR
 - ownership and review route to the platform SG authority
 - teams may reference it with normal SG reference syntax
 
@@ -58,6 +58,14 @@ Reference classification should treat platform security groups separately from t
 - cross-tenant SG reference -> referenced SG owner is mandatory reviewer
 - unknown SG reference -> validation error
 
+## VPC CIDR discovery
+
+For `source: "vpc_cidr"`, Terraform discovers the target VPC in the account/region and creates ingress from that VPC's CIDR block.
+
+This avoids broad default ingress such as `10.0.0.0/8` or `100.64.0.0/10` and avoids making requestors manually provide VPC CIDRs.
+
+If VPC discovery is ambiguous or fails, the Terraform run should fail instead of creating a broad fallback rule.
+
 ## Non-goals
 
-This registry does not yet implement automatic SG creation or reference-policy enforcement. It is the catalog needed before those behaviors are added.
+This registry does not make requestors specify platform SG rules. Platform built-ins are still platform-owned and created from the registry.
