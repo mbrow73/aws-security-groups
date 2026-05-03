@@ -88,6 +88,8 @@ tenant: "default"
 
 This is a compatibility rule only. Requestors do not need to add `tenant: default` to current YAML files.
 
+The initial `registry/tenants.yaml` file lists current managed accounts under `default.allowed_accounts`. Validation warns, but does not fail, if a current legacy account is not listed there.
+
 Future tenant-split support, when explicitly enabled, can use:
 
 ```text
