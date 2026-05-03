@@ -63,6 +63,10 @@ from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import HTTPError
 
+import yaml
+
+from account_config import load_account_config
+
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -393,20 +397,20 @@ class WorkspaceProvisioner:
         accounts_dir = self.repo_root / "accounts"
         if not accounts_dir.exists():
             return []
-        return sorted([
-            d.name for d in accounts_dir.iterdir()
-            if d.is_dir() and re.match(r'^\d{12}$', d.name)
-            and (d / "security-groups.yaml").exists()
-        ])
+        accounts = []
+        for d in accounts_dir.iterdir():
+            if not d.is_dir() or not re.match(r'^\d{12}$', d.name):
+                continue
+            loaded = load_account_config(d, self.repo_root)
+            if loaded.layout in ("legacy", "tenant") and not loaded.errors:
+                accounts.append(d.name)
+        return sorted(accounts)
 
     def _read_account_env(self, account_id: str) -> str:
         """Read the environment from an account's YAML."""
-        import yaml
-        yaml_path = self.repo_root / "accounts" / account_id / "security-groups.yaml"
         try:
-            with open(yaml_path) as f:
-                data = yaml.safe_load(f)
-                return data.get("environment", "dev").lower().strip()
+            loaded = load_account_config(self.repo_root / "accounts" / account_id, self.repo_root)
+            return loaded.config.get("environment", "dev").lower().strip()
         except Exception:
             return "dev"
 
@@ -653,6 +657,53 @@ def format_plan_markdown(actions: List[PlanAction]) -> str:
     return "\n".join(lines)
 
 
+def create_normalized_config_tarball(repo_root: str, changed_accounts: Optional[List[str]] = None) -> str:
+    """Create a Terraform upload tarball with normalized account configs.
+
+    Terraform still reads accounts/<account-id>/security-groups.yaml. For
+    tenant-layout accounts, stage a normalized legacy-shaped YAML at that path
+    before creating the tarball. Legacy accounts are copied as-is.
+    """
+    import shutil
+    import tarfile
+    import tempfile
+
+    source_root = Path(repo_root).resolve()
+    staging_root = Path(tempfile.mkdtemp(prefix="sg-config-stage-"))
+
+    EXCLUDE_DIRS = {".git", ".github", "__pycache__", ".terraform", "tests"}
+    EXCLUDE_FILES = {".gitignore", ".gitattributes"}
+
+    def ignore(dir_path, names):
+        ignored = set()
+        for name in names:
+            if name in EXCLUDE_DIRS or name in EXCLUDE_FILES:
+                ignored.add(name)
+        return ignored
+
+    shutil.copytree(source_root, staging_root, dirs_exist_ok=True, ignore=ignore)
+
+    provisioner = WorkspaceProvisioner(repo_root=str(source_root))
+    account_ids = changed_accounts if changed_accounts else provisioner.discover_accounts()
+    for account_id in account_ids:
+        loaded = load_account_config(source_root / "accounts" / account_id, source_root)
+        if loaded.errors:
+            raise RuntimeError(f"Cannot normalize account {account_id}: {'; '.join(loaded.errors)}")
+        if loaded.layout == "missing":
+            continue
+
+        staged_account_dir = staging_root / "accounts" / account_id
+        staged_account_dir.mkdir(parents=True, exist_ok=True)
+        with open(staged_account_dir / "security-groups.yaml", "w") as f:
+            yaml.safe_dump(loaded.config, f, sort_keys=False)
+
+    tarball_path = os.path.join(tempfile.gettempdir(), "sg-config.tar.gz")
+    with tarfile.open(tarball_path, "w:gz") as tar:
+        tar.add(staging_root, arcname=".")
+    logger.info(f"📦 Created normalized config tarball: {tarball_path} ({os.path.getsize(tarball_path)} bytes)")
+    return tarball_path
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -738,30 +789,12 @@ def main():
     elif args.command in ("apply", "sync") and not tfe_address:
         logger.warning("TFE_ADDRESS/TFE_TOKEN/TFE_ORG not set — initial runs will not be triggered")
 
-    # Create config tarball for API-driven upload
+    # Create config tarball for API-driven upload. The tarball is staged with
+    # normalized account YAML so Terraform can keep reading the legacy path even
+    # when source config uses tenant folders.
     config_tarball = args.config_tarball
     if not config_tarball and args.command in ("apply", "sync") and tfe_client:
-        import tarfile
-        import tempfile
-
-        EXCLUDE_DIRS = {".git", ".github", "__pycache__", ".terraform", "tests"}
-        EXCLUDE_FILES = {".gitignore", ".gitattributes"}
-
-        def tar_filter(tarinfo):
-            """Exclude unnecessary files from the config upload."""
-            parts = tarinfo.name.split("/")
-            for part in parts:
-                if part in EXCLUDE_DIRS:
-                    return None
-            if os.path.basename(tarinfo.name) in EXCLUDE_FILES:
-                return None
-            return tarinfo
-
-        tarball_path = os.path.join(tempfile.gettempdir(), "sg-config.tar.gz")
-        with tarfile.open(tarball_path, "w:gz") as tar:
-            tar.add(args.repo_root, arcname=".", filter=tar_filter)
-        config_tarball = tarball_path
-        logger.info(f"📦 Created config tarball: {tarball_path} ({os.path.getsize(tarball_path)} bytes)")
+        config_tarball = create_normalized_config_tarball(args.repo_root, changed_accounts)
 
     provisioner = WorkspaceProvisioner(
         repo_root=args.repo_root,
