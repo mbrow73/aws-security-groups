@@ -174,6 +174,8 @@ accounts/<account-id>/<tenant>/security-groups.yaml
 
 resolves tenant from the path. The API should own path rendering so requestors express tenant intent once.
 
+The dormant tenant-split layout contract is tracked in [Tenant-Split Layout Contract](tenant-split-layout-contract.md).
+
 ## Review Semantics
 
 Future owner-aware review should use the registry as input.
@@ -222,7 +224,7 @@ This registry design does not yet implement:
 - hard validator enforcement
 - owner-aware PR review requests
 - auto-approval logic
-- tenant-split deployment layout
+- tenant-split deployment
 
 Those belong to later steps.
 

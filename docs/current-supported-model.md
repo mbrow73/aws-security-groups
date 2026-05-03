@@ -96,7 +96,7 @@ Future tenant-split support, when explicitly enabled, can use:
 accounts/<account-id>/<tenant>/security-groups.yaml
 ```
 
-At that point, tenant ownership should resolve from a registry rather than from free-text owner fields in every SG definition.
+At that point, tenant ownership should resolve from a registry rather than from free-text owner fields in every SG definition. The dormant layout contract is tracked in [Tenant-Split Layout Contract](tenant-split-layout-contract.md).
 
 ## Guardrails
 
