@@ -26,6 +26,7 @@ from pathlib import Path
 
 import yaml
 
+from account_config import load_account_config
 from tenant_context import resolve_tenant_context
 
 
@@ -58,7 +59,41 @@ def tenant_context_for_account(account_id: str) -> dict:
 
 def get_base_yaml(account_id: str, base_ref: str) -> tuple[dict, bool]:
     """Get the account YAML from the base branch. Returns (yaml, found)."""
-    file_path = f"accounts/{account_id}/security-groups.yaml"
+    account_prefix = f"accounts/{account_id}"
+
+    try:
+        result = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", f"origin/{base_ref}", account_prefix],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            files = [line.strip() for line in result.stdout.splitlines() if line.strip().endswith("security-groups.yaml")]
+            legacy = f"{account_prefix}/security-groups.yaml"
+            if legacy in files:
+                files = [legacy]
+            tenant_files = [f for f in files if f != legacy]
+            if tenant_files:
+                merged = {}
+                merged_sgs = {}
+                for file_path in sorted(tenant_files):
+                    show = subprocess.run(
+                        ["git", "show", f"origin/{base_ref}:{file_path}"],
+                        capture_output=True, text=True, timeout=10
+                    )
+                    if show.returncode != 0:
+                        continue
+                    data = yaml.safe_load(show.stdout) or {}
+                    for key in ("account_id", "environment", "carid", "default_region", "regions", "tags"):
+                        if key in data and key not in merged:
+                            merged[key] = data[key]
+                    merged_sgs.update(data.get("security_groups", {}) or {})
+                if merged_sgs or merged:
+                    merged["security_groups"] = merged_sgs
+                    return merged, True
+    except Exception:
+        pass
+
+    file_path = f"{account_prefix}/security-groups.yaml"
     try:
         result = subprocess.run(
             ["git", "show", f"origin/{base_ref}:{file_path}"],
@@ -355,7 +390,8 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
 
 def analyze_account(account_id: str, base_ref: str) -> dict:
     """Analyze changes for a single account between base and head."""
-    head_data = load_yaml_file(f"accounts/{account_id}/security-groups.yaml")
+    loaded = load_account_config(Path("accounts") / account_id, Path.cwd())
+    head_data = loaded.config if loaded.ok else load_yaml_file(f"accounts/{account_id}/security-groups.yaml")
     base_data, base_found = get_base_yaml(account_id, base_ref)
 
     head_sgs = head_data.get("security_groups", {})
