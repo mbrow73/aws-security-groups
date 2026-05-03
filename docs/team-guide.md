@@ -1,5 +1,17 @@
 # Team Guide - Requesting Security Groups
 
+## Current Contract
+
+This platform currently supports **single tenant per account**: one managed AWS account directory with one `security-groups.yaml` file.
+
+```text
+accounts/<account-id>/security-groups.yaml
+```
+
+Do not add tenant subdirectories or multiple tenant-owned SG files yet. If an account is shared by multiple unrelated teams, treat it as a future multi-tenant candidate and coordinate with platform/security before onboarding at scale.
+
+See [Current Supported Model](current-supported-model.md) for the full current contract.
+
 ## Quick Start
 
 1. Copy the example:

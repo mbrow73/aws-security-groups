@@ -12,6 +12,8 @@ Team YAML → GitHub PR → Validation (Actions) → Terraform Enterprise → AW
 2. **GitHub Actions** validates schema, guardrails, naming on PR
 3. **Terraform Enterprise** runs speculative plan on PR, applies on merge
 
+Current operating contract: **single tenant per account**, one `security-groups.yaml` per managed account. See [Current Supported Model](docs/current-supported-model.md).
+
 > **Baseline SGs** (EKS zero-trust profiles) have moved to their own module:
 > [`terraform-aws-eks-baseline-sgs`](https://github.com/mbrow73/terraform-aws-eks-baseline-sgs) — published on TFE private registry.
 
@@ -48,6 +50,7 @@ git push origin team/my-sg-request
 ├── guardrails.yaml            # Blocked ports, CIDR limits
 └── docs/
     ├── team-guide.md
+    ├── current-supported-model.md
     ├── operational-model.md
     ├── anti-patterns-and-mitigations.md
     ├── naming-conventions.md
@@ -74,6 +77,7 @@ pytest tests/test_validate.py -v
 ## Docs
 
 - [Team Guide](docs/team-guide.md) — How to request security groups
+- [Current Supported Model](docs/current-supported-model.md) — Current single-tenant account contract
 - [Operational Model](docs/operational-model.md) — Two-layer SG model, baselines vs team SGs
 - [Anti-Patterns & Mitigations](docs/anti-patterns-and-mitigations.md) — Risks and layered defenses
 - [Naming Conventions](docs/naming-conventions.md) — Standards and patterns
