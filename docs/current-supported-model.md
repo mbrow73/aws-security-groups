@@ -93,3 +93,5 @@ Future phases may add:
 - dormant tenant model design
 - tenant split only behind feature flag and only for real multi-tenant accounts
 - thin API/UI front door that creates PRs rather than bypassing Git/Terraform
+
+The target API/schema contract is tracked in [Future API / Schema Contract](future-api-schema-contract.md).

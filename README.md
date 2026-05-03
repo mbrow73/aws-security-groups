@@ -78,6 +78,7 @@ pytest tests/test_validate.py -v
 
 - [Team Guide](docs/team-guide.md) — How to request security groups
 - [Current Supported Model](docs/current-supported-model.md) — Current single-tenant account contract
+- [Future API / Schema Contract](docs/future-api-schema-contract.md) — Target API/front-door schema contract
 - [Operational Model](docs/operational-model.md) — Two-layer SG model, baselines vs team SGs
 - [Anti-Patterns & Mitigations](docs/anti-patterns-and-mitigations.md) — Risks and layered defenses
 - [Naming Conventions](docs/naming-conventions.md) — Standards and patterns
