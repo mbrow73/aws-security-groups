@@ -1,0 +1,103 @@
+name: Tenant Onboarding
+about: Request a new tenant / ownership domain for future SG framework ownership routing
+title: "Tenant onboarding: <tenant-slug>"
+labels:
+  - tenant-onboarding
+  - governance
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when your team cannot find an existing tenant in `registry/tenants.yaml`.
+
+        Tenants are platform ownership domains, not one-off app names. Platform/security will review this request and, if approved, create or approve a PR adding the tenant to the registry.
+
+  - type: input
+    id: tenant_slug
+    attributes:
+      label: Requested tenant slug
+      description: Lowercase kebab-case platform ownership domain, e.g. payments-platform.
+      placeholder: payments-platform
+    validations:
+      required: true
+
+  - type: input
+    id: display_name
+    attributes:
+      label: Display name
+      placeholder: Payments Platform
+    validations:
+      required: true
+
+  - type: textarea
+    id: ownership_domain
+    attributes:
+      label: Ownership domain / scope
+      description: What team/platform/workload boundary does this tenant represent?
+      placeholder: This tenant owns payments platform SG requests for shared EKS accounts...
+    validations:
+      required: true
+
+  - type: input
+    id: owner_team
+    attributes:
+      label: Owner team slug
+      placeholder: payments-platform
+    validations:
+      required: true
+
+  - type: input
+    id: github_reviewers
+    attributes:
+      label: GitHub reviewer team(s)
+      description: Prefer GitHub teams over individual users. Comma-separated is fine.
+      placeholder: org/payments-platform-approvers
+    validations:
+      required: true
+
+  - type: input
+    id: carids
+    attributes:
+      label: CARID(s)
+      description: Comma-separated CARIDs associated with this tenant.
+      placeholder: "600001725"
+    validations:
+      required: true
+
+  - type: input
+    id: allowed_accounts
+    attributes:
+      label: Allowed AWS account ID(s)
+      description: Comma-separated 12-digit AWS account IDs where this tenant expects to manage SGs.
+      placeholder: "123456789012, 210987654321"
+    validations:
+      required: true
+
+  - type: input
+    id: slack_channel
+    attributes:
+      label: Slack channel
+      description: Optional future notification target.
+      placeholder: payments-platform-netsec
+    validations:
+      required: false
+
+  - type: textarea
+    id: justification
+    attributes:
+      label: Why is this tenant needed?
+      description: Explain why an existing tenant does not cover this ownership domain.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked `registry/tenants.yaml` first and did not find a suitable existing tenant.
+          required: true
+        - label: This tenant represents a durable platform ownership domain, not a temporary project name.
+          required: true
+        - label: The listed GitHub reviewer team is able to review SG requests for this tenant.
+          required: true
