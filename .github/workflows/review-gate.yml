@@ -68,7 +68,7 @@ jobs:
 
             for (const file of files) {
               const match = file.filename.match(
-                /^accounts\/(\d{12})\/security-groups\.yaml$/
+                /^accounts\/(\d{12})(?:\/[^\/]+)?\/security-groups\.yaml$/
               );
               if (!match) continue;
 

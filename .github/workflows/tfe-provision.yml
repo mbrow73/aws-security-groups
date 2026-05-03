@@ -7,6 +7,10 @@ on:
       - 'accounts/**'
       - 'modules/**'
       - 'prefix-lists.yaml'
+      - 'known-prefix-lists.yaml'
+      - 'shared-prefix-lists.yaml'
+      - 'registry/**'
+      - 'scripts/**'
 
 permissions:
   contents: read
