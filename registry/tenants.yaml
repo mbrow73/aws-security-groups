@@ -10,7 +10,33 @@ tenants:
       - "600001725"
     allowed_accounts:
       - "100000000001"
-      - "100000000002"
+      - "333444555666"
       - "222333444555"
       - "555555555558"
       - "999888777666"
+
+  payments-preview:
+    display_name: "Payments Preview"
+    description: "Temporary tenant validation workflow preview. Remove after PR check."
+    status: "active"
+    owner_team: "nsae"
+    github_reviewers:
+      - "amex-eng/nsae"
+    slack_channel: null
+    carids:
+      - "600001725"
+    allowed_accounts:
+      - "333444555666"
+
+  data-preview:
+    display_name: "Data Preview"
+    description: "Temporary tenant validation workflow preview. Remove after PR check."
+    status: "active"
+    owner_team: "nsae"
+    github_reviewers:
+      - "amex-eng/nsae"
+    slack_channel: null
+    carids:
+      - "600001725"
+    allowed_accounts:
+      - "333444555666"

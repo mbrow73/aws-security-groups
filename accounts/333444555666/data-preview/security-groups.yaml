@@ -1,0 +1,16 @@
+account_id: "333444555666"
+environment: "test"
+carid: "600001725"
+default_region: "us-east-1"
+
+security_groups:
+  data-preview-api:
+    description: "Tenant workflow preview - data API"
+    ingress: []
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        prefix_list_ids:
+          - "pl-1234567890abcdef0"
+        description: "HTTPS to preview prefix list"
