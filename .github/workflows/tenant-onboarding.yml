@@ -30,6 +30,9 @@ jobs:
           git config user.name "sg-framework-bot"
           git config user.email "sg-framework-bot@users.noreply.github.com"
 
+      - name: Install Python dependencies
+        run: python3 -m pip install pyyaml
+
       - name: Write issue body
         env:
           ISSUE_BODY: ${{ github.event.issue.body }}
