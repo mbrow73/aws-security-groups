@@ -38,3 +38,15 @@ tenants:
           tcp:
           - 443
         description: TEST ONLY payments API HTTPS surface.
+  data-owned-e2e:
+    display_name: Data Owned E2E
+    description: TEST ONLY tenant that requests egress to a tenant-owned network surface.
+    status: active
+    owner_team: data-owned-e2e
+    review_authority: data-owned-e2e-sg
+    github_reviewers: []
+    slack_channel: null
+    carids:
+    - '600001725'
+    allowed_accounts:
+    - '444555666779'
