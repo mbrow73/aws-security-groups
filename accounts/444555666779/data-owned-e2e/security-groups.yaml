@@ -5,10 +5,4 @@ security_groups:
   data-client:
     description: Data client
     ingress: []
-    egress:
-    - protocol: tcp
-      from_port: 443
-      to_port: 443
-      cidr_blocks:
-      - 10.43.16.10/32
-      description: HTTPS to payments owned API range via grant
+    egress: []
