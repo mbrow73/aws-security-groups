@@ -1,0 +1,14 @@
+account_id: "333444555672"
+environment: "nonprod"
+carid: "600001725"
+security_groups:
+  payments-preview-web:
+    description: "Preview web tier"
+    ingress: []
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups:
+          - "data-preview-api"
+        description: "HTTPS to cross-tenant data API without grant"
