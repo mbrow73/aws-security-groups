@@ -91,3 +91,20 @@ def test_policy_summary_reports_tenants_refs_and_requirements(repo_root):
     assert classes['vpc-endpoints'] == 'platform_builtin'
     assert classes['data-api'] == 'cross_tenant_granted'
     assert summary['required_review_authorities'] == {'data-sg': 2, 'payments-sg': 2}
+
+
+def test_policy_summary_only_requires_changed_tenant_authority(repo_root):
+    test_policy_summary_reports_tenants_refs_and_requirements(repo_root)
+    account_dir = os.path.join(repo_root, 'accounts', '123456789012')
+
+    summary = build_policy_summary(
+        account_dir,
+        repo_root,
+        changed_files=['accounts/123456789012/payments/security-groups.yaml'],
+    )
+
+    assert summary['changed_tenants'] == ['payments']
+    classes = {ref['target_sg']: ref['ref_class'] for ref in summary['references']}
+    assert classes['vpc-endpoints'] == 'platform_builtin'
+    assert classes['data-api'] == 'cross_tenant_granted'
+    assert summary['required_review_authorities'] == {'payments-sg': 2}

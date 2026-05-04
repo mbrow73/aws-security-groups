@@ -43,8 +43,34 @@ def add_requirement(requirements: dict[str, int], authority: str, count: int):
     requirements[authority] = max(requirements.get(authority, 0), count)
 
 
-def iter_sg_refs(account_config):
+def load_changed_files(path: str | None) -> list[str] | None:
+    if not path:
+        return None
+    with open(path, "r") as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def changed_tenants_for_account(account_id: str, changed_files: list[str] | None) -> set[str] | None:
+    if changed_files is None:
+        return None
+    tenants: set[str] = set()
+    account_prefix = f"accounts/{account_id}/"
+    for changed in changed_files:
+        if not changed.startswith(account_prefix) or not changed.endswith("security-groups.yaml"):
+            continue
+        rel = changed[len(account_prefix):]
+        parts = rel.split("/")
+        if parts == ["security-groups.yaml"]:
+            tenants.add("default")
+        elif len(parts) == 2 and parts[1] == "security-groups.yaml":
+            tenants.add(parts[0])
+    return tenants
+
+
+def iter_sg_refs(account_config, source_tenants: set[str] | None = None):
     for source in account_config.sources:
+        if source_tenants is not None and source.tenant not in source_tenants:
+            continue
         for source_sg, sg_config in (source.data.get("security_groups", {}) or {}).items():
             if not isinstance(sg_config, dict):
                 continue
@@ -62,7 +88,7 @@ def iter_sg_refs(account_config):
                         yield source_sg, target_sg, direction, index, rule
 
 
-def build_policy_summary(account_dir: Path, repo_root: Path) -> dict[str, Any]:
+def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list[str] | None = None) -> dict[str, Any]:
     account_dir = Path(account_dir)
     repo_root = Path(repo_root)
     account_config = load_account_config(account_dir, repo_root)
@@ -71,16 +97,22 @@ def build_policy_summary(account_dir: Path, repo_root: Path) -> dict[str, Any]:
     review_registry = load_review_authorities(repo_root)
     sg_tenant_map = build_sg_tenant_map(account_config)
 
-    tenant_slugs = sorted({source.tenant for source in account_config.sources})
+    all_tenant_slugs = sorted({source.tenant for source in account_config.sources})
+    changed_tenants = changed_tenants_for_account(account_config.account_id, changed_files)
+    if changed_tenants is None:
+        policy_tenants = set(all_tenant_slugs or ["default"])
+    else:
+        policy_tenants = changed_tenants
+
     env = str(account_config.config.get("environment", "prod")).lower()
     prod = env == "prod"
     requirements: dict[str, int] = {}
 
-    for tenant in tenant_slugs or ["default"]:
+    for tenant in sorted(policy_tenants):
         add_requirement(requirements, tenant_authority(tenants, tenant), 2 if prod else 1)
 
     references = []
-    for source_sg, target_sg, direction, index, rule in iter_sg_refs(account_config):
+    for source_sg, target_sg, direction, index, rule in iter_sg_refs(account_config, policy_tenants):
         classification = classify_sg_reference(
             account_config,
             platform_sgs,
@@ -109,7 +141,8 @@ def build_policy_summary(account_dir: Path, repo_root: Path) -> dict[str, Any]:
         "account_id": account_config.account_id,
         "environment": env,
         "layout": account_config.layout,
-        "tenants": tenant_slugs,
+        "tenants": all_tenant_slugs,
+        "changed_tenants": sorted(policy_tenants),
         "sg_tenants": sg_tenant_map,
         "references": references,
         "required_review_authorities": dict(sorted(requirements.items())),
@@ -123,9 +156,14 @@ def main():
     parser = argparse.ArgumentParser(description="Generate SG policy summary JSON")
     parser.add_argument("account_dir", help="Account directory, e.g. accounts/123456789012")
     parser.add_argument("--repo-root", default=".", help="Repository root")
+    parser.add_argument("--changed-files", help="Optional newline-delimited changed files list")
     args = parser.parse_args()
 
-    summary = build_policy_summary(Path(args.account_dir), Path(args.repo_root).resolve())
+    summary = build_policy_summary(
+        Path(args.account_dir),
+        Path(args.repo_root).resolve(),
+        load_changed_files(args.changed_files),
+    )
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
