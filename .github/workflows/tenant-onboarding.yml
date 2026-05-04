@@ -49,14 +49,21 @@ jobs:
           PARSER_EXIT=$?
           set -e
           cat "$LOG_FILE"
-          if [ $PARSER_EXIT -ne 0 ] || [ ! -s "$RESULT_FILE" ]; then
-            echo "::error::Tenant registry issue parser failed or did not create $RESULT_FILE"
-            exit ${PARSER_EXIT:-1}
+          if [ $PARSER_EXIT -ne 0 ]; then
+            echo "::error::Tenant registry issue parser failed with exit code $PARSER_EXIT"
+            exit $PARSER_EXIT
+          fi
+          if [ ! -s "$RESULT_FILE" ]; then
+            echo "::error::Tenant registry issue parser exited 0 but did not create $RESULT_FILE"
+            echo "Issue body follows for debugging:"
+            sed -n '1,220p' /tmp/tenant-issue-body.md
+            exit 1
           fi
           TENANT=$(jq -r .tenant_slug "$RESULT_FILE")
           echo "tenant_slug=$TENANT" >> "$GITHUB_OUTPUT"
 
       - name: Create branch and commit
+        if: success()
         id: commit
         run: |
           TENANT=$(jq -r .tenant_slug tenant-issue-result.json)
@@ -79,7 +86,7 @@ jobs:
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
       - name: Open pull request
-        if: steps.commit.outputs.changed == 'true'
+        if: success() && steps.commit.outputs.changed == 'true'
         id: pr
         uses: actions/github-script@v7
         with:
@@ -112,7 +119,7 @@ jobs:
             core.setOutput('url', pr.html_url);
 
       - name: Comment on issue
-        if: steps.commit.outputs.changed == 'true'
+        if: success() && steps.commit.outputs.changed == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.SG_FRAMEWORK_PAT || github.token }}
@@ -125,7 +132,7 @@ jobs:
             });
 
       - name: Comment no changes
-        if: steps.commit.outputs.changed == 'false'
+        if: success() && steps.commit.outputs.changed == 'false'
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.SG_FRAMEWORK_PAT || github.token }}
