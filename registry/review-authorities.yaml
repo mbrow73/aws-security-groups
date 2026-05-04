@@ -15,6 +15,11 @@ authorities:
     ghe_host: github.aexp.com
     org: amex-eng
     team_slug: data-owned-e2e
+  workflow-regression-e2e-sg:
+    description: SG review authority for Workflow Regression E2E
+    ghe_host: github.aexp.com
+    org: amex-eng
+    team_slug: workflow-regression-e2e
 rules:
   nonprod_account:
     required_authority_approvals: 1
