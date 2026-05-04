@@ -23,6 +23,7 @@ FIELD_ALIASES = {
     "carid(s)": "carids",
     "aws account id(s) for this tenant": "tenant_accounts",
     "ghe reviewer team slug": "ghe_team_slug",
+    "tenant-owned network surfaces, optional": "owned_networks",
     "cross-tenant reference pre-approval, optional": "reference_grant",
     "why is this needed?": "justification",
 }
@@ -117,9 +118,35 @@ def validate_base(fields: dict[str, str]) -> dict[str, Any]:
         "carids": carids,
         "accounts": accounts,
         "ghe_team_slug": ghe_team_slug,
+        "owned_networks_raw": fields.get("owned_networks", "").strip(),
         "reference_grant_raw": fields.get("reference_grant", "").strip(),
         "justification": fields.get("justification", "").strip(),
     }
+
+
+def validate_owned_networks(raw: str) -> dict[str, Any]:
+    if not raw:
+        return {}
+    networks = yaml.safe_load(raw)
+    if not isinstance(networks, dict):
+        raise ValueError("owned_networks must be YAML mapping")
+    for name, network in networks.items():
+        if not TENANT_RE.match(str(name)):
+            raise ValueError(f"owned network {name!r} must be lowercase kebab-case")
+        if not isinstance(network, dict):
+            raise ValueError(f"owned network {name!r} must be a mapping")
+        if not network.get("cidrs") or not isinstance(network.get("cidrs"), list):
+            raise ValueError(f"owned network {name!r} must include cidrs list")
+        allowed_ports = network.get("allowed_ports") or {}
+        if not isinstance(allowed_ports, dict):
+            raise ValueError(f"owned network {name!r} allowed_ports must be a mapping")
+        for proto, ports in allowed_ports.items():
+            if proto not in ["tcp", "udp"] or not isinstance(ports, list):
+                raise ValueError(f"owned network {name!r} allowed_ports.{proto} must be a list")
+            for port in ports:
+                if not isinstance(port, int) or port < 1 or port > 65535:
+                    raise ValueError(f"owned network {name!r} has invalid port {port!r}")
+    return networks
 
 
 def validate_reference_grant(raw: str, tenant_slug: str) -> dict[str, Any] | None:
@@ -184,6 +211,16 @@ def apply_request(repo_root: Path, fields: dict[str, str]) -> dict[str, Any]:
                 "team_slug": req["ghe_team_slug"],
             }
             changed.append(f"authority {authority_name}")
+
+    owned_networks = validate_owned_networks(req["owned_networks_raw"])
+    if owned_networks:
+        tenant = tenants.setdefault(tenant_slug, {})
+        existing = tenant.setdefault("owned_networks", {})
+        for name, network in owned_networks.items():
+            if name in existing:
+                raise ValueError(f"owned network {name!r} already exists on tenant {tenant_slug}")
+            existing[name] = network
+            changed.append(f"owned network {name}")
 
     grant = validate_reference_grant(req["reference_grant_raw"], tenant_slug)
     if grant:

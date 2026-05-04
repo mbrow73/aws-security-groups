@@ -227,6 +227,12 @@ jobs:
               return base;
             }
 
+            function cidrLine(ref) {
+              const owner = ref.owner_tenant ? `, owner tenant \`${ref.owner_tenant}\`` : '';
+              const network = ref.network_name ? `/${ref.network_name}` : '';
+              return `- \`${ref.source_sg}\` → \`${ref.cidr}\`: ${ref.classification}${owner}${network} — ${ref.reason}`;
+            }
+
             const bodyLines = [
               '<!-- sg-review-policy-bot -->',
               '## 🛡️ Review Policy Summary',
@@ -248,8 +254,11 @@ jobs:
             }
 
             const refs = policies.flatMap(policy => policy.references || []);
+            const cidrRefs = policies.flatMap(policy => policy.cidr_references || []);
             bodyLines.push('', '### Security group references');
             bodyLines.push(refs.length ? refs.map(refLine).join('\n') : '- None');
+            bodyLines.push('', '### CIDR ownership');
+            bodyLines.push(cidrRefs.length ? cidrRefs.map(cidrLine).join('\n') : '- None');
             bodyLines.push('', '<details><summary>Raw policy JSON</summary>', '', '```json', JSON.stringify(policies, null, 2), '```', '</details>');
 
             const marker = '<!-- sg-review-policy-bot -->';
