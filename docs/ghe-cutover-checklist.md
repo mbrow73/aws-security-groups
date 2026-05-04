@@ -33,6 +33,21 @@ Used by `.github/workflows/review-gate.yml` to resolve configured GHE team membe
 
 If missing, Review Gate should run but stay pending because authority membership resolves to empty.
 
+Review Gate also attempts to create or update a PR comment marked with:
+
+```text
+<!-- sg-review-policy-bot -->
+```
+
+The workflow needs PR comment write permission in GHE. In GitHub Actions terms this is typically:
+
+```yaml
+permissions:
+  issues: write
+```
+
+The comment is best-effort. If comment creation is blocked, Review Gate should log the failure and continue setting the commit status.
+
 ### CloudIaC / TFE
 
 Use the existing secret names expected by `.github/workflows/tfe-provision.yml` and `scripts/tfe_workspace.py`.
@@ -129,6 +144,7 @@ security_groups:
 4. Cross-tenant SG reference with matching `reference_grants` skips extra target approval.
 5. Cross-tenant SG reference without a grant requires target tenant authority approval.
 6. Unknown SG reference fails validation.
+7. Review Gate posts a `Review Policy Summary` comment.
 
 ## Expected Review Gate behavior
 
@@ -158,6 +174,19 @@ For cross-tenant refs:
 For `vpc-endpoints` references:
 
 - no extra reviewer beyond the source change's normal policy
+
+Review Gate should also post or update a PR comment named:
+
+```text
+🛡️ Review Policy Summary
+```
+
+Expected comment content:
+
+- required authorities and approval counts
+- changed account / tenant context
+- classified SG references
+- raw policy JSON in collapsible details
 
 ## Expected TFE behavior
 
@@ -240,6 +269,22 @@ Likely causes:
 
 Decide whether Slack is required or best-effort before enforcing the check.
 
+### Review Policy Summary comment is missing
+
+Likely causes:
+
+- workflow token cannot write issue/PR comments
+- GHE organization restricts Actions token write permissions
+- `issues: write` permission is missing or ignored by enterprise policy
+
+Expected behavior:
+
+- Review Gate logs the comment failure
+- Review Gate still sets the `Review Gate` commit status
+- the PR comment is treated as best-effort until GHE token permissions are fixed
+
+Fix by confirming the workflow can create/update PR comments and that the repo/org allows Actions write permissions for issue comments.
+
 ### Validation passes but summary says tenant `default`
 
 This was fixed in the personal repo by tenant-source-aware PR summaries. Confirm the GHE repo includes that commit or later.
@@ -281,6 +326,7 @@ Cutover is considered healthy when:
 - tenant-layout validation PR passes
 - PR summary displays correct tenant sources
 - Review Gate resolves `amex-eng/nsae` members using `REVIEW_GATE_PAT`
+- Review Gate posts the `Review Policy Summary` PR comment
 - correct approvals satisfy Review Gate
 - missing/wrong approvals keep Review Gate pending
 - `vpc-endpoints` refs do not require extra review
