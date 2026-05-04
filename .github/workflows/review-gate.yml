@@ -60,6 +60,7 @@ jobs:
             }
 
             const changedAccounts = [...new Set(changedFiles.map(accountIdFromPath).filter(Boolean))];
+            const registryOnly = changedFiles.length > 0 && changedFiles.every(filename => filename.startsWith('registry/'));
             const frameworkChanged = changedFiles.some(filename =>
               filename.startsWith('modules/') ||
               filename.startsWith('scripts/') ||
@@ -75,6 +76,20 @@ jobs:
             const authorities = {};
             const policies = [];
             const policyDisplayRows = [];
+
+            function grantPrMetadata() {
+              const body = pr.body || '';
+              const targetMatch = body.match(/Target tenant:\s*`([^`]+)`/);
+              const authorityMatch = body.match(/Target authority:\s*`([^`]+)`/);
+              const platformMatch = body.match(/Platform review required:\s*([^\n]+)/);
+              if (!targetMatch || !authorityMatch || !body.includes('Generated from #')) return null;
+              return {
+                targetTenant: targetMatch[1],
+                targetAuthority: authorityMatch[1],
+                platformReasons: platformMatch ? platformMatch[1].trim() : '',
+                platformRequired: Boolean(platformMatch),
+              };
+            }
 
             function mergeAuthorities(policy) {
               for (const [name, authority] of Object.entries(policy.review_authorities || {})) {
@@ -103,7 +118,14 @@ jobs:
               return policy;
             }
 
-            if (frameworkChanged) {
+            const grantMeta = registryOnly ? grantPrMetadata() : null;
+            if (grantMeta) {
+              policyDisplayRows.push(`- Reference grant for tenant \`${grantMeta.targetTenant}\`: ❌ not auto-merge eligible, target tenant review required${grantMeta.platformRequired ? ', platform review required' : ''}`);
+              requireAuthority(grantMeta.targetAuthority, 1, 'reference grant target tenant approval');
+              if (grantMeta.platformRequired) {
+                requireAuthority('platform-sg', 1, `broad reference grant: ${grantMeta.platformReasons}`);
+              }
+            } else if (frameworkChanged) {
               const policy = loadPolicy('100000000001', ['--changed-files', '/tmp/sg-changed-files.txt']);
               policyDisplayRows.push(`- Registry/framework/workflow change: ❌ not eligible, platform review required${policy.auto_merge_reason ? ` (${policy.auto_merge_reason})` : ''}`);
               requireAuthority('platform-sg', 2, 'framework/registry/workflow change');
@@ -124,7 +146,7 @@ jobs:
               })}`);
             }
 
-            const policyEvaluated = frameworkChanged || changedAccounts.length > 0;
+            const policyEvaluated = Boolean(grantMeta) || frameworkChanged || changedAccounts.length > 0;
             if (requirements.size === 0 && !policyEvaluated) {
               loadPolicy('100000000001');
               requireAuthority('platform-sg', 1, 'default fallback');
