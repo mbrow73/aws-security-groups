@@ -55,8 +55,12 @@ jobs:
           fi
           RESULT=$(jq -c . "$RESULT_FILE")
           TENANT=$(jq -r .tenant_slug "$RESULT_FILE")
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
-          echo "tenant_slug=$TENANT" >> "$GITHUB_OUTPUT"
+          {
+            echo "result<<EOF"
+            echo "$RESULT"
+            echo "EOF"
+            echo "tenant_slug=$TENANT"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create branch and commit
         id: commit
