@@ -26,7 +26,7 @@ Add these before testing PRs.
 ### Review Gate
 
 ```text
-REVIEW_GATE_PAT
+SG_FRAMEWORK_PAT
 ```
 
 Used by `.github/workflows/review-gate.yml` to resolve configured GHE team membership.
@@ -246,11 +246,11 @@ NODE_PATH: ${{ github.workspace }}/node_modules
 
 If it reappears, verify the install step ran before `actions/github-script`.
 
-### `REVIEW_GATE_PAT` missing
+### `SG_FRAMEWORK_PAT` missing
 
 Review Gate should not crash. It should resolve zero authority members and leave status pending.
 
-Fix: add `REVIEW_GATE_PAT` secret.
+Fix: add `SG_FRAMEWORK_PAT` secret.
 
 ### Team lookup returns 404 / 403
 
@@ -336,7 +336,7 @@ Cutover is considered healthy when:
 
 - tenant-layout validation PR passes
 - PR summary displays correct tenant sources
-- Review Gate resolves `amex-eng/nsae` members using `REVIEW_GATE_PAT`
+- Review Gate resolves `amex-eng/nsae` members using `SG_FRAMEWORK_PAT`
 - Review Gate posts the `Review Policy Summary` PR comment
 - correct approvals satisfy Review Gate
 - missing/wrong approvals keep Review Gate pending
