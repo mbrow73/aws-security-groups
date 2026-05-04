@@ -1,0 +1,10 @@
+account_id: "333444555666"
+environment: "test"
+carid: "600001725"
+default_region: "us-east-1"
+
+security_groups:
+  data-preview-api:
+    description: "Review Gate policy summary preview - data API"
+    ingress: []
+    egress: []

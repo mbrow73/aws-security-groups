@@ -1,0 +1,28 @@
+account_id: "333444555666"
+environment: "test"
+carid: "600001725"
+default_region: "us-east-1"
+
+security_groups:
+  payments-preview-web:
+    description: "Review Gate policy summary preview - payments web"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks:
+          - "10.20.0.0/16"
+        description: "HTTPS from internal preview CIDR"
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups:
+          - "vpc-endpoints"
+        description: "HTTPS to platform built-in VPC endpoints SG"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups:
+          - "data-preview-api"
+        description: "HTTPS to data preview API via target-owned grant"

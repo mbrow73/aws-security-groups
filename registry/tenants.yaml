@@ -15,3 +15,46 @@ tenants:
       - "222333444555"
       - "555555555558"
       - "999888777666"
+      - "333444555666"
+
+
+  payments-preview:
+    display_name: "Payments Preview"
+    description: "Temporary Review Gate policy summary preview tenant. Remove after PR check."
+    status: "active"
+    owner_team: "nsae"
+    review_authority: "platform-sg"
+    github_reviewers:
+      - "amex-eng/nsae"
+    carids:
+      - "600001725"
+    allowed_accounts:
+      - "333444555666"
+
+  data-preview:
+    display_name: "Data Preview"
+    description: "Temporary Review Gate policy summary preview tenant. Remove after PR check."
+    status: "active"
+    owner_team: "nsae"
+    review_authority: "platform-sg"
+    github_reviewers:
+      - "amex-eng/nsae"
+    carids:
+      - "600001725"
+    allowed_accounts:
+      - "333444555666"
+    reference_grants:
+      - name: "allow-https-to-data-preview-api"
+        description: "Preview grant for payments-preview to reach data-preview-api on HTTPS."
+        target_sgs:
+          - "data-preview-api"
+        source_tenants:
+          - "payments-preview"
+        protocols:
+          - "tcp"
+        ports:
+          - 443
+        directions:
+          - "egress"
+        decision: "auto_approved"
+        expires: null
