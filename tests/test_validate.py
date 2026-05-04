@@ -162,7 +162,7 @@ class TestTenantRegistryValidation:
         rules = [w.rule for w in summary.warnings]
         assert 'tenant_registry_account_scope' not in rules
 
-    def test_default_tenant_registry_warns_on_account_scope(self, repo_root):
+    def test_default_tenant_registry_errors_on_account_scope(self, repo_root):
         _write_tenant_registry(repo_root, {
             'default': {
                 'status': 'legacy',
@@ -173,10 +173,12 @@ class TestTenantRegistryValidation:
             'account_id': '100000000001',
             'environment': 'prod',
             'carid': '600001725',
-            'security_groups': {},
+            'security_groups': {
+                'app': {'description': 'app sg'},
+            },
         }
         summary = _validate(repo_root, '100000000001', data)
-        rules = [w.rule for w in summary.warnings]
+        rules = [e.rule for e in summary.errors]
         assert 'tenant_registry_account_scope' in rules
 
     def test_missing_default_tenant_warns(self, repo_root):
