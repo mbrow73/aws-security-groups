@@ -23,6 +23,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Python dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install pyyaml
+
       - name: Check review requirements
         uses: actions/github-script@v7
         env:
@@ -109,7 +115,7 @@ jobs:
 
             function loadPolicy(accountId, extraArgs = []) {
               const policy = JSON.parse(execFileSync(
-                'python3',
+                '.venv/bin/python',
                 ['scripts/policy_summary.py', `accounts/${accountId}`, ...extraArgs],
                 { encoding: 'utf8' }
               ));
