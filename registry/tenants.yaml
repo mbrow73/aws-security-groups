@@ -1,17 +1,51 @@
 tenants:
   default:
-    display_name: "Default Single-Tenant Account"
-    description: "Compatibility tenant for current single-file account configs."
-    status: "legacy"
+    display_name: Default Single-Tenant Account
+    description: Compatibility tenant for current single-file account configs.
+    status: legacy
     owner_team: null
-    review_authority: "platform-sg"
+    review_authority: platform-sg
     github_reviewers: []
     slack_channel: null
     carids:
-      - "600001725"
+    - '600001725'
     allowed_accounts:
-      - "100000000001"
-      - "100000000002"
-      - "222333444555"
-      - "555555555558"
-      - "999888777666"
+    - '100000000001'
+    - '100000000002'
+    - '222333444555'
+    - '555555555558'
+    - '999888777666'
+  payments-owned-test:
+    display_name: Payments Owned Test
+    description: TEST ONLY
+    status: active
+    owner_team: payments-owned-test
+    review_authority: payments-owned-test-sg
+    github_reviewers: []
+    slack_channel: null
+    carids:
+    - '600001725'
+    allowed_accounts:
+    - '444555666778'
+    owned_networks:
+      payments-api-prod:
+        account_id: '444555666778'
+        region: us-east-1
+        cidrs:
+        - 10.42.16.0/24
+        allowed_ports:
+          tcp:
+          - 443
+        description: TEST ONLY payments API
+  data-owned-test:
+    display_name: Data Owned Test
+    description: TEST ONLY
+    status: active
+    owner_team: data-owned-test
+    review_authority: data-owned-test-sg
+    github_reviewers: []
+    slack_channel: null
+    carids:
+    - '600001725'
+    allowed_accounts:
+    - '444555666778'

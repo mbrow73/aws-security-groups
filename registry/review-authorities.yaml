@@ -15,3 +15,13 @@ rules:
   framework:
     required_authority_approvals: 2
     authority: "platform-sg"
+  payments-owned-test-sg:
+    description: "TEST ONLY payments owned network authority"
+    ghe_host: "github.aexp.com"
+    org: "amex-eng"
+    team_slug: "payments-owned-test"
+  data-owned-test-sg:
+    description: "TEST ONLY data authority"
+    ghe_host: "github.aexp.com"
+    org: "amex-eng"
+    team_slug: "data-owned-test"
