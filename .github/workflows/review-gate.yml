@@ -74,6 +74,7 @@ jobs:
             const requirementReasons = [];
             const authorities = {};
             const policies = [];
+            const policyDisplayRows = [];
 
             function mergeAuthorities(policy) {
               for (const [name, authority] of Object.entries(policy.review_authorities || {})) {
@@ -95,12 +96,16 @@ jobs:
                 { encoding: 'utf8' }
               ));
               policies.push(policy);
+              if (!frameworkChanged || accountId !== '100000000001') {
+                policyDisplayRows.push(`- Account \`${policy.account_id}\`: ${policy.auto_merge_eligible ? '✅ eligible' : '❌ not eligible'}${policy.auto_merge_reason ? `, ${policy.auto_merge_reason}` : ''}`);
+              }
               mergeAuthorities(policy);
               return policy;
             }
 
             if (frameworkChanged) {
-              loadPolicy('100000000001', ['--changed-files', '/tmp/sg-changed-files.txt']);
+              const policy = loadPolicy('100000000001', ['--changed-files', '/tmp/sg-changed-files.txt']);
+              policyDisplayRows.push(`- Registry/framework/workflow change: ❌ not eligible, platform review required${policy.auto_merge_reason ? ` (${policy.auto_merge_reason})` : ''}`);
               requireAuthority('platform-sg', 2, 'framework/registry/workflow change');
             }
 
@@ -229,7 +234,7 @@ jobs:
               `**Status:** ${passed ? '✅ passed' : '⏳ pending'}`,
               '',
               '### Auto-merge eligibility',
-              policies.length ? policies.map(policy => `- Account \`${policy.account_id}\`: ${policy.auto_merge_eligible ? '✅ eligible' : '❌ not eligible'}${policy.auto_merge_reason ? `, ${policy.auto_merge_reason}` : ''}`).join('\n') : '- Not evaluated',
+              policyDisplayRows.length ? policyDisplayRows.join('\n') : '- Not evaluated',
               '',
               '### Required approvals',
               approvalSummary.length ? approvalSummary.join('\n') : '- None',
