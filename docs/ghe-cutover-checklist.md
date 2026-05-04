@@ -104,20 +104,30 @@ Configure branch protection on `main`.
 
 Recommended required checks:
 
-- Validate Security Groups
-- Post Validation Summary, optional but useful
-- Post Change Summary, optional but useful
-- Review Requirements / Review Gate status
-- TFE Provision / Plan, once CloudIaC/TFE is wired
+- `Detect Changed Accounts`
+- `Validate Security Groups`
+- `Review Requirements` workflow completion
+- `Review Gate` commit status
+- TFE provision / plan / apply checks, once CloudIaC/TFE is wired
+
+Useful but optional required checks:
+
+- `Post Validation Summary`
+- `Post Change Summary`
+- `Slack Review Notification`
 
 Recommended review settings:
 
 - require pull request before merge
+- require all required status checks to pass before merge
 - require latest branch / up-to-date checks if enterprise policy supports it
 - require conversation resolution
-- do not rely only on CODEOWNERS for authorization
+- block direct pushes to `main`
+- restrict force pushes and deletions
+- dismiss stale approvals when new commits are pushed
+- do **not** enable required CODEOWNERS review as an authorization gate
 
-CODEOWNERS is still useful UX, but Review Gate is the deterministic authority enforcement layer.
+CODEOWNERS can remain as notification/UX, but branch protection should not require CODEOWNER approval. Review Gate is the deterministic authority enforcement layer and is capable of allowing zero-review auto-merge-eligible tenant SG changes.
 
 ## First validation PR
 
@@ -183,6 +193,7 @@ Review Gate should also post or update a PR comment named:
 
 Expected comment content:
 
+- auto-merge eligibility and reason
 - required authorities and approval counts
 - changed account / tenant context
 - classified SG references
@@ -330,7 +341,7 @@ Cutover is considered healthy when:
 - correct approvals satisfy Review Gate
 - missing/wrong approvals keep Review Gate pending
 - `vpc-endpoints` refs do not require extra review
-- vpc-endpoints-only tenant SG changes are identified as future auto-merge candidates
+- same-tenant and `vpc-endpoints`-only tenant SG changes are auto-merge eligible and require no Review Gate approvals
 - cross-tenant refs with grants skip target-owner approval
 - cross-tenant refs without grants require target-owner approval
 - TFE upload/run succeeds with normalized account config
