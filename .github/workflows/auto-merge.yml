@@ -57,6 +57,8 @@ jobs:
             const pr_number = pr.number;
             const freshPr = (await github.rest.pulls.get({ owner, repo, pull_number: pr_number })).data;
             const sha = freshPr.head.sha;
+            execFileSync('git', ['fetch', 'origin', `+refs/pull/${pr_number}/head:refs/remotes/origin/pr-${pr_number}`], { stdio: 'inherit' });
+            execFileSync('git', ['checkout', '--force', `refs/remotes/origin/pr-${pr_number}`], { stdio: 'inherit' });
             const marker = '<!-- sg-auto-merge-bot -->';
             const reasons = [];
 
