@@ -2,7 +2,11 @@ name: "Tenant Onboarding"
 
 on:
   issues:
-    types: [opened, edited, labeled]
+    types: [opened, edited, reopened]
+
+concurrency:
+  group: tenant-onboarding-${{ github.event.issue.number }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -45,14 +49,15 @@ jobs:
         run: |
           TENANT=$(jq -r .tenant_slug /tmp/tenant-issue-result.json)
           BRANCH="tenant-registry/issue-${{ github.event.issue.number }}-${TENANT}"
-          git checkout -b "$BRANCH"
+          git fetch origin "$BRANCH" || true
+          git checkout -B "$BRANCH" origin/main
           git add registry/tenants.yaml registry/review-authorities.yaml
           if git diff --cached --quiet; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git commit -m "Add tenant registry request from issue #${{ github.event.issue.number }}"
-          git push -u origin "$BRANCH"
+          git push --force-with-lease -u origin "$BRANCH"
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
@@ -74,15 +79,18 @@ jobs:
               '## Review',
               'Registry changes require platform review through Review Gate.',
             ].join('\n');
-            const pr = await github.rest.pulls.create({
+            const existing = await github.rest.pulls.list({
+              owner, repo, state: 'open', head: `${owner}:${{ steps.commit.outputs.branch }}`, base: 'main'
+            });
+            const pr = existing.data.length ? existing.data[0] : (await github.rest.pulls.create({
               owner,
               repo,
               title,
               head: `${{ steps.commit.outputs.branch }}`,
               base: 'main',
               body,
-            });
-            core.setOutput('url', pr.data.html_url);
+            })).data;
+            core.setOutput('url', pr.html_url);
 
       - name: Comment on issue
         if: steps.commit.outputs.changed == 'true'
