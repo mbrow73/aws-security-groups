@@ -92,8 +92,9 @@ Platform/security converts approved onboarding requests into registry PRs for:
 
 ```bash
 python scripts/policy_summary.py accounts/123456789012
+python scripts/policy_summary.py accounts/123456789012 --changed-files /tmp/changed-files.txt
 ```
 
-The JSON includes tenant layout, SG-to-tenant ownership, classified SG references, and required review authorities.
+The JSON includes tenant layout, changed tenants when a changed-files list is supplied, SG-to-tenant ownership, classified SG references, and required review authorities.
 
 Review Gate can later consume this artifact instead of duplicating tenant/reference policy logic in JavaScript.
