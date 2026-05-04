@@ -100,3 +100,5 @@ The JSON includes tenant layout, changed tenants when a changed-files list is su
 Review Gate can later consume this artifact instead of duplicating tenant/reference policy logic in JavaScript.
 
 Review Gate now consumes `scripts/policy_summary.py` directly for required review authorities. JavaScript is responsible for GitHub API approval/team checks; Python owns tenant/reference policy decisions.
+
+Review Gate also posts a `Review Policy Summary` PR comment showing required authorities, changed tenants, classified SG references, and raw policy JSON for debugging.

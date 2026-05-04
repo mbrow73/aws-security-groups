@@ -72,6 +72,7 @@ jobs:
             const requirements = new Map();
             const requirementReasons = [];
             const authorities = {};
+            const policies = [];
 
             function mergeAuthorities(policy) {
               for (const [name, authority] of Object.entries(policy.review_authorities || {})) {
@@ -86,23 +87,24 @@ jobs:
               requirementReasons.push(`${name}: ${count} (${reason})`);
             }
 
-            if (frameworkChanged) {
-              const registryPolicy = JSON.parse(execFileSync(
+            function loadPolicy(accountId, extraArgs = []) {
+              const policy = JSON.parse(execFileSync(
                 'python3',
-                ['scripts/policy_summary.py', 'accounts/100000000001', '--changed-files', '/tmp/sg-changed-files.txt'],
+                ['scripts/policy_summary.py', `accounts/${accountId}`, ...extraArgs],
                 { encoding: 'utf8' }
               ));
-              mergeAuthorities(registryPolicy);
+              policies.push(policy);
+              mergeAuthorities(policy);
+              return policy;
+            }
+
+            if (frameworkChanged) {
+              loadPolicy('100000000001', ['--changed-files', '/tmp/sg-changed-files.txt']);
               requireAuthority('platform-sg', 2, 'framework/registry/workflow change');
             }
 
             for (const accountId of changedAccounts) {
-              const policy = JSON.parse(execFileSync(
-                'python3',
-                ['scripts/policy_summary.py', `accounts/${accountId}`, '--changed-files', '/tmp/sg-changed-files.txt'],
-                { encoding: 'utf8' }
-              ));
-              mergeAuthorities(policy);
+              const policy = loadPolicy(accountId, ['--changed-files', '/tmp/sg-changed-files.txt']);
               for (const [authority, count] of Object.entries(policy.required_review_authorities || {})) {
                 requireAuthority(authority, count, `policy summary for account ${accountId}`);
               }
@@ -115,12 +117,7 @@ jobs:
             }
 
             if (requirements.size === 0) {
-              const fallbackPolicy = JSON.parse(execFileSync(
-                'python3',
-                ['scripts/policy_summary.py', 'accounts/100000000001'],
-                { encoding: 'utf8' }
-              ));
-              mergeAuthorities(fallbackPolicy);
+              loadPolicy('100000000001');
               requireAuthority('platform-sg', 1, 'default fallback');
             }
 
@@ -182,17 +179,20 @@ jobs:
             const token = process.env.REVIEW_GATE_PAT;
             const failures = [];
             const summaries = [];
+            const approvalSummary = [];
             for (const [authorityName, required] of requirements.entries()) {
               const authority = authorities[authorityName];
               if (!authority) {
                 failures.push(`${authorityName} missing from policy summary authority registry`);
                 summaries.push(`0/${required} ${authorityName}`);
+                approvalSummary.push(`- \`${authorityName}\`: 0/${required} approvals, authority missing from registry`);
                 continue;
               }
               const members = await getTeamMembers(authority.ghe_host, authority.org, authority.team_slug, token);
               const authorityApprovers = approvingUsers.filter(user => members.has(user));
               const teamRef = `${authority.org}/${authority.team_slug}`;
               summaries.push(`${authorityApprovers.length}/${required} ${teamRef}`);
+              approvalSummary.push(`- \`${authorityName}\` (${teamRef}): ${authorityApprovers.length}/${required} approvals`);
               if (authorityApprovers.length < required) {
                 failures.push(`${authorityName} needs ${required}, has ${authorityApprovers.length}`);
               }
@@ -203,6 +203,52 @@ jobs:
             const description = passed
               ? `✅ Review Gate passed: ${summaries.join('; ')}`
               : `❌ Review Gate pending: ${summaries.join('; ')}`;
+
+            function refLine(ref) {
+              const base = `- \`${ref.source_sg}\` → \`${ref.target_sg}\`: ${ref.ref_class}`;
+              if (ref.ref_class === 'cross_tenant_granted') {
+                return `${base} by grant \`${ref.grant_name}\``;
+              }
+              if (ref.ref_class === 'cross_tenant') {
+                return `${base}, target tenant \`${ref.target_tenant}\` approval required`;
+              }
+              if (ref.ref_class === 'platform_builtin') {
+                return `${base}, no extra review`;
+              }
+              return base;
+            }
+
+            const bodyLines = [
+              '<!-- sg-review-policy-bot -->',
+              '## 🛡️ Review Policy Summary',
+              '',
+              `**Status:** ${passed ? '✅ passed' : '⏳ pending'}`,
+              '',
+              '### Required approvals',
+              approvalSummary.length ? approvalSummary.join('\n') : '- None',
+              '',
+              '### Accounts / tenants',
+            ];
+
+            for (const policy of policies) {
+              bodyLines.push(`- Account \`${policy.account_id}\` (${policy.environment}, ${policy.layout})`);
+              bodyLines.push(`  - Changed tenants: ${(policy.changed_tenants || []).map(t => `\`${t}\``).join(', ') || 'none'}`);
+            }
+
+            const refs = policies.flatMap(policy => policy.references || []);
+            bodyLines.push('', '### Security group references');
+            bodyLines.push(refs.length ? refs.map(refLine).join('\n') : '- None');
+            bodyLines.push('', '<details><summary>Raw policy JSON</summary>', '', '```json', JSON.stringify(policies, null, 2), '```', '</details>');
+
+            const marker = '<!-- sg-review-policy-bot -->';
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
+            const existing = comments.find(comment => comment.body?.includes(marker));
+            const body = bodyLines.join('\n');
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
+            }
 
             await github.rest.repos.createCommitStatus({
               owner, repo, sha,
