@@ -39,16 +39,20 @@ jobs:
       - name: Apply tenant registry request
         id: apply
         run: |
+          RESULT_FILE="$RUNNER_TEMP/tenant-issue-result.json"
           python3 scripts/tenant_registry_issue.py \
             --repo-root . \
             --issue-body-file /tmp/tenant-issue-body.md \
-            --output-json /tmp/tenant-issue-result.json
-          echo "result=$(jq -c . /tmp/tenant-issue-result.json)" >> "$GITHUB_OUTPUT"
+            --output-json "$RESULT_FILE"
+          RESULT=$(jq -c . "$RESULT_FILE")
+          TENANT=$(jq -r .tenant_slug "$RESULT_FILE")
+          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+          echo "tenant_slug=$TENANT" >> "$GITHUB_OUTPUT"
 
       - name: Create branch and commit
         id: commit
         run: |
-          TENANT=$(jq -r .tenant_slug /tmp/tenant-issue-result.json)
+          TENANT="${{ steps.apply.outputs.tenant_slug }}"
           BRANCH="tenant-registry/issue-${{ github.event.issue.number }}-${TENANT}"
           git fetch origin "$BRANCH" || true
           git checkout -B "$BRANCH" origin/main
