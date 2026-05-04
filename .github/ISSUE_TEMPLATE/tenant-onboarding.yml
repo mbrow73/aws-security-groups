@@ -1,6 +1,6 @@
-name: Tenant / Review Authority / Reference Grant Request
-about: Request tenant registry, review authority, allowed account, or reference grant changes
-title: "Tenant registry request: <tenant-slug-or-authority>"
+name: Tenant Registry Request
+about: Request tenant metadata or cross-tenant reference pre-approval
+title: "Tenant registry request: <tenant-or-team-name>"
 labels:
   - tenant-onboarding
   - governance
@@ -8,36 +8,28 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form for V2 SG framework ownership metadata requests.
+        Use this form for SG framework tenant registry requests.
 
-        This form does **not** automate registry changes. Platform/security will review the issue and convert approved requests into PRs against:
+        Platform/security will review the issue and convert approved requests into registry PRs. This form does not automate registry changes.
 
-        - `registry/tenants.yaml`
-        - `registry/review-authorities.yaml`
-        - related docs/examples when needed
-
-        Tenants are durable platform ownership domains, not one-off app names.
+        Tenants are durable ownership domains, not one-off app names.
 
   - type: dropdown
     id: request_type
     attributes:
-      label: Request type
-      description: Pick the closest primary intent.
+      label: What do you need?
       options:
-        - New tenant
-        - Modify existing tenant
-        - Add account to existing tenant
-        - Create review authority
-        - Change review authority
-        - Add or change reference grant
+        - Create a new tenant
+        - Update an existing tenant
+        - Request cross-tenant reference pre-approval
     validations:
       required: true
 
   - type: input
     id: tenant_slug
     attributes:
-      label: Tenant slug
-      description: Lowercase kebab-case platform ownership domain. Use the existing slug for modify/grant/account requests.
+      label: Tenant slug, requested or existing
+      description: Lowercase kebab-case if known. Platform/security may adjust during review.
       placeholder: payments-platform
     validations:
       required: true
@@ -53,16 +45,16 @@ body:
   - type: textarea
     id: ownership_domain
     attributes:
-      label: Ownership domain / scope
-      description: What team/platform/workload boundary does this tenant represent?
-      placeholder: This tenant owns payments platform SG requests for shared EKS accounts...
+      label: What does this tenant own?
+      description: Describe the team/platform/workload boundary in normal language.
+      placeholder: This tenant owns payments platform workloads in shared EKS accounts...
     validations:
       required: true
 
   - type: input
     id: owner_team
     attributes:
-      label: Owner team slug/name
+      label: Owner team
       placeholder: payments-platform
     validations:
       required: true
@@ -77,92 +69,63 @@ body:
       required: true
 
   - type: input
-    id: allowed_accounts
+    id: tenant_accounts
     attributes:
-      label: Allowed AWS account ID(s)
-      description: Comma-separated 12-digit AWS account IDs where this tenant expects to manage SGs.
+      label: AWS account ID(s) for this tenant
+      description: List the AWS account IDs where this team owns or operates workloads for this tenant.
       placeholder: "123456789012, 210987654321"
     validations:
       required: true
 
   - type: input
-    id: review_authority
+    id: ghe_team_slug
     attributes:
-      label: Existing review authority
-      description: Existing authority from `registry/review-authorities.yaml`, if one should be reused.
-      placeholder: payments-sg
+      label: GHE reviewer team slug
+      description: "Team slug under github.aexp.com/orgs/amex-eng/teams/. Example: payments-platform"
+      placeholder: payments-platform
     validations:
-      required: false
-
-  - type: input
-    id: ghe_team
-    attributes:
-      label: GitHub Enterprise team URL or slug
-      description: Required if a new review authority is needed or the authority should change.
-      placeholder: https://github.aexp.com/orgs/amex-eng/teams/payments-platform
-    validations:
-      required: false
-
-  - type: input
-    id: github_reviewers
-    attributes:
-      label: GitHub reviewer team(s) for native UX
-      description: Optional reviewer request targets. Enforcement uses `review_authority`.
-      placeholder: amex-eng/payments-platform
-    validations:
-      required: false
-
-  - type: input
-    id: slack_channel
-    attributes:
-      label: Slack channel
-      description: Optional future notification target.
-      placeholder: payments-platform-netsec
-    validations:
-      required: false
+      required: true
 
   - type: textarea
-    id: reference_grants
+    id: reference_grant
     attributes:
-      label: Reference grants, optional
-      description: Target-owned pre-approval grants for cross-tenant SG references. Leave blank if not needed.
+      label: Cross-tenant reference pre-approval, optional
+      description: Only fill this out if requesting pre-approval for other tenants to reference SGs owned by this tenant.
       placeholder: |
-        - name: allow-https-to-shared-api
-          description: Shared API accepts HTTPS from internal tenant SGs.
-          target_sgs:
-            - shared-api
-          source_tenants:
-            - "*"
-          protocols:
-            - tcp
-          ports:
-            - 443
-          directions:
-            - egress
-          decision: auto_approved
-          expires: null
+        target_sgs:
+          - shared-api
+        source_tenants:
+          - "*"
+        protocols:
+          - tcp
+        ports:
+          - 443
+        directions:
+          - egress
+        expires: null
+        reason: Shared API accepts HTTPS from internal tenants.
     validations:
       required: false
 
   - type: textarea
     id: justification
     attributes:
-      label: Justification / change reason
-      description: Explain why this tenant, authority, account scope, or reference grant is needed.
-      placeholder: Existing tenants do not cover this ownership boundary because...
+      label: Why is this needed?
+      description: Briefly explain the reason for this tenant/update/reference pre-approval.
+      placeholder: Existing tenant metadata does not cover this ownership boundary because...
     validations:
       required: true
 
   - type: checkboxes
     id: checklist
     attributes:
-      label: Checklist
+      label: Quick checks
       options:
-        - label: I checked `registry/tenants.yaml` and confirmed whether this should create or modify an existing tenant.
+        - label: I checked existing tenants first.
           required: true
-        - label: This tenant represents a durable platform ownership domain, not a temporary project name.
+        - label: This is a durable ownership domain, not a temporary app/project name.
           required: true
-        - label: The review authority or GHE team listed above can review SG requests for this tenant.
+        - label: The GHE team slug listed above can review SG requests for this tenant.
           required: true
-        - label: Any requested reference grant is owned by the target tenant and intentionally allows the listed access pattern.
+        - label: If requesting cross-tenant pre-approval, this tenant owns the referenced SG and accepts the listed access pattern.
           required: false
