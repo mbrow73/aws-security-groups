@@ -182,6 +182,7 @@ class SecurityGroupValidator:
 
         self._validate_schema(data, summary)
         self._validate_account_id(data, summary)
+        self._validate_registry_schema(summary)
         self._validate_tenant_registry(data, summary)
         self._validate_regions(data, summary)
         self._validate_security_groups(data, summary)
@@ -190,6 +191,95 @@ class SecurityGroupValidator:
         self._validate_unicode_characters(data, summary)
 
         return summary
+
+    def _validate_registry_schema(self, summary: ValidationSummary):
+        tenants = self.reference_tenant_registry or {}
+        review_authorities = self._load_review_authorities_registry()
+        platform_sgs = self.platform_security_groups or {}
+
+        self._validate_review_authorities_registry(review_authorities, summary)
+        self._validate_tenants_registry_schema(tenants, review_authorities.get('authorities', {}), summary)
+        self._validate_platform_sg_registry(platform_sgs, review_authorities.get('authorities', {}), summary)
+
+    def _load_review_authorities_registry(self) -> Dict[str, Any]:
+        path = self.repo_root / 'registry' / 'review-authorities.yaml'
+        if not path.exists():
+            return {}
+        try:
+            with open(path, 'r') as f:
+                data = yaml.safe_load(f) or {}
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _validate_review_authorities_registry(self, registry: Dict[str, Any], summary: ValidationSummary):
+        authorities = registry.get('authorities', {}) if isinstance(registry, dict) else {}
+        rules = registry.get('rules', {}) if isinstance(registry, dict) else {}
+        if authorities and not isinstance(authorities, dict):
+            summary.add_result(ValidationResult(level='error', message='review-authorities.yaml authorities must be a mapping/object', rule='registry_review_authorities_invalid'))
+            return
+        for slug, authority in authorities.items():
+            context = f"review_authority.{slug}"
+            if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug):
+                summary.add_result(ValidationResult(level='error', message=f"Review authority slug '{slug}' must be lowercase kebab-case", rule='registry_review_authority_slug', context=context))
+            if not isinstance(authority, dict):
+                summary.add_result(ValidationResult(level='error', message=f"Review authority '{slug}' must be a mapping/object", rule='registry_review_authority_invalid', context=context))
+                continue
+            for field in ['ghe_host', 'org', 'team_slug']:
+                if not isinstance(authority.get(field), str) or not authority.get(field).strip():
+                    summary.add_result(ValidationResult(level='error', message=f"Review authority '{slug}' missing required field '{field}'", rule=f'registry_review_authority_{field}', context=context))
+        if rules and not isinstance(rules, dict):
+            summary.add_result(ValidationResult(level='error', message='review-authorities.yaml rules must be a mapping/object', rule='registry_review_rules_invalid'))
+            return
+        for rule_name, rule in rules.items():
+            context = f"review_rule.{rule_name}"
+            if not isinstance(rule, dict):
+                summary.add_result(ValidationResult(level='error', message=f"Review rule '{rule_name}' must be a mapping/object", rule='registry_review_rule_invalid', context=context))
+                continue
+            authority = rule.get('authority')
+            if authority not in authorities:
+                summary.add_result(ValidationResult(level='error', message=f"Review rule '{rule_name}' references unknown authority '{authority}'", rule='registry_review_rule_authority', context=context))
+            approvals = rule.get('required_authority_approvals')
+            if not isinstance(approvals, int) or approvals < 1:
+                summary.add_result(ValidationResult(level='error', message=f"Review rule '{rule_name}' must require at least one authority approval", rule='registry_review_rule_approvals', context=context))
+
+    def _validate_tenants_registry_schema(self, tenants: Dict[str, Any], authorities: Dict[str, Any], summary: ValidationSummary):
+        allowed_statuses = {'active', 'legacy', 'deprecated', 'disabled'}
+        for slug, tenant in tenants.items():
+            context = f"tenant.{slug}"
+            if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug):
+                summary.add_result(ValidationResult(level='error', message=f"Tenant slug '{slug}' must be lowercase kebab-case", rule='registry_tenant_slug', context=context))
+            if not isinstance(tenant, dict):
+                summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' must be a mapping/object", rule='registry_tenant_invalid', context=context))
+                continue
+            if tenant.get('status') not in allowed_statuses:
+                summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' has invalid status '{tenant.get('status')}'", rule='registry_tenant_status', context=context))
+            authority = tenant.get('review_authority')
+            if authority and authority not in authorities:
+                summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' references unknown review_authority '{authority}'", rule='registry_tenant_review_authority', context=context))
+            for account_id in tenant.get('allowed_accounts', []) or []:
+                if not isinstance(account_id, str) or not re.match(r'^\d{12}$', account_id):
+                    summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' has invalid AWS account ID '{account_id}'", rule='registry_tenant_allowed_account', context=context))
+            for carid in tenant.get('carids', []) or []:
+                if not isinstance(carid, str) or not re.match(r'^\d+$', carid):
+                    summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' has invalid CARID '{carid}'", rule='registry_tenant_carid', context=context))
+
+    def _validate_platform_sg_registry(self, platform_sgs: Dict[str, Any], authorities: Dict[str, Any], summary: ValidationSummary):
+        for slug, sg in platform_sgs.items():
+            context = f"platform_security_group.{slug}"
+            if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug):
+                summary.add_result(ValidationResult(level='error', message=f"Platform SG slug '{slug}' must be lowercase kebab-case", rule='registry_platform_sg_slug', context=context))
+            if not isinstance(sg, dict):
+                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' must be a mapping/object", rule='registry_platform_sg_invalid', context=context))
+                continue
+            if sg.get('owner_authority') not in authorities:
+                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' references unknown owner_authority '{sg.get('owner_authority')}'", rule='registry_platform_sg_owner_authority', context=context))
+            if sg.get('provision') not in ['automatic', 'manual']:
+                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' has invalid provision '{sg.get('provision')}'", rule='registry_platform_sg_provision', context=context))
+            if sg.get('source') not in ['vpc_cidr']:
+                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' has invalid source '{sg.get('source')}'", rule='registry_platform_sg_source', context=context))
+            if sg.get('review_class') not in ['platform_builtin']:
+                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' has invalid review_class '{sg.get('review_class')}'", rule='registry_platform_sg_review_class', context=context))
 
     def _validate_schema(self, data: Dict[str, Any], summary: ValidationSummary):
         if not isinstance(data, dict):

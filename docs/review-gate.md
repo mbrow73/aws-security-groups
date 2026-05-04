@@ -80,3 +80,7 @@ Platform/security converts approved onboarding requests into registry PRs for:
 
 - `registry/tenants.yaml`
 - `registry/review-authorities.yaml`, when a new authority is needed
+
+## Registry validation
+
+`registry/review-authorities.yaml` is validated by the SG validator. Authority slugs, required fields, rule authority references, and approval counts must be valid before Review Gate policy should be trusted.

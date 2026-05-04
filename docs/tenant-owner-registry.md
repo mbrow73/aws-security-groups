@@ -275,3 +275,18 @@ egress:
 ```
 
 This should not be implemented as part of tenant registry design, but the registry should support the ownership metadata needed for later review automation.
+
+## Registry Validation
+
+The validator checks tenant registry structure before relying on it for ownership or review policy.
+
+It validates:
+
+- tenant slug format
+- tenant status values
+- `review_authority` references
+- AWS account ID format
+- CARID format
+- reference grant schema
+
+Malformed registry metadata fails validation so review and reference policy cannot silently drift.

@@ -69,3 +69,7 @@ If VPC discovery is ambiguous or fails, the Terraform run should fail instead of
 ## Non-goals
 
 This registry does not make requestors specify platform SG rules. Platform built-ins are still platform-owned and created from the registry.
+
+## Registry validation
+
+`registry/platform-security-groups.yaml` is validated by the SG validator. Platform SG slugs, owner authorities, provision mode, source mode, and review class must be valid.
