@@ -245,10 +245,14 @@ jobs:
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
             const existing = comments.find(comment => comment.body?.includes(marker));
             const body = bodyLines.join('\n');
-            if (existing) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
+            try {
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
+              }
+            } catch (error) {
+              console.log(`Review policy comment could not be posted: ${error.message}`);
             }
 
             await github.rest.repos.createCommitStatus({
