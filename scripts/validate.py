@@ -192,6 +192,12 @@ class SecurityGroupValidator:
 
         return summary
 
+    def validate_registry_only(self) -> ValidationSummary:
+        summary = ValidationSummary()
+        self._validate_registry_schema(summary)
+        self._validate_reference_grants(summary)
+        return summary
+
     def _validate_registry_schema(self, summary: ValidationSummary):
         tenants = self.reference_tenant_registry or {}
         review_authorities = self._load_review_authorities_registry()
@@ -1513,7 +1519,8 @@ Examples:
   python validate.py accounts/production
         """
     )
-    parser.add_argument('account_dir', help='Path to the account directory containing security-groups.yaml')
+    parser.add_argument('account_dir', nargs='?', help='Path to the account directory containing security-groups.yaml')
+    parser.add_argument('--registry-only', action='store_true', help='Validate registry files without validating an account config')
     parser.add_argument('--format', choices=['text', 'json', 'markdown'], default='text', help='Output format (default: text)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Include info-level messages in output')
     parser.add_argument('--warnings-as-errors', action='store_true', help='Treat warnings as errors')
@@ -1521,8 +1528,15 @@ Examples:
     args = parser.parse_args()
 
     try:
-        validator = SecurityGroupValidator(args.account_dir)
-        summary = validator.validate()
+        if args.registry_only:
+            account_dir = args.account_dir or 'accounts/_example'
+            validator = SecurityGroupValidator(account_dir)
+            summary = validator.validate_registry_only()
+        else:
+            if not args.account_dir:
+                parser.error('account_dir is required unless --registry-only is set')
+            validator = SecurityGroupValidator(args.account_dir)
+            summary = validator.validate()
 
         if args.no_warnings:
             summary.warnings = []
@@ -1535,6 +1549,7 @@ Examples:
         elif args.format == 'json':
             output = {
                 'account_dir': args.account_dir,
+                'registry_only': args.registry_only,
                 'account_id': validator.account_id,
                 'validation_results': {
                     'errors': [asdict(r) for r in summary.errors],
@@ -1550,8 +1565,11 @@ Examples:
             }
             print(json.dumps(output, indent=2))
         else:
-            print(f"🔍 Validating AWS Security Groups for account: {validator.account_id}")
-            print(f"📁 Directory: {args.account_dir}")
+            if args.registry_only:
+                print("🔍 Validating SG framework registries")
+            else:
+                print(f"🔍 Validating AWS Security Groups for account: {validator.account_id}")
+                print(f"📁 Directory: {args.account_dir}")
             print()
             if summary.errors:
                 print("❌ Errors:")
