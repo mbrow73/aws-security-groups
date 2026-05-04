@@ -330,6 +330,7 @@ Cutover is considered healthy when:
 - correct approvals satisfy Review Gate
 - missing/wrong approvals keep Review Gate pending
 - `vpc-endpoints` refs do not require extra review
+- vpc-endpoints-only tenant SG changes are identified as future auto-merge candidates
 - cross-tenant refs with grants skip target-owner approval
 - cross-tenant refs without grants require target-owner approval
 - TFE upload/run succeeds with normalized account config
