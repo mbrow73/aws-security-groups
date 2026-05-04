@@ -117,7 +117,8 @@ jobs:
               })}`);
             }
 
-            if (requirements.size === 0) {
+            const policyEvaluated = frameworkChanged || changedAccounts.length > 0;
+            if (requirements.size === 0 && !policyEvaluated) {
               loadPolicy('100000000001');
               requireAuthority('platform-sg', 1, 'default fallback');
             }
