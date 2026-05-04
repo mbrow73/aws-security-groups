@@ -30,7 +30,7 @@ jobs:
       - name: Evaluate auto-merge candidate
         uses: actions/github-script@v7
         env:
-          AUTO_MERGE_MODE: ${{ vars.AUTO_MERGE_MODE || 'dry-run' }}
+          AUTO_MERGE_MODE: ${{ vars.AUTO_MERGE_MODE || secrets.AUTO_MERGE_MODE || 'dry-run' }}
         with:
           script: |
             const fs = require('fs');

@@ -171,7 +171,14 @@ def apply_request(repo_root: Path, fields: dict[str, str]) -> dict[str, Any]:
     tenants_doc = load_yaml(tenants_path)
     authorities_doc = load_yaml(authorities_path)
     tenants = tenants_doc.setdefault("tenants", {})
-    authorities = authorities_doc.get("authorities", {}) or {}
+    authorities = authorities_doc.setdefault("authorities", {})
+    if "platform-sg" not in authorities:
+        authorities["platform-sg"] = {
+            "description": "Platform SG authority for framework, default account, CIDR, prefix-list, and platform reviews.",
+            "ghe_host": "github.aexp.com",
+            "org": "amex-eng",
+            "team_slug": "nsae",
+        }
 
     request_type = req["request_type"]
     tenant_slug = req["tenant_slug"]
