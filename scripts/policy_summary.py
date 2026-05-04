@@ -67,6 +67,24 @@ def changed_tenants_for_account(account_id: str, changed_files: list[str] | None
     return tenants
 
 
+def changed_files_are_tenant_sg_only(account_id: str, changed_files: list[str] | None) -> bool:
+    if changed_files is None:
+        return False
+    account_prefix = f"accounts/{account_id}/"
+    matched = False
+    for changed in changed_files:
+        if not changed.startswith(account_prefix):
+            return False
+        rel = changed[len(account_prefix):]
+        parts = rel.split("/")
+        if parts == ["security-groups.yaml"]:
+            return False
+        if len(parts) != 2 or parts[1] != "security-groups.yaml":
+            return False
+        matched = True
+    return matched
+
+
 def iter_sg_refs(account_config, source_tenants: set[str] | None = None):
     for source in account_config.sources:
         if source_tenants is not None and source.tenant not in source_tenants:
@@ -112,6 +130,7 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         add_requirement(requirements, tenant_authority(tenants, tenant), 2 if prod else 1)
 
     references = []
+    auto_merge_blockers: list[str] = []
     for source_sg, target_sg, direction, index, rule in iter_sg_refs(account_config, policy_tenants):
         classification = classify_sg_reference(
             account_config,
@@ -137,6 +156,30 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         if classification.ref_class == "cross_tenant":
             add_requirement(requirements, tenant_authority(tenants, classification.target_tenant), 1)
 
+    if account_config.layout != "tenant":
+        auto_merge_blockers.append("auto-merge requires tenant layout")
+    if not changed_files_are_tenant_sg_only(account_config.account_id, changed_files):
+        auto_merge_blockers.append("auto-merge requires only tenant security-groups.yaml files to change")
+    if "default" in policy_tenants:
+        auto_merge_blockers.append("legacy/default tenant changes are not auto-merge eligible")
+
+    for ref in references:
+        ref_class = ref.get("ref_class")
+        target_sg = ref.get("target_sg")
+        if ref_class == "platform_builtin" and target_sg == "vpc-endpoints":
+            continue
+        if ref_class == "same_tenant":
+            continue
+        auto_merge_blockers.append(f"reference {target_sg} is {ref_class}, not auto-merge eligible")
+
+    auto_merge_eligible = not auto_merge_blockers
+    if auto_merge_eligible:
+        auto_merge_reason = "only tenant SG files changed with same-tenant refs and/or vpc-endpoints built-in refs"
+        effective_requirements: dict[str, int] = {}
+    else:
+        auto_merge_reason = "; ".join(auto_merge_blockers)
+        effective_requirements = dict(sorted(requirements.items()))
+
     return {
         "account_id": account_config.account_id,
         "environment": env,
@@ -145,7 +188,9 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         "changed_tenants": sorted(policy_tenants),
         "sg_tenants": sg_tenant_map,
         "references": references,
-        "required_review_authorities": dict(sorted(requirements.items())),
+        "required_review_authorities": effective_requirements,
+        "auto_merge_eligible": auto_merge_eligible,
+        "auto_merge_reason": auto_merge_reason,
         "review_authorities": review_registry.get("authorities", {}),
         "errors": account_config.errors,
         "warnings": account_config.warnings,
