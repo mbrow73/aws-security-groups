@@ -66,3 +66,20 @@ tenants:
     - '600001725'
     allowed_accounts:
     - '444555666779'
+  workflow-regression-e2e-two:
+    display_name: Workflow Regression E2E Two
+    description: TEST ONLY tenant onboarding workflow regression second pass.
+    status: active
+    owner_team: workflow-regression-e2e-two
+    review_authority: workflow-regression-e2e-two-sg
+    github_reviewers: []
+    slack_channel: null
+    carids:
+    - '600001725'
+    allowed_accounts:
+    - '555666777890'
+    owned_networks:
+      workflow-api-two:
+        cidrs:
+        - 10.47.16.0/24
+        description: TEST ONLY workflow regression network.
