@@ -284,6 +284,8 @@ class SecurityGroupValidator:
         if not context.registry_found:
             return
 
+        self._validate_reference_grants(summary)
+
         if not context.tenant_found:
             summary.add_result(ValidationResult(
                 level='warning',
@@ -317,6 +319,171 @@ class SecurityGroupValidator:
                 rule='tenant_registry_account_scope',
                 context=account_id
             ))
+
+    def _validate_reference_grants(self, summary: ValidationSummary):
+        tenants = self.reference_tenant_registry or {}
+        if not tenants:
+            return
+
+        sg_tenant_map = {}
+        tenant_sgs = {}
+        for source in self.account_config.sources:
+            sgs = source.data.get('security_groups', {}) or {}
+            if not isinstance(sgs, dict):
+                continue
+            tenant_sgs.setdefault(source.tenant, set()).update(sgs.keys())
+            for sg_name in sgs:
+                sg_tenant_map[sg_name] = source.tenant
+
+        for tenant_slug, tenant in tenants.items():
+            if not isinstance(tenant, dict):
+                continue
+            grants = tenant.get('reference_grants', []) or []
+            if not isinstance(grants, list):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Tenant '{tenant_slug}' reference_grants must be a list",
+                    rule='reference_grant_invalid',
+                    context=tenant_slug
+                ))
+                continue
+
+            seen_names = set()
+            for index, grant in enumerate(grants):
+                context = f"tenant.{tenant_slug}.reference_grants[{index}]"
+                if not isinstance(grant, dict):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Reference grant for tenant '{tenant_slug}' must be a mapping/object",
+                        rule='reference_grant_invalid',
+                        context=context
+                    ))
+                    continue
+
+                name = grant.get('name')
+                if not isinstance(name, str) or not name.strip():
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Reference grant for tenant '{tenant_slug}' must include a non-empty name",
+                        rule='reference_grant_name',
+                        context=context
+                    ))
+                elif name in seen_names:
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Duplicate reference grant name '{name}' for tenant '{tenant_slug}'",
+                        rule='reference_grant_duplicate_name',
+                        context=context
+                    ))
+                else:
+                    seen_names.add(name)
+
+                self._validate_reference_grant_list_field(grant, 'target_sgs', context, summary)
+                self._validate_reference_grant_list_field(grant, 'source_tenants', context, summary)
+                self._validate_reference_grant_list_field(grant, 'protocols', context, summary)
+                self._validate_reference_grant_list_field(grant, 'ports', context, summary, item_type=int)
+                self._validate_reference_grant_list_field(grant, 'directions', context, summary)
+
+                if grant.get('decision') != 'auto_approved':
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Reference grant '{name or index}' for tenant '{tenant_slug}' must use decision 'auto_approved'",
+                        rule='reference_grant_decision',
+                        context=context
+                    ))
+
+                for protocol in grant.get('protocols', []) or []:
+                    if str(protocol).lower() not in ['tcp', 'udp', 'icmp']:
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"Reference grant '{name or index}' has unsupported protocol '{protocol}'",
+                            rule='reference_grant_protocol',
+                            context=context
+                        ))
+
+                for direction in grant.get('directions', []) or []:
+                    if str(direction).lower() not in ['ingress', 'egress']:
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"Reference grant '{name or index}' has invalid direction '{direction}'",
+                            rule='reference_grant_direction',
+                            context=context
+                        ))
+
+                for port in grant.get('ports', []) or []:
+                    if not isinstance(port, int) or port < 0 or port > 65535:
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"Reference grant '{name or index}' has invalid port '{port}'",
+                            rule='reference_grant_port',
+                            context=context
+                        ))
+
+                for source_tenant in grant.get('source_tenants', []) or []:
+                    if source_tenant != '*' and source_tenant not in tenants:
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"Reference grant '{name or index}' references unknown source tenant '{source_tenant}'",
+                            rule='reference_grant_source_tenant',
+                            context=context
+                        ))
+
+                if tenant_slug in tenant_sgs:
+                    for target_sg in grant.get('target_sgs', []) or []:
+                        if target_sg not in tenant_sgs.get(tenant_slug, set()):
+                            summary.add_result(ValidationResult(
+                                level='error',
+                                message=f"Reference grant '{name or index}' target SG '{target_sg}' is not owned by tenant '{tenant_slug}' in this account",
+                                rule='reference_grant_target_sg',
+                                context=context
+                            ))
+
+                expires = grant.get('expires')
+                if expires:
+                    try:
+                        from datetime import date
+                        expiry = date.fromisoformat(str(expires))
+                        if expiry < date.today():
+                            summary.add_result(ValidationResult(
+                                level='warning',
+                                message=f"Reference grant '{name or index}' for tenant '{tenant_slug}' is expired ({expires})",
+                                rule='reference_grant_expired',
+                                context=context
+                            ))
+                    except ValueError:
+                        summary.add_result(ValidationResult(
+                            level='error',
+                            message=f"Reference grant '{name or index}' has invalid expires date '{expires}'",
+                            rule='reference_grant_expires',
+                            context=context
+                        ))
+
+    def _validate_reference_grant_list_field(self, grant: Dict[str, Any], field: str, context: str, summary: ValidationSummary, item_type=str):
+        value = grant.get(field)
+        if not isinstance(value, list) or not value:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Reference grant field '{field}' must be a non-empty list",
+                rule=f"reference_grant_{field}",
+                context=context
+            ))
+            return
+        for item in value:
+            if item_type is int:
+                if not isinstance(item, int):
+                    summary.add_result(ValidationResult(
+                        level='error',
+                        message=f"Reference grant field '{field}' must contain integers",
+                        rule=f"reference_grant_{field}",
+                        context=context
+                    ))
+            elif not isinstance(item, str) or not item.strip():
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Reference grant field '{field}' must contain non-empty strings",
+                    rule=f"reference_grant_{field}",
+                    context=context
+                ))
 
     def _validate_regions(self, data: Dict[str, Any], summary: ValidationSummary):
         allowed_regions = self.guardrails.get('validation', {}).get('allowed_regions', ['us-east-1', 'us-west-2'])
