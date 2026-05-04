@@ -9,7 +9,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
+  pull-requests: write
   statuses: write
   issues: write
 
@@ -114,6 +114,8 @@ jobs:
                 changed_tenants: policy.changed_tenants,
                 references: policy.references,
                 required_review_authorities: policy.required_review_authorities,
+                auto_merge_eligible: policy.auto_merge_eligible,
+                auto_merge_reason: policy.auto_merge_reason,
               })}`);
             }
 
@@ -225,6 +227,9 @@ jobs:
               '## 🛡️ Review Policy Summary',
               '',
               `**Status:** ${passed ? '✅ passed' : '⏳ pending'}`,
+              '',
+              '### Auto-merge eligibility',
+              policies.length ? policies.map(policy => `- Account \`${policy.account_id}\`: ${policy.auto_merge_eligible ? '✅ eligible' : '❌ not eligible'}${policy.auto_merge_reason ? `, ${policy.auto_merge_reason}` : ''}`).join('\n') : '- Not evaluated',
               '',
               '### Required approvals',
               approvalSummary.length ? approvalSummary.join('\n') : '- None',
