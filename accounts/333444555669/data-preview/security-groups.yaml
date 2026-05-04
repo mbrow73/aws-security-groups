@@ -1,0 +1,8 @@
+account_id: "333444555669"
+environment: "nonprod"
+carid: "600001725"
+security_groups:
+  data-preview-api:
+    description: "Preview data API"
+    ingress: []
+    egress: []
