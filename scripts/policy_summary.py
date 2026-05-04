@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from account_config import load_account_config
+from network_ownership import classify_cidr_ownership
 from reference_classifier import (
     build_sg_tenant_map,
     classify_sg_reference,
@@ -85,6 +86,24 @@ def changed_files_are_tenant_sg_only(account_id: str, changed_files: list[str] |
     return matched
 
 
+def iter_cidr_refs(account_config, source_tenants: set[str] | None = None):
+    for source in account_config.sources:
+        if source_tenants is not None and source.tenant not in source_tenants:
+            continue
+        for source_sg, sg_config in (source.data.get("security_groups", {}) or {}).items():
+            if not isinstance(sg_config, dict):
+                continue
+            for direction in ["ingress", "egress"]:
+                rules = sg_config.get(direction, []) or []
+                if not isinstance(rules, list):
+                    continue
+                for index, rule in enumerate(rules):
+                    if not isinstance(rule, dict):
+                        continue
+                    for cidr in rule.get("cidr_blocks", []) or []:
+                        yield source_sg, cidr, direction, index, rule
+
+
 def iter_sg_refs(account_config, source_tenants: set[str] | None = None):
     for source in account_config.sources:
         if source_tenants is not None and source.tenant not in source_tenants:
@@ -130,6 +149,7 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         add_requirement(requirements, tenant_authority(tenants, tenant), 2 if prod else 1)
 
     references = []
+    cidr_references = []
     auto_merge_blockers: list[str] = []
     for source_sg, target_sg, direction, index, rule in iter_sg_refs(account_config, policy_tenants):
         classification = classify_sg_reference(
@@ -156,12 +176,42 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         if classification.ref_class == "cross_tenant":
             add_requirement(requirements, tenant_authority(tenants, classification.target_tenant), 1)
 
+    for source_sg, cidr, direction, index, rule in iter_cidr_refs(account_config, policy_tenants):
+        ownership = classify_cidr_ownership(
+            tenants,
+            cidr,
+            protocol=rule.get("protocol"),
+            from_port=rule.get("from_port"),
+            to_port=rule.get("to_port"),
+        )
+        cidr_ref = ownership.to_dict()
+        cidr_ref.update({
+            "source_sg": source_sg,
+            "direction": direction,
+            "rule_index": index,
+            "protocol": rule.get("protocol"),
+            "from_port": rule.get("from_port"),
+            "to_port": rule.get("to_port"),
+        })
+        cidr_references.append(cidr_ref)
+        if ownership.classification == "owned_allowed":
+            if ownership.owner_tenant not in policy_tenants:
+                add_requirement(requirements, ownership.owner_authority or "platform-sg", 1)
+        else:
+            add_requirement(requirements, "platform-sg", 1)
+
     if account_config.layout != "tenant":
         auto_merge_blockers.append("auto-merge requires tenant layout")
     if not changed_files_are_tenant_sg_only(account_config.account_id, changed_files):
         auto_merge_blockers.append("auto-merge requires only tenant security-groups.yaml files to change")
     if "default" in policy_tenants:
         auto_merge_blockers.append("legacy/default tenant changes are not auto-merge eligible")
+
+    for cidr_ref in cidr_references:
+        if cidr_ref.get("classification") != "owned_allowed":
+            auto_merge_blockers.append(f"CIDR {cidr_ref.get('cidr')} is {cidr_ref.get('classification')}, not auto-merge eligible")
+        elif cidr_ref.get("owner_tenant") not in policy_tenants:
+            auto_merge_blockers.append(f"CIDR {cidr_ref.get('cidr')} requires owner tenant {cidr_ref.get('owner_tenant')} approval")
 
     for ref in references:
         ref_class = ref.get("ref_class")
@@ -188,6 +238,7 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         "changed_tenants": sorted(policy_tenants),
         "sg_tenants": sg_tenant_map,
         "references": references,
+        "cidr_references": cidr_references,
         "required_review_authorities": effective_requirements,
         "auto_merge_eligible": auto_merge_eligible,
         "auto_merge_reason": auto_merge_reason,
