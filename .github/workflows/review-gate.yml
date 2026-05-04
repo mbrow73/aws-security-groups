@@ -22,10 +22,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install JS dependencies
+        run: npm install js-yaml
+
       - name: Check review requirements
         uses: actions/github-script@v7
         env:
           REVIEW_GATE_PAT: ${{ secrets.REVIEW_GATE_PAT }}
+          NODE_PATH: ${{ github.workspace }}/node_modules
         with:
           script: |
             const fs = require('fs');
@@ -246,7 +250,10 @@ jobs:
 
             const teamCache = new Map();
             async function getTeamMembers(host, org, teamSlug, pat) {
-              if (!pat) throw new Error('REVIEW_GATE_PAT secret is required to resolve GHE team membership');
+              if (!pat) {
+                console.log('REVIEW_GATE_PAT secret is not configured; treating authority membership as empty and leaving Review Gate pending');
+                return new Set();
+              }
               const cacheKey = `${host}/${org}/${teamSlug}`;
               if (teamCache.has(cacheKey)) return teamCache.get(cacheKey);
               const members = new Set();

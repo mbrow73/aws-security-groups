@@ -108,7 +108,7 @@ def get_base_yaml(account_id: str, base_ref: str) -> tuple[dict, bool]:
 
 def format_source(rule: dict) -> str:
     """Format the source/destination of a rule with icons."""
-    elif rule.get("cidr_blocks"):
+    if rule.get("cidr_blocks"):
         return ", ".join(f"`{c}`" for c in rule["cidr_blocks"])
     elif rule.get("security_groups"):
         return ", ".join(f"🔗 `{sg}`" for sg in rule["security_groups"])
