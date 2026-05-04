@@ -180,6 +180,44 @@ def build_sg_payload(changed_accounts: str, base_ref: str, has_warnings: bool, c
     return {"attachments": [{"color": sidebar_color, "blocks": blocks}]}
 
 
+def build_reference_grant_payload(changed_files: list[str]) -> dict:
+    pr_number = os.environ.get("PR_NUMBER", "?")
+    pr_title = os.environ.get("PR_TITLE", "Unknown")
+    pr_url = os.environ.get("PR_URL", "")
+    pr_author = os.environ.get("PR_AUTHOR", "unknown")
+    issue_url = os.environ.get("ISSUE_URL", "")
+    tenants = load_yaml_file("registry/tenants.yaml").get("tenants", {})
+    grant_lines = []
+    for slug, tenant in tenants.items():
+        for grant in tenant.get("reference_grants") or []:
+            if not isinstance(grant, dict):
+                continue
+            targets = ", ".join(grant.get("target_sgs") or grant.get("target_networks") or [])
+            sources = ", ".join(grant.get("source_tenants") or [])
+            protocols = ", ".join(str(p) for p in grant.get("protocols") or [])
+            ports = ", ".join(str(p) for p in grant.get("ports") or []) or "ranges"
+            grant_lines.append(f"• `{slug}/{grant.get('name')}` — targets: `{targets}` — sources: `{sources}` — {protocols}/{ports}")
+    grant_lines = grant_lines[-8:] or ["• Reference grant changed, inspect PR files for details."]
+    issue_text = f"\n*Issue:* <{issue_url}|source issue>" if issue_url else ""
+    timestamp = datetime.now(timezone.utc).strftime("%a %b %d, %I:%M %p UTC")
+    blocks = [
+        {"type": "header", "text": {"type": "plain_text", "text": "🔐 Reference grant request", "emoji": True}},
+        {"type": "section", "fields": [
+            {"type": "mrkdwn", "text": f"*PR:*\n<{pr_url}|#{pr_number} — {pr_title}>"},
+            {"type": "mrkdwn", "text": f"*Author:*\n{pr_author}"},
+            {"type": "mrkdwn", "text": "*Review:*\nTarget owner, plus platform if broad"},
+            {"type": "mrkdwn", "text": f"*Changed files:*\n{len(changed_files)}"},
+        ]},
+        {"type": "section", "text": {"type": "mrkdwn", "text": "*Grant delta:*\n" + "\n".join(grant_lines) + issue_text}},
+        {"type": "actions", "elements": [
+            {"type": "button", "text": {"type": "plain_text", "text": "📋 Review Grant PR", "emoji": True}, "url": pr_url, "style": "primary"},
+            {"type": "button", "text": {"type": "plain_text", "text": "📁 View Files", "emoji": True}, "url": f"{pr_url}/files"},
+        ]},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": f"📋 aws-security-groups • {timestamp}"}]},
+    ]
+    return {"attachments": [{"color": "#e01e5a", "blocks": blocks}]}
+
+
 def build_registry_payload(changed_files: list[str]) -> dict:
     pr_number = os.environ.get("PR_NUMBER", "?")
     pr_title = os.environ.get("PR_TITLE", "Unknown")
@@ -249,6 +287,8 @@ def build_payload(changed_accounts: str, base_ref: str, has_warnings: bool) -> d
     categories = changed_file_categories(changed_files)
     account_ids = split_csv(changed_accounts)
     if categories == {"registry"} or ("registry" in categories and not account_ids):
+        if os.environ.get("PR_TITLE", "").lower().startswith("reference grant:"):
+            return build_reference_grant_payload(changed_files)
         return build_registry_payload(changed_files)
     if not account_ids:
         return build_framework_payload(changed_files)
