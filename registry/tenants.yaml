@@ -38,6 +38,22 @@ tenants:
           tcp:
           - 443
         description: TEST ONLY payments API HTTPS surface.
+    reference_grants:
+    - name: allow-data-owned-e2e-https
+      source_tenants:
+      - data-owned-e2e
+      protocols:
+      - tcp
+      directions:
+      - egress
+      reason: TEST ONLY narrow grant allowing data-owned-e2e HTTPS egress to payments
+        owned API network.
+      target_networks:
+      - payments-api-prod
+      ports:
+      - 443
+      expires: '2026-12-31'
+      decision: auto_approved
   data-owned-e2e:
     display_name: Data Owned E2E
     description: TEST ONLY tenant that requests egress to a tenant-owned network surface.
