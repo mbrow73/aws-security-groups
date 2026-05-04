@@ -1,0 +1,109 @@
+name: "Tenant Onboarding"
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  tenant-onboarding:
+    name: "Create tenant registry PR"
+    if: contains(github.event.issue.labels.*.name, 'tenant-onboarding')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "sg-framework-bot"
+          git config user.email "sg-framework-bot@users.noreply.github.com"
+
+      - name: Write issue body
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          printf '%s\n' "$ISSUE_BODY" > /tmp/tenant-issue-body.md
+
+      - name: Apply tenant registry request
+        id: apply
+        run: |
+          python3 scripts/tenant_registry_issue.py \
+            --repo-root . \
+            --issue-body-file /tmp/tenant-issue-body.md \
+            --output-json /tmp/tenant-issue-result.json
+          echo "result=$(jq -c . /tmp/tenant-issue-result.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Create branch and commit
+        id: commit
+        run: |
+          TENANT=$(jq -r .tenant_slug /tmp/tenant-issue-result.json)
+          BRANCH="tenant-registry/issue-${{ github.event.issue.number }}-${TENANT}"
+          git checkout -b "$BRANCH"
+          git add registry/tenants.yaml registry/review-authorities.yaml
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "Add tenant registry request from issue #${{ github.event.issue.number }}"
+          git push -u origin "$BRANCH"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Open pull request
+        if: steps.commit.outputs.changed == 'true'
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = JSON.parse(`${{ steps.apply.outputs.result }}`);
+            const { owner, repo } = context.repo;
+            const title = `Tenant registry request: ${result.tenant_slug}`;
+            const body = [
+              `Generated from #${context.issue.number}.`,
+              '',
+              '## Summary',
+              ...(result.changed || []).map(item => `- ${item}`),
+              '',
+              '## Review',
+              'Registry changes require platform review through Review Gate.',
+            ].join('\n');
+            const pr = await github.rest.pulls.create({
+              owner,
+              repo,
+              title,
+              head: `${{ steps.commit.outputs.branch }}`,
+              base: 'main',
+              body,
+            });
+            core.setOutput('url', pr.data.html_url);
+
+      - name: Comment on issue
+        if: steps.commit.outputs.changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `Created tenant registry PR: ${{ steps.pr.outputs.url }}`,
+            });
+
+      - name: Comment no changes
+        if: steps.commit.outputs.changed == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: 'Tenant registry automation ran, but no registry changes were detected.',
+            });
