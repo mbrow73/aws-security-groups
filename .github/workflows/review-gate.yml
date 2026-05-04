@@ -78,11 +78,11 @@ jobs:
             const policyDisplayRows = [];
 
             function grantPrMetadata() {
-              const body = freshPr.body || pr.body || '';
+              const body = pr.data.body || '';
               const targetMatch = body.match(/Target tenant:\s*`([^`]+)`/);
               const authorityMatch = body.match(/Target authority:\s*`([^`]+)`/);
               const platformMatch = body.match(/Platform review required:\s*([^\n]+)/);
-              const titleMatch = (freshPr.title || pr.title || '').match(/^Reference grant:\s*([^/]+)\//);
+              const titleMatch = (pr.data.title || '').match(/^Reference grant:\s*([^/]+)\//);
               const targetTenant = targetMatch ? targetMatch[1] : (titleMatch ? titleMatch[1] : null);
               const targetAuthority = authorityMatch ? authorityMatch[1] : (targetTenant ? `${targetTenant}-sg` : null);
               if (!targetTenant || !targetAuthority || !(body.includes('Generated from #') || titleMatch)) return null;
