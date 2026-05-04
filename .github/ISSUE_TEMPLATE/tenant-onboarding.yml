@@ -1,5 +1,5 @@
 name: Tenant Registry Request
-about: Request tenant metadata or cross-tenant reference pre-approval
+description: Request tenant metadata, allowed accounts, review authority, or owned network surfaces
 title: "Tenant registry request: <tenant-or-team-name>"
 labels:
   - tenant-onboarding
@@ -10,7 +10,7 @@ body:
       value: |
         Use this form for SG framework tenant registry requests.
 
-        Platform/security will review the issue and convert approved requests into registry PRs. This form does not automate registry changes.
+        This form automatically opens a registry PR for platform review. Use the Reference Grant Request form for access pre-approvals.
 
         Tenants are durable ownership domains, not one-off app names.
 
@@ -21,7 +21,6 @@ body:
       options:
         - Create a new tenant
         - Update an existing tenant
-        - Request cross-tenant reference pre-approval
     validations:
       required: true
 
@@ -100,34 +99,10 @@ body:
       required: false
 
   - type: textarea
-    id: reference_grant
-    attributes:
-      label: Cross-tenant reference pre-approval, optional
-      description: Only fill this out if requesting pre-approval for other tenants to reference SGs or owned networks owned by this tenant.
-      placeholder: |
-        name: allow-payments-api-https
-        target_sgs:
-          - shared-api
-        target_networks:
-          - payments-api-prod
-        source_tenants:
-          - data-platform
-        protocols:
-          - tcp
-        ports:
-          - 443
-        directions:
-          - egress
-        expires: null
-        reason: Payments API accepts HTTPS from data-platform.
-    validations:
-      required: false
-
-  - type: textarea
     id: justification
     attributes:
       label: Why is this needed?
-      description: Briefly explain the reason for this tenant/update/reference pre-approval.
+      description: Briefly explain the reason for this tenant/create/update request.
       placeholder: Existing tenant metadata does not cover this ownership boundary because...
     validations:
       required: true
@@ -143,7 +118,5 @@ body:
           required: true
         - label: The GHE team slug listed above can review SG requests for this tenant.
           required: true
-        - label: If registering owned network surfaces, this tenant owns the CIDRs. Access pre-approval belongs in reference grants, not owned_networks.
-          required: false
-        - label: If requesting cross-tenant pre-approval, this tenant owns the referenced SG/network and accepts the listed access pattern.
+        - label: If registering owned network surfaces, this tenant owns the CIDRs. Access pre-approval belongs in the separate Reference Grant Request form.
           required: false
