@@ -40,10 +40,19 @@ jobs:
         id: apply
         run: |
           RESULT_FILE="$RUNNER_TEMP/tenant-issue-result.json"
+          LOG_FILE="$RUNNER_TEMP/tenant-issue-parser.log"
+          set +e
           python3 scripts/tenant_registry_issue.py \
             --repo-root . \
             --issue-body-file /tmp/tenant-issue-body.md \
-            --output-json "$RESULT_FILE"
+            --output-json "$RESULT_FILE" >"$LOG_FILE" 2>&1
+          PARSER_EXIT=$?
+          set -e
+          cat "$LOG_FILE"
+          if [ $PARSER_EXIT -ne 0 ] || [ ! -s "$RESULT_FILE" ]; then
+            echo "::error::Tenant registry issue parser failed or did not create $RESULT_FILE"
+            exit ${PARSER_EXIT:-1}
+          fi
           RESULT=$(jq -c . "$RESULT_FILE")
           TENANT=$(jq -r .tenant_slug "$RESULT_FILE")
           echo "result=$RESULT" >> "$GITHUB_OUTPUT"
