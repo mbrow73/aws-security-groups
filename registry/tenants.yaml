@@ -1,7 +1,7 @@
 tenants:
   default:
     display_name: "Default Single-Tenant Account"
-    description: "Compatibility tenant for current single-file account configs."
+    description: "Compatibility tenant for current single-file account configs. Registry-only validation preview."
     status: "legacy"
     owner_team: null
     review_authority: "platform-sg"
