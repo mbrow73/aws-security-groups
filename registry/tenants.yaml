@@ -1,17 +1,30 @@
 tenants:
   default:
-    display_name: "Default Single-Tenant Account"
-    description: "Compatibility tenant for current single-file account configs."
-    status: "legacy"
+    display_name: Default Single-Tenant Account
+    description: Compatibility tenant for current single-file account configs.
+    status: legacy
     owner_team: null
-    review_authority: "platform-sg"
+    review_authority: platform-sg
     github_reviewers: []
     slack_channel: null
     carids:
-      - "600001725"
+    - '600001725'
     allowed_accounts:
-      - "100000000001"
-      - "100000000002"
-      - "222333444555"
-      - "555555555558"
-      - "999888777666"
+    - '100000000001'
+    - '100000000002'
+    - '222333444555'
+    - '555555555558'
+    - '999888777666'
+  payments-preview:
+    display_name: Payments Preview
+    description: Preview payments workloads for SG framework testing.
+    status: active
+    owner_team: payments-preview
+    review_authority: payments-preview-sg
+    github_reviewers: []
+    slack_channel: null
+    carids:
+    - '600001725'
+    allowed_accounts:
+    - '333444555673'
+    - '333444555674'

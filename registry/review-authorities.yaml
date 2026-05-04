@@ -1,17 +1,22 @@
 authorities:
   platform-sg:
-    description: "Platform SG authority for framework, default account, CIDR, prefix-list, and baseline-reference reviews."
-    ghe_host: "github.aexp.com"
-    org: "amex-eng"
-    team_slug: "nsae"
-
+    description: Platform SG authority for framework, default account, CIDR, prefix-list,
+      and baseline-reference reviews.
+    ghe_host: github.aexp.com
+    org: amex-eng
+    team_slug: nsae
+  payments-preview-sg:
+    description: SG review authority for Payments Preview
+    ghe_host: github.aexp.com
+    org: amex-eng
+    team_slug: payments-preview
 rules:
   nonprod_account:
     required_authority_approvals: 1
-    authority: "platform-sg"
+    authority: platform-sg
   prod_account:
     required_authority_approvals: 2
-    authority: "platform-sg"
+    authority: platform-sg
   framework:
     required_authority_approvals: 2
-    authority: "platform-sg"
+    authority: platform-sg
