@@ -27,6 +27,7 @@ jobs:
       changed-accounts: ${{ steps.detect.outputs.accounts }}
       has-accounts: ${{ steps.detect.outputs.has_accounts }}
       has-registry: ${{ steps.detect.outputs.has_registry }}
+      has-framework: ${{ steps.detect.outputs.has_framework }}
       changed-files: ${{ steps.detect.outputs.changed_files }}
     steps:
       - name: Checkout
@@ -60,6 +61,12 @@ jobs:
             echo "has_registry=true" >> $GITHUB_OUTPUT
           else
             echo "has_registry=false" >> $GITHUB_OUTPUT
+          fi
+
+          if echo "$CHANGED_FILES" | grep -qE '^(\.github/|scripts/|modules/|guardrails.yaml|known-prefix-lists.yaml|shared-prefix-lists.yaml)'; then
+            echo "has_framework=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_framework=false" >> $GITHUB_OUTPUT
           fi
 
   validate:
@@ -323,7 +330,7 @@ jobs:
     name: "Slack Review Notification"
     runs-on: ubuntu-latest
     needs: [detect-changes, validate]
-    if: needs.validate.result == 'success' && (needs.detect-changes.outputs.has-accounts == 'true' || needs.detect-changes.outputs.has-registry == 'true')
+    if: always() && ((needs.validate.result == 'success' && (needs.detect-changes.outputs.has-accounts == 'true' || needs.detect-changes.outputs.has-registry == 'true')) || needs.detect-changes.outputs.has-framework == 'true')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
