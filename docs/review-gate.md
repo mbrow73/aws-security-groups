@@ -55,7 +55,7 @@ This keeps GHE team details centralized and avoids repeating raw team URLs in te
 | Prod tenant SG change | 2 tenant `review_authority` |
 | Framework / registry / workflow change | 2 `platform-sg` |
 | Platform built-in SG ref, e.g. `vpc-endpoints` | no extra reviewer; may be auto-merge eligible when it is the only meaningful change |
-| Same-tenant SG ref | tenant authority review only; no platform review by default |
+| Same-tenant SG ref | no extra reviewer; may be auto-merge eligible |
 | Cross-tenant SG ref with matching target-owned reference grant | no extra reviewer |
 | Cross-tenant SG ref without matching grant | 1 referenced/target tenant `review_authority` |
 | Unknown SG ref | validation error |

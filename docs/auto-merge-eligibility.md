@@ -77,16 +77,17 @@ A PR may be auto-merge eligible when all are true:
 3. no framework, workflow, module, registry, guardrail, or prefix-list files changed
 4. validation passes with no errors
 5. TFE/plan checks pass
-6. changed SG references are only platform built-ins that explicitly allow requestor references
+6. changed SG references are only same-tenant refs or platform built-ins that explicitly allow requestor references
 7. initial platform built-in scope is `vpc-endpoints`
 8. no cross-tenant SG refs are introduced or changed
 9. no unknown SG refs exist
-10. no broad CIDR or prefix-list change requires human judgment under current guardrails
+10. no CIDR or prefix-list auto-merge path is used yet
 
-Initial auto-merge class:
+Initial auto-merge classes:
 
 ```text
-only references platform built-in vpc-endpoints through normal security_groups syntax
+- same-tenant SG refs through normal security_groups syntax
+- platform built-in vpc-endpoints refs through normal security_groups syntax
 ```
 
 Example:
@@ -101,7 +102,7 @@ egress:
     description: "HTTPS to interface VPC endpoints"
 ```
 
-This should not require platform review or tenant review once the automation is trusted.
+These should not require platform review or tenant review once the automation is trusted. Same-tenant SG refs keep application blast-radius ownership with the tenant team.
 
 ## Tenant authority review
 
@@ -109,7 +110,6 @@ Tenant authority review is required for tenant-owned SG changes that are not aut
 
 Examples:
 
-- same-tenant SG refs
 - tenant-owned CIDR or prefix-list changes that pass guardrails but still need owner judgment
 - tenant SG rule changes that alter exposure but do not cross tenant boundaries
 
@@ -184,9 +184,9 @@ Bot auto-merge should only act when:
 Start with the narrowest class:
 
 ```text
-vpc-endpoints-only tenant SG changes
+same-tenant and vpc-endpoints-only tenant SG changes
 ```
 
-After observing real PRs in GHE, consider whether same-tenant refs should also become auto-merge eligible.
+CIDR/prefix-list auto-merge is intentionally out of scope for the initial rollout. A later version may allow it through an explicit allowlist file of approved destinations plus approved ports/protocols.
 
 Do not auto-merge cross-tenant refs unless the target-owned grant model has been proven safe and leadership explicitly accepts that behavior.
