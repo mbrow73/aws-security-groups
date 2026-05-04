@@ -107,7 +107,7 @@ Stable internal owner slug. This may match the tenant slug when that is cleanest
 ### `review_authority`
 Named authority from `registry/review-authorities.yaml`.
 
-Review Gate uses this field for enforcement. It resolves the authority to actual GitHub Enterprise team membership using `REVIEW_GATE_PAT`.
+Review Gate uses this field for enforcement. It resolves the authority to actual GitHub Enterprise team membership using `SG_FRAMEWORK_PAT`.
 
 ### `github_reviewers`
 GitHub users or teams to request for native reviewer UX.

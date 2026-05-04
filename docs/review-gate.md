@@ -18,7 +18,7 @@ Initial platform SG authority:
 The workflow expects a repository or organization Actions secret named:
 
 ```text
-REVIEW_GATE_PAT
+SG_FRAMEWORK_PAT
 ```
 
 The token must be able to read GitHub Enterprise team membership for configured authorities. For a classic PAT, that means the token owner must be a member of the org and the token must include org-read capability, for example `read:org`.

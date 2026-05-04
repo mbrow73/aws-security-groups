@@ -26,7 +26,7 @@ jobs:
       - name: Check review requirements
         uses: actions/github-script@v7
         env:
-          REVIEW_GATE_PAT: ${{ secrets.REVIEW_GATE_PAT }}
+          REVIEW_GATE_PAT: ${{ secrets.SG_FRAMEWORK_PAT }}
         with:
           script: |
             const fs = require('fs');
@@ -170,7 +170,7 @@ jobs:
             const teamCache = new Map();
             async function getTeamMembers(host, org, teamSlug, pat) {
               if (!pat) {
-                console.log('REVIEW_GATE_PAT secret is not configured; treating authority membership as empty and leaving Review Gate pending');
+                console.log('SG_FRAMEWORK_PAT secret is not configured; treating authority membership as empty and leaving Review Gate pending');
                 return new Set();
               }
               const cacheKey = `${host}/${org}/${teamSlug}`;
