@@ -93,7 +93,7 @@ def dump_yaml(path: Path, data: dict[str, Any]):
 
 def validate_base(fields: dict[str, str]) -> dict[str, Any]:
     request_type = normalize_request_type(fields.get("request_type", ""))
-    tenant_slug = fields.get("tenant_slug", "").strip()
+    tenant_slug = fields.get("tenant_slug", "").strip().lower()
     if not TENANT_RE.match(tenant_slug):
         raise ValueError("tenant_slug must be lowercase kebab-case, 3-64 chars")
 
@@ -105,7 +105,7 @@ def validate_base(fields: dict[str, str]) -> dict[str, Any]:
         if not accounts or any(not ACCOUNT_RE.match(account) for account in accounts):
             raise ValueError("AWS account IDs must be 12 digit account IDs")
 
-    ghe_team_slug = fields.get("ghe_team_slug", "").strip()
+    ghe_team_slug = fields.get("ghe_team_slug", "").strip().lower()
     if request_type in {"create", "update"} and not ghe_team_slug:
         raise ValueError("GHE reviewer team slug is required")
 
@@ -114,7 +114,7 @@ def validate_base(fields: dict[str, str]) -> dict[str, Any]:
         "tenant_slug": tenant_slug,
         "display_name": fields.get("display_name", "").strip() or tenant_slug,
         "ownership_domain": fields.get("ownership_domain", "").strip(),
-        "owner_team": fields.get("owner_team", "").strip(),
+        "owner_team": fields.get("owner_team", "").strip().lower(),
         "carids": carids,
         "accounts": accounts,
         "ghe_team_slug": ghe_team_slug,
