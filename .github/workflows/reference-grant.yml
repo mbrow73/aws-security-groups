@@ -38,7 +38,7 @@ jobs:
       - name: Apply reference grant request
         id: apply
         run: |
-          python3 scripts/reference_grant_issue.py \
+          .venv/bin/python scripts/reference_grant_issue.py \
             --repo-root . \
             --issue-body-file /tmp/reference-grant-issue-body.md \
             --output-json /tmp/reference-grant-result.json

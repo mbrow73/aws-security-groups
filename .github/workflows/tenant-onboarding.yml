@@ -31,7 +31,10 @@ jobs:
           git config user.email "sg-framework-bot@users.noreply.github.com"
 
       - name: Install Python dependencies
-        run: python3 -m pip install pyyaml
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install pyyaml
 
       - name: Write issue body
         env:
@@ -47,7 +50,7 @@ jobs:
           echo "Running tenant_registry_issue.py from $(pwd)"
           ls -l scripts/tenant_registry_issue.py
           set +e
-          python3 scripts/tenant_registry_issue.py \
+          .venv/bin/python scripts/tenant_registry_issue.py \
             --repo-root . \
             --issue-body-file /tmp/tenant-issue-body.md \
             --output-json "$RESULT_FILE" >"$LOG_FILE" 2>&1
