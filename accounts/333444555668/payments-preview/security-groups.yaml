@@ -1,0 +1,24 @@
+account_id: "333444555668"
+environment: "nonprod"
+carid: "600001725"
+security_groups:
+  payments-preview-web:
+    description: "Preview web tier"
+    ingress: []
+    egress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups:
+          - "payments-preview-api"
+        description: "HTTPS to same-tenant API"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        security_groups:
+          - "vpc-endpoints"
+        description: "HTTPS to platform VPC endpoints"
+  payments-preview-api:
+    description: "Preview API tier"
+    ingress: []
+    egress: []
