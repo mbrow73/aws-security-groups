@@ -123,6 +123,7 @@ jobs:
 
             const grantMeta = registryOnly ? grantPrMetadata() : null;
             if (grantMeta) {
+              loadPolicy('100000000001', ['--changed-files', '/tmp/sg-changed-files.txt']);
               policyDisplayRows.push(`- Reference grant for tenant \`${grantMeta.targetTenant}\`: ❌ not auto-merge eligible, target tenant review required${grantMeta.platformRequired ? ', platform review required' : ''}`);
               requireAuthority(grantMeta.targetAuthority, 1, 'reference grant target tenant approval');
               if (grantMeta.platformRequired) {
