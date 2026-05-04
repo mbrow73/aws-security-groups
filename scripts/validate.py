@@ -69,10 +69,6 @@ class ValidationSummary:
 
 
 class SecurityGroupValidator:
-    ALLOWED_BASELINE_REFS = {
-        'vpc-endpoints',
-    }
-
     RESERVED_NAME_PREFIXES = [
         'default',
         'baseline',
@@ -89,7 +85,7 @@ class SecurityGroupValidator:
     ALLOWED_RULE_KEYS = {
         'description', 'protocol', 'from_port', 'to_port',
         'cidr_blocks', 'ipv6_cidr_blocks', 'security_groups',
-        'prefix_list_ids', 'baseline_ref', 'self'
+        'prefix_list_ids', 'self'
     }
 
     def __init__(self, account_dir: str):
@@ -595,8 +591,6 @@ class SecurityGroupValidator:
             else:
                 parts.append(f"ports {from_p}-{to_p}")
         sources = []
-        if rule.get('baseline_ref'):
-            sources.append(f"baseline:{rule['baseline_ref']}")
         cidr_blocks = rule.get('cidr_blocks', [])
         if isinstance(cidr_blocks, list):
             sources.extend(str(c) for c in cidr_blocks)
@@ -805,38 +799,7 @@ class SecurityGroupValidator:
     def _validate_rule_sources(self, sg_name: str, rule_type: str, rule_index: int, rule: Dict[str, Any], summary: ValidationSummary):
         context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
 
-        if 'baseline_ref' in rule:
-            ref = rule['baseline_ref']
-            if not isinstance(ref, str):
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"'baseline_ref' in {sg_name} {rule_type}[{rule_index}] must be a string, got {type(ref).__name__}",
-                    rule='rule_baseline_ref_type',
-                    context=context
-                ))
-            elif ref not in self.ALLOWED_BASELINE_REFS:
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"'baseline_ref: {ref}' in {sg_name} {rule_type}[{rule_index}] is not allowed. Allowed values: {', '.join(sorted(self.ALLOWED_BASELINE_REFS))}",
-                    rule='rule_baseline_ref_not_allowed',
-                    context=context
-                ))
-            if rule.get('security_groups'):
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"'baseline_ref' and 'security_groups' are mutually exclusive in {sg_name} {rule_type}[{rule_index}]",
-                    rule='rule_baseline_ref_conflict',
-                    context=context
-                ))
-            if rule.get('self'):
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"'baseline_ref' and 'self' are mutually exclusive in {sg_name} {rule_type}[{rule_index}]",
-                    rule='rule_baseline_ref_conflict',
-                    context=context
-                ))
-
-        selector_fields = ['cidr_blocks', 'ipv6_cidr_blocks', 'security_groups', 'self', 'prefix_list_ids', 'baseline_ref']
+        selector_fields = ['cidr_blocks', 'ipv6_cidr_blocks', 'security_groups', 'self', 'prefix_list_ids']
         active_selectors = []
         for field in selector_fields:
             value = rule.get(field)
@@ -849,7 +812,7 @@ class SecurityGroupValidator:
         if not active_selectors:
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Rule in {sg_name} {rule_type}[{rule_index}] must specify one selector (cidr_blocks, ipv6_cidr_blocks, security_groups, prefix_list_ids, baseline_ref, or self)",
+                message=f"Rule in {sg_name} {rule_type}[{rule_index}] must specify one selector (cidr_blocks, ipv6_cidr_blocks, security_groups, prefix_list_ids, or self)",
                 rule='rule_selector_missing',
                 context=context
             ))

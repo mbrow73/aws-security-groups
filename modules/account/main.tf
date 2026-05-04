@@ -149,59 +149,17 @@ locals {
     }
   )
 
-  # Baseline refs actually used by this region's SG rules.
-  baseline_refs_used = distinct(flatten([
-    for sg_name, sg in var.security_groups : concat(
-      [for rule in lookup(sg, "ingress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null],
-      [for rule in lookup(sg, "egress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
-    )
-  ]))
-
-  # Only look up baseline refs that are both allowed and actually referenced.
-  baseline_refs_to_lookup = toset([
-    for ref in local.baseline_refs_used : ref
-    if contains(var.baseline_ref_allowlist, ref)
-  ])
-
-  baseline_sg_mappings = {
-    for name, sg in data.aws_security_group.baseline :
-    name => sg.id
-  }
-
   shared_prefix_list_mappings = {
     for name, pl in aws_ec2_managed_prefix_list.shared :
     name => pl.id
   }
 
   # Decoupled model: shared/self-service prefix lists are owned by this repo.
-  # Optional static mappings still work, but baseline/known prefix list lookup is no longer part of the main path.
+  # Optional static mappings still work.
   all_prefix_list_mappings = merge(
     var.prefix_list_mappings,
     local.shared_prefix_list_mappings,
   )
-}
-
-# ---------------------------------------------------------------------------
-# External lookups — only for baseline SG refs
-# ---------------------------------------------------------------------------
-
-data "aws_security_group" "baseline" {
-  for_each = local.baseline_refs_to_lookup
-
-  filter {
-    name   = "tag:Name"
-    values = ["baseline-${each.value}"]
-  }
-
-  filter {
-    name   = "tag:Type"
-    values = ["baseline"]
-  }
-
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.discovered.id]
-  }
 }
 
 # ---------------------------------------------------------------------------
@@ -216,6 +174,5 @@ module "security_group_rules" {
   security_group_config   = merge(each.value, { name = lookup(each.value, "_logical_name", each.key) })
   security_group_mappings = local.security_group_mappings
   prefix_list_mappings    = local.all_prefix_list_mappings
-  baseline_sg_mappings    = local.baseline_sg_mappings
   tags                    = var.tags
 }

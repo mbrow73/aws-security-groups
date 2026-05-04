@@ -126,23 +126,10 @@ variable "prefix_list_mappings" {
 }
 
 # ---------------------------------------------------------------------------
-# Baseline Ref Allowlist
-# Only these baseline SG names can be referenced via baseline_ref in YAML.
-# Expanding this list is a deliberate security decision.
+# Prefix List Mappings
 # ---------------------------------------------------------------------------
 
 locals {
-  # Scan all SGs for baseline_ref usage and collect unique refs
-  baseline_refs_used = distinct(flatten([
-    for sg_name, sg in local.security_groups : concat(
-      [for rule in lookup(sg, "ingress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null],
-      [for rule in lookup(sg, "egress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
-    )
-  ]))
-
-  # Allowlist — only these baseline refs are permitted
-  baseline_ref_allowlist = ["vpc-endpoints"]
-
   # AWS-managed prefix list aliases by region.
   # Lets requesters use friendly names like "s3" and "dynamodb"
   # while still resolving to the correct regional managed prefix list ID.
@@ -210,7 +197,6 @@ module "us_east_1" {
     can(var.prefix_list_mappings["us-east-1"]) ? var.prefix_list_mappings["us-east-1"] : var.prefix_list_mappings,
     lookup(local.aws_managed_prefix_list_mappings_by_region, "us-east-1", {})
   )
-  baseline_ref_allowlist   = local.baseline_ref_allowlist
   shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-east-1", {})
   platform_security_groups = local.platform_security_groups
 }
@@ -230,7 +216,6 @@ module "us_west_2" {
     can(var.prefix_list_mappings["us-west-2"]) ? var.prefix_list_mappings["us-west-2"] : var.prefix_list_mappings,
     lookup(local.aws_managed_prefix_list_mappings_by_region, "us-west-2", {})
   )
-  baseline_ref_allowlist   = local.baseline_ref_allowlist
   shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-west-2", {})
   platform_security_groups = local.platform_security_groups
 }

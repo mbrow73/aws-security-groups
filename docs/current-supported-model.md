@@ -40,7 +40,7 @@ Supported today:
 - account-level `carid`
 - account-level `environment`
 - account-level `regions` with SG-level region overrides
-- security group rules using CIDRs, prefix lists, self references, baseline references, or same-account SG references
+- security group rules using CIDRs, prefix lists, self references, platform built-in SG references, or same-account SG references
 - cross-account connectivity represented with CIDR or prefix-list based rules when needed
 
 ## What Is Not Supported Today
