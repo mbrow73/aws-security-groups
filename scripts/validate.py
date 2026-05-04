@@ -296,17 +296,6 @@ class SecurityGroupValidator:
                     seen.append((name, net))
                 except ValueError as e:
                     summary.add_result(ValidationResult(level='error', message=f"Owned network CIDR '{cidr}' is invalid: {e}", rule='registry_owned_network_cidr', context=context))
-            allowed_ports = network.get('allowed_ports') or {}
-            if not isinstance(allowed_ports, dict):
-                summary.add_result(ValidationResult(level='error', message=f"Owned network '{name}' allowed_ports must be a protocol mapping", rule='registry_owned_network_ports', context=context))
-                continue
-            for proto, ports in allowed_ports.items():
-                if proto not in ['tcp', 'udp'] or not isinstance(ports, list):
-                    summary.add_result(ValidationResult(level='error', message=f"Owned network '{name}' allowed_ports.{proto} must be a list", rule='registry_owned_network_ports', context=context))
-                    continue
-                for port in ports:
-                    if not isinstance(port, int) or port < 1 or port > 65535:
-                        summary.add_result(ValidationResult(level='error', message=f"Owned network '{name}' has invalid port '{port}'", rule='registry_owned_network_port', context=context))
 
     def _validate_platform_sg_registry(self, platform_sgs: Dict[str, Any], authorities: Dict[str, Any], summary: ValidationSummary):
         for slug, sg in platform_sgs.items():
@@ -1272,9 +1261,9 @@ class SecurityGroupValidator:
                 from_port=rule.get('from_port') if rule else None,
                 to_port=rule.get('to_port') if rule else None,
             )
-            if ownership.classification == 'owned_allowed':
-                summary.add_result(ValidationResult(level='info', message=f"CIDR {cidr} is owned by tenant '{ownership.owner_tenant}' network '{ownership.network_name}' and port is allowed", rule='cidr_owned_network_allowed', context=context))
-            elif ownership.classification in ['owned_port_mismatch', 'unknown', 'overlap']:
+            if ownership.classification == 'owned':
+                summary.add_result(ValidationResult(level='info', message=f"CIDR {cidr} is owned by tenant '{ownership.owner_tenant}' network '{ownership.network_name}'", rule='cidr_owned_network', context=context))
+            elif ownership.classification in ['unknown', 'overlap']:
                 summary.add_result(ValidationResult(level='warning', message=f"CIDR {cidr}: {ownership.reason}", rule=f"cidr_{ownership.classification}", context=context))
 
         if (not is_ipv6 and cidr == '0.0.0.0/0') or (is_ipv6 and cidr == '::/0'):

@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 
 from account_config import load_account_config
-from network_ownership import classify_cidr_ownership
+from network_ownership import classify_cidr_ownership, find_matching_network_grant
 from reference_classifier import (
     build_sg_tenant_map,
     classify_sg_reference,
@@ -195,8 +195,13 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
             "to_port": rule.get("to_port"),
         })
         cidr_references.append(cidr_ref)
-        if ownership.classification == "owned_allowed":
-            if ownership.owner_tenant != sg_tenant_map.get(source_sg):
+        if ownership.classification == "owned":
+            owner_tenant = tenants.get(ownership.owner_tenant, {}) or {}
+            grant_name = find_matching_network_grant(owner_tenant, ownership.network_name, sg_tenant_map.get(source_sg), direction, rule.get("protocol"), rule.get("from_port"), rule.get("to_port"))
+            cidr_ref["grant_name"] = grant_name
+            if grant_name:
+                cidr_ref["classification"] = "owned_granted"
+            elif ownership.owner_tenant != sg_tenant_map.get(source_sg):
                 add_requirement(requirements, ownership.owner_authority or "platform-sg", 1)
         else:
             add_requirement(requirements, "platform-sg", 1)
@@ -209,7 +214,9 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         auto_merge_blockers.append("legacy/default tenant changes are not auto-merge eligible")
 
     for cidr_ref in cidr_references:
-        if cidr_ref.get("classification") != "owned_allowed":
+        if cidr_ref.get("classification") == "owned_granted":
+            continue
+        if cidr_ref.get("classification") != "owned":
             auto_merge_blockers.append(f"CIDR {cidr_ref.get('cidr')} is {cidr_ref.get('classification')}, not auto-merge eligible")
         elif cidr_ref.get("owner_tenant") != cidr_ref.get("source_tenant"):
             auto_merge_blockers.append(f"CIDR {cidr_ref.get('cidr')} requires owner tenant {cidr_ref.get('owner_tenant')} approval")

@@ -137,15 +137,6 @@ def validate_owned_networks(raw: str) -> dict[str, Any]:
             raise ValueError(f"owned network {name!r} must be a mapping")
         if not network.get("cidrs") or not isinstance(network.get("cidrs"), list):
             raise ValueError(f"owned network {name!r} must include cidrs list")
-        allowed_ports = network.get("allowed_ports") or {}
-        if not isinstance(allowed_ports, dict):
-            raise ValueError(f"owned network {name!r} allowed_ports must be a mapping")
-        for proto, ports in allowed_ports.items():
-            if proto not in ["tcp", "udp"] or not isinstance(ports, list):
-                raise ValueError(f"owned network {name!r} allowed_ports.{proto} must be a list")
-            for port in ports:
-                if not isinstance(port, int) or port < 1 or port > 65535:
-                    raise ValueError(f"owned network {name!r} has invalid port {port!r}")
     return networks
 
 
@@ -155,7 +146,11 @@ def validate_reference_grant(raw: str, tenant_slug: str) -> dict[str, Any] | Non
     grant = yaml.safe_load(raw)
     if not isinstance(grant, dict):
         raise ValueError("reference_grant must be YAML mapping")
-    for key in ["target_sgs", "source_tenants", "protocols", "directions"]:
+    target_sgs = grant.get("target_sgs") or []
+    target_networks = grant.get("target_networks") or []
+    if (target_sgs and not isinstance(target_sgs, list)) or (target_networks and not isinstance(target_networks, list)) or (not target_sgs and not target_networks):
+        raise ValueError("reference_grant must include target_sgs and/or target_networks list")
+    for key in ["source_tenants", "protocols", "directions"]:
         if key not in grant or not isinstance(grant[key], list) or not grant[key]:
             raise ValueError(f"reference_grant.{key} must be a non-empty list")
     if not grant.get("ports") and not grant.get("port_ranges"):
