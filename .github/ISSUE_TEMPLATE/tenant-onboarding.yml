@@ -93,14 +93,9 @@ body:
       description: Register routable CIDRs/prefixes this tenant owns so CIDR-based PRs can route review to the owner instead of NetSec/platform.
       placeholder: |
         payments-api-prod:
-          account_id: "123456789012"
-          region: us-east-1
           cidrs:
             - 10.42.16.0/24
-          allowed_ports:
-            tcp:
-              - 443
-          description: Payments API HTTPS surface.
+          description: Payments API routable range.
     validations:
       required: false
 
@@ -108,12 +103,15 @@ body:
     id: reference_grant
     attributes:
       label: Cross-tenant reference pre-approval, optional
-      description: Only fill this out if requesting pre-approval for other tenants to reference SGs owned by this tenant.
+      description: Only fill this out if requesting pre-approval for other tenants to reference SGs or owned networks owned by this tenant.
       placeholder: |
+        name: allow-payments-api-https
         target_sgs:
           - shared-api
+        target_networks:
+          - payments-api-prod
         source_tenants:
-          - "*"
+          - data-platform
         protocols:
           - tcp
         ports:
@@ -121,7 +119,7 @@ body:
         directions:
           - egress
         expires: null
-        reason: Shared API accepts HTTPS from internal tenants.
+        reason: Payments API accepts HTTPS from data-platform.
     validations:
       required: false
 
@@ -145,7 +143,7 @@ body:
           required: true
         - label: The GHE team slug listed above can review SG requests for this tenant.
           required: true
-        - label: If registering owned network surfaces, this tenant owns the CIDRs and accepts the listed access pattern.
+        - label: If registering owned network surfaces, this tenant owns the CIDRs. Access pre-approval belongs in reference grants, not owned_networks.
           required: false
-        - label: If requesting cross-tenant pre-approval, this tenant owns the referenced SG and accepts the listed access pattern.
+        - label: If requesting cross-tenant pre-approval, this tenant owns the referenced SG/network and accepts the listed access pattern.
           required: false

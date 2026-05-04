@@ -17,14 +17,45 @@ class NetworkOwnership:
     classification: str
     reason: str
     allowed: bool = False
+    grant_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def _port_allowed(allowed_ports: Any, protocol: str | None, from_port: Any, to_port: Any) -> bool:
-    protocol = str(protocol or "").lower()
-    if protocol in {"-1", "all"}:
+def _port_matches(entry: Any, port: int) -> bool:
+    if isinstance(entry, int) and entry == port:
+        return True
+    if isinstance(entry, str) and entry.isdigit() and int(entry) == port:
+        return True
+    if isinstance(entry, dict):
+        try:
+            return int(entry.get("from_port")) <= port <= int(entry.get("to_port"))
+        except Exception:
+            return False
+    return False
+
+
+def grant_matches_network(
+    grant: dict[str, Any],
+    network_name: str,
+    source_tenant: str | None,
+    direction: str | None,
+    protocol: str | None,
+    from_port: Any,
+    to_port: Any,
+) -> bool:
+    target_networks = grant.get("target_networks") or []
+    if target_networks and "*" not in target_networks and network_name not in target_networks:
+        return False
+    source_tenants = grant.get("source_tenants") or []
+    if source_tenants and "*" not in source_tenants and source_tenant not in source_tenants:
+        return False
+    directions = grant.get("directions") or []
+    if directions and "*" not in directions and direction not in directions:
+        return False
+    protocols = [str(p).lower() for p in grant.get("protocols") or []]
+    if protocols and "*" not in protocols and str(protocol or "").lower() not in protocols:
         return False
     try:
         start = int(from_port)
@@ -33,26 +64,26 @@ def _port_allowed(allowed_ports: Any, protocol: str | None, from_port: Any, to_p
         return False
     if start != end:
         return False
-    if isinstance(allowed_ports, dict):
-        candidates = allowed_ports.get(protocol) or []
-    elif isinstance(allowed_ports, list):
-        candidates = allowed_ports
-    else:
-        return False
-    for entry in candidates:
-        if isinstance(entry, int) and entry == start:
-            return True
-        if isinstance(entry, str) and entry.isdigit() and int(entry) == start:
-            return True
-        if isinstance(entry, dict):
-            try:
-                e_start = int(entry.get("from_port"))
-                e_end = int(entry.get("to_port"))
-            except Exception:
-                continue
-            if e_start <= start <= e_end and e_start <= end <= e_end:
-                return True
-    return False
+    ports = grant.get("ports") or []
+    ranges = grant.get("port_ranges") or []
+    return any(_port_matches(port, start) for port in ports) or any(_port_matches(r, start) for r in ranges)
+
+
+def find_matching_network_grant(
+    tenant: dict[str, Any],
+    network_name: str,
+    source_tenant: str | None,
+    direction: str | None,
+    protocol: str | None,
+    from_port: Any,
+    to_port: Any,
+) -> str | None:
+    for grant in tenant.get("reference_grants") or []:
+        if not isinstance(grant, dict):
+            continue
+        if grant_matches_network(grant, network_name, source_tenant, direction, protocol, from_port, to_port):
+            return grant.get("name") or "unnamed-grant"
+    return None
 
 
 def _iter_owned_networks(tenants: dict[str, Any]):
@@ -96,7 +127,4 @@ def classify_cidr_ownership(
         return NetworkOwnership(cidr, None, "platform-sg", None, "overlap", "CIDR matches multiple tenant-owned networks")
 
     tenant_slug, authority, name, network, owned = matches[0]
-    if not _port_allowed(network.get("allowed_ports"), protocol, from_port, to_port):
-        return NetworkOwnership(cidr, tenant_slug, authority or "platform-sg", name, "owned_port_mismatch", f"CIDR is owned by {tenant_slug}/{name}, but port is not pre-approved")
-
-    return NetworkOwnership(cidr, tenant_slug, authority or "platform-sg", name, "owned_allowed", f"CIDR is owned by {tenant_slug}/{name} and port is allowed", True)
+    return NetworkOwnership(cidr, tenant_slug, authority or "platform-sg", name, "owned", f"CIDR is owned by {tenant_slug}/{name}", False)
