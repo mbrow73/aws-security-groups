@@ -506,10 +506,17 @@ class SecurityGroupValidator:
                 else:
                     seen_names.add(name)
 
-                self._validate_reference_grant_list_field(grant, 'target_sgs', context, summary)
+                target_sgs = grant.get('target_sgs') or []
+                target_networks = grant.get('target_networks') or []
+                if (target_sgs and not isinstance(target_sgs, list)) or (target_networks and not isinstance(target_networks, list)) or (not target_sgs and not target_networks):
+                    summary.add_result(ValidationResult(level='error', message=f"Reference grant '{name or index}' for tenant '{tenant_slug}' must include target_sgs and/or target_networks", rule='reference_grant_targets', context=context))
+                for network_name in target_networks:
+                    if network_name not in (tenant.get('owned_networks') or {}):
+                        summary.add_result(ValidationResult(level='error', message=f"Reference grant '{name or index}' references unknown owned network '{network_name}'", rule='reference_grant_target_network', context=context))
                 self._validate_reference_grant_list_field(grant, 'source_tenants', context, summary)
                 self._validate_reference_grant_list_field(grant, 'protocols', context, summary)
-                self._validate_reference_grant_list_field(grant, 'ports', context, summary, item_type=int)
+                if grant.get('ports'):
+                    self._validate_reference_grant_list_field(grant, 'ports', context, summary, item_type=int)
                 self._validate_reference_grant_list_field(grant, 'directions', context, summary)
 
                 if grant.get('decision') != 'auto_approved':

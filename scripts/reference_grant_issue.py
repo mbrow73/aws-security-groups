@@ -178,6 +178,7 @@ def apply_request(repo_root: Path, fields: dict[str, str]) -> dict[str, Any]:
         "protocols": protocols,
         "directions": directions,
         "reason": fields.get("reason", "").strip(),
+        "decision": "auto_approved",
     }
     if target_sgs:
         grant["target_sgs"] = target_sgs
