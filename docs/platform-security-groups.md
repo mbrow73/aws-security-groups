@@ -2,7 +2,7 @@
 
 Platform security groups are built-in SGs that the platform owns and can create automatically for each account/region.
 
-They are intentionally referenced like normal security groups in requestor YAML. Requestors should not need to learn a separate `baseline_ref` field for these cases.
+They are intentionally referenced like normal security groups in requestor YAML. Requestors should not need to learn a separate platform-reference field for these cases.
 
 ## Registry
 

@@ -108,7 +108,6 @@ destinations:
     - "10.0.0.0/8"
   prefix_list_ids: []
   security_groups: []
-  baseline_refs: []
   self: false
 ```
 
