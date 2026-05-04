@@ -410,7 +410,7 @@ class SecurityGroupValidator:
         if context.allowed_accounts and data.get('account_id') and not context.account_allowed:
             account_id = str(data['account_id'])
             summary.add_result(ValidationResult(
-                level='warning',
+                level='error',
                 message=f"Account {account_id} is not listed under tenant '{context.tenant}' allowed_accounts in registry/tenants.yaml",
                 rule='tenant_registry_account_scope',
                 context=account_id
