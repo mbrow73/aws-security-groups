@@ -22,19 +22,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install JS dependencies
-        run: npm install js-yaml
-
       - name: Check review requirements
         uses: actions/github-script@v7
         env:
           REVIEW_GATE_PAT: ${{ secrets.REVIEW_GATE_PAT }}
-          NODE_PATH: ${{ github.workspace }}/node_modules
         with:
           script: |
             const fs = require('fs');
             const https = require('https');
-            const yaml = require('js-yaml');
+            const { execFileSync } = require('child_process');
 
             const { owner, repo } = context.repo;
             const pr_number = context.payload.pull_request?.number
@@ -46,194 +42,85 @@ jobs:
             }
 
             const authorityRegistryPath = 'registry/review-authorities.yaml';
-            const tenantRegistryPath = 'registry/tenants.yaml';
-            const platformSgRegistryPath = 'registry/platform-security-groups.yaml';
-
-            for (const path of [authorityRegistryPath, tenantRegistryPath]) {
-              if (!fs.existsSync(path)) {
-                core.setFailed(`${path} is required for Review Gate`);
-                return;
-              }
+            if (!fs.existsSync(authorityRegistryPath)) {
+              core.setFailed(`${authorityRegistryPath} is required for Review Gate`);
+              return;
             }
-
-            const authorityRegistry = yaml.load(fs.readFileSync(authorityRegistryPath, 'utf8')) || {};
-            const authorities = authorityRegistry.authorities || {};
-            const rules = authorityRegistry.rules || {};
-            const tenantRegistry = yaml.load(fs.readFileSync(tenantRegistryPath, 'utf8')) || {};
-            const tenants = tenantRegistry.tenants || {};
-            const platformSgRegistry = fs.existsSync(platformSgRegistryPath)
-              ? (yaml.load(fs.readFileSync(platformSgRegistryPath, 'utf8')) || {})
-              : {};
-            const platformSecurityGroups = platformSgRegistry.platform_security_groups || {};
-            const token = process.env.REVIEW_GATE_PAT;
 
             const pr = await github.rest.pulls.get({ owner, repo, pull_number: pr_number });
             const sha = pr.data.head.sha;
             const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr_number });
+            const changedFiles = files.map(f => f.filename);
+            fs.writeFileSync('/tmp/sg-changed-files.txt', changedFiles.join('\n') + '\n');
 
-            const FRAMEWORK_PATHS = [
-              'modules/', 'scripts/', '.github/', 'registry/',
-              'guardrails.yaml', 'known-prefix-lists.yaml', 'shared-prefix-lists.yaml'
-            ];
-            const frameworkFiles = files.filter(f =>
-              FRAMEWORK_PATHS.some(p => f.filename.startsWith(p) || f.filename === p)
+            function accountIdFromPath(filename) {
+              const match = filename.match(/^accounts\/(\d{12})(?:\/[^\/]+)?\/security-groups\.yaml$/);
+              return match ? match[1] : null;
+            }
+
+            const changedAccounts = [...new Set(changedFiles.map(accountIdFromPath).filter(Boolean))];
+            const frameworkChanged = changedFiles.some(filename =>
+              filename.startsWith('modules/') ||
+              filename.startsWith('scripts/') ||
+              filename.startsWith('.github/') ||
+              filename.startsWith('registry/') ||
+              filename === 'guardrails.yaml' ||
+              filename === 'known-prefix-lists.yaml' ||
+              filename === 'shared-prefix-lists.yaml'
             );
-            const frameworkChanged = frameworkFiles.length > 0;
 
             const requirements = new Map();
             const requirementReasons = [];
+            const authorities = {};
 
-            function requireAuthority(authorityName, count, reason) {
-              if (!authorityName) authorityName = 'platform-sg';
-              if (!authorities[authorityName]) {
-                throw new Error(`Missing review authority '${authorityName}' in ${authorityRegistryPath}`);
+            function mergeAuthorities(policy) {
+              for (const [name, authority] of Object.entries(policy.review_authorities || {})) {
+                authorities[name] = authority;
               }
-              const current = requirements.get(authorityName) || 0;
-              requirements.set(authorityName, Math.max(current, Number(count || 1)));
-              requirementReasons.push(`${authorityName}: ${count} (${reason})`);
             }
 
-            function tenantAuthority(tenantSlug) {
-              const tenant = tenants[tenantSlug];
-              if (!tenant) return 'platform-sg';
-              return tenant.review_authority || 'platform-sg';
-            }
-
-            function envFromConfig(data) {
-              return String(data?.environment || 'prod').toLowerCase();
-            }
-
-            function accountFileParts(filename) {
-              const match = filename.match(/^accounts\/(\d{12})(?:\/([^\/]+))?\/security-groups\.yaml$/);
-              if (!match) return null;
-              return { accountId: match[1], tenant: match[2] || 'default' };
-            }
-
-            function discoverAccountFiles(accountId) {
-              const accountDir = `accounts/${accountId}`;
-              const legacyPath = `${accountDir}/security-groups.yaml`;
-              if (fs.existsSync(legacyPath)) return [{ path: legacyPath, tenant: 'default' }];
-              if (!fs.existsSync(accountDir)) return [];
-              return fs.readdirSync(accountDir, { withFileTypes: true })
-                .filter(entry => entry.isDirectory())
-                .map(entry => ({ path: `${accountDir}/${entry.name}/security-groups.yaml`, tenant: entry.name }))
-                .filter(entry => fs.existsSync(entry.path));
-            }
-
-            function loadYamlFile(path) {
-              return yaml.load(fs.readFileSync(path, 'utf8')) || {};
-            }
-
-            function buildSgTenantMap(accountId) {
-              const map = new Map();
-              for (const source of discoverAccountFiles(accountId)) {
-                const data = loadYamlFile(source.path);
-                const securityGroups = data.security_groups || {};
-                for (const sgName of Object.keys(securityGroups)) {
-                  map.set(sgName, source.tenant);
-                }
-              }
-              return map;
-            }
-
-            function referencedSecurityGroups(rule) {
-              if (!rule || typeof rule !== 'object') return [];
-              const refs = rule.security_groups || [];
-              return Array.isArray(refs) ? refs : [];
-            }
-
-            function portMatches(grant, fromPort, toPort) {
-              if (fromPort === undefined || toPort === undefined) return false;
-              const ports = grant.ports || [];
-              if (Number(fromPort) === Number(toPort) && ports.map(Number).includes(Number(fromPort))) {
-                return true;
-              }
-              for (const range of grant.port_ranges || []) {
-                if (Number(fromPort) >= Number(range.from) && Number(toPort) <= Number(range.to)) {
-                  return true;
-                }
-              }
-              return false;
-            }
-
-            function grantNotExpired(grant) {
-              if (!grant.expires) return true;
-              const expiry = new Date(`${grant.expires}T23:59:59Z`);
-              return expiry >= new Date();
-            }
-
-            function matchingReferenceGrant(sourceTenant, targetTenant, targetSg, ruleType, rule) {
-              const target = tenants[targetTenant] || {};
-              for (const grant of target.reference_grants || []) {
-                if (grant.decision !== 'auto_approved') continue;
-                if (!(grant.target_sgs || []).includes(targetSg)) continue;
-                const sourceTenants = grant.source_tenants || [];
-                if (!sourceTenants.includes('*') && !sourceTenants.includes(sourceTenant)) continue;
-                const protocols = (grant.protocols || []).map(p => String(p).toLowerCase());
-                if (protocols.length && !protocols.includes(String(rule.protocol || '').toLowerCase())) continue;
-                const directions = (grant.directions || []).map(d => String(d).toLowerCase());
-                if (directions.length && !directions.includes(String(ruleType).toLowerCase())) continue;
-                if (!portMatches(grant, rule.from_port, rule.to_port)) continue;
-                if (!grantNotExpired(grant)) continue;
-                return grant;
-              }
-              return null;
+            function requireAuthority(name, count, reason) {
+              if (!name) name = 'platform-sg';
+              const current = requirements.get(name) || 0;
+              requirements.set(name, Math.max(current, Number(count || 1)));
+              requirementReasons.push(`${name}: ${count} (${reason})`);
             }
 
             if (frameworkChanged) {
-              requireAuthority('platform-sg', rules.framework?.required_authority_approvals || 2, 'framework/registry/workflow change');
-              console.log(`🔧 Framework files changed (${frameworkFiles.length})`);
+              const registryPolicy = JSON.parse(execFileSync(
+                'python3',
+                ['scripts/policy_summary.py', 'accounts/100000000001', '--changed-files', '/tmp/sg-changed-files.txt'],
+                { encoding: 'utf8' }
+              ));
+              mergeAuthorities(registryPolicy);
+              requireAuthority('platform-sg', 2, 'framework/registry/workflow change');
             }
 
-            const changedAccountFiles = files
-              .map(f => ({ file: f, parts: accountFileParts(f.filename) }))
-              .filter(item => item.parts);
-
-            const accountTenantMaps = new Map();
-            for (const item of changedAccountFiles) {
-              const { accountId, tenant } = item.parts;
-              const data = loadYamlFile(item.file.filename);
-              const env = envFromConfig(data);
-              const ruleName = env === 'prod' ? 'prod_account' : 'nonprod_account';
-              const required = rules[ruleName]?.required_authority_approvals || (env === 'prod' ? 2 : 1);
-              const sourceAuthority = tenantAuthority(tenant);
-              requireAuthority(sourceAuthority, required, `${env} ${tenant} account change`);
-
-              if (!accountTenantMaps.has(accountId)) {
-                accountTenantMaps.set(accountId, buildSgTenantMap(accountId));
+            for (const accountId of changedAccounts) {
+              const policy = JSON.parse(execFileSync(
+                'python3',
+                ['scripts/policy_summary.py', `accounts/${accountId}`, '--changed-files', '/tmp/sg-changed-files.txt'],
+                { encoding: 'utf8' }
+              ));
+              mergeAuthorities(policy);
+              for (const [authority, count] of Object.entries(policy.required_review_authorities || {})) {
+                requireAuthority(authority, count, `policy summary for account ${accountId}`);
               }
-              const sgTenantMap = accountTenantMaps.get(accountId);
-              const securityGroups = data.security_groups || {};
-
-              for (const [sourceSg, sgConfig] of Object.entries(securityGroups)) {
-                for (const ruleType of ['ingress', 'egress']) {
-                  const rulesList = Array.isArray(sgConfig?.[ruleType]) ? sgConfig[ruleType] : [];
-                  for (const rule of rulesList) {
-                    for (const targetSg of referencedSecurityGroups(rule)) {
-                      if (platformSecurityGroups[targetSg]) {
-                        console.log(`No extra review for platform built-in SG ref ${sourceSg} -> ${targetSg}`);
-                        continue;
-                      }
-                      const targetTenant = sgTenantMap.get(targetSg);
-                      if (!targetTenant) {
-                        console.log(`Unknown SG ref ${sourceSg} -> ${targetSg}; validation should fail this PR`);
-                        continue;
-                      }
-                      if (targetTenant !== tenant) {
-                        const grant = matchingReferenceGrant(tenant, targetTenant, targetSg, ruleType, rule);
-                        if (grant) {
-                          console.log(`No extra review for granted cross-tenant SG ref ${sourceSg} -> ${targetSg} via ${grant.name}`);
-                          continue;
-                        }
-                        requireAuthority(tenantAuthority(targetTenant), 1, `cross-tenant SG ref ${sourceSg} -> ${targetSg}`);
-                      }
-                    }
-                  }
-                }
-              }
+              console.log(`Policy summary for ${accountId}: ${JSON.stringify({
+                layout: policy.layout,
+                changed_tenants: policy.changed_tenants,
+                references: policy.references,
+                required_review_authorities: policy.required_review_authorities,
+              })}`);
             }
 
             if (requirements.size === 0) {
+              const fallbackPolicy = JSON.parse(execFileSync(
+                'python3',
+                ['scripts/policy_summary.py', 'accounts/100000000001'],
+                { encoding: 'utf8' }
+              ));
+              mergeAuthorities(fallbackPolicy);
               requireAuthority('platform-sg', 1, 'default fallback');
             }
 
@@ -292,10 +179,16 @@ jobs:
               return members;
             }
 
+            const token = process.env.REVIEW_GATE_PAT;
             const failures = [];
             const summaries = [];
             for (const [authorityName, required] of requirements.entries()) {
               const authority = authorities[authorityName];
+              if (!authority) {
+                failures.push(`${authorityName} missing from policy summary authority registry`);
+                summaries.push(`0/${required} ${authorityName}`);
+                continue;
+              }
               const members = await getTeamMembers(authority.ghe_host, authority.org, authority.team_slug, token);
               const authorityApprovers = approvingUsers.filter(user => members.has(user));
               const teamRef = `${authority.org}/${authority.team_slug}`;
