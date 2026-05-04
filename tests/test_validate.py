@@ -325,6 +325,89 @@ class TestTenantRegistryValidation:
         assert 'sg_ref_unknown' not in [e.rule for e in summary.errors]
         assert 'sg_ref_platform_builtin' in [i.rule for i in summary.info]
 
+    def test_reference_grant_schema_errors_on_bad_values(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'default': {
+                'status': 'legacy',
+                'allowed_accounts': ['100000000001'],
+            },
+            'data': {
+                'status': 'active',
+                'allowed_accounts': ['100000000001'],
+                'reference_grants': [{
+                    'name': '',
+                    'target_sgs': ['missing-sg'],
+                    'source_tenants': ['missing-tenant'],
+                    'protocols': ['all-tcp-lol'],
+                    'ports': ['443ish'],
+                    'directions': ['sideways'],
+                    'decision': 'sure_whatever',
+                    'expires': 'not-a-date',
+                }],
+            },
+        })
+        account_dir = os.path.join(repo_root, 'accounts', '100000000001')
+        data_dir = os.path.join(account_dir, 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        with open(os.path.join(data_dir, 'security-groups.yaml'), 'w') as f:
+            yaml.dump({
+                'account_id': '100000000001',
+                'environment': 'prod',
+                'carid': '600001725',
+                'security_groups': {
+                    'data-api': {'description': 'api'},
+                },
+            }, f)
+
+        summary = SecurityGroupValidator(account_dir).validate()
+        rules = [e.rule for e in summary.errors]
+        assert 'reference_grant_name' in rules
+        assert 'reference_grant_decision' in rules
+        assert 'reference_grant_protocol' in rules
+        assert 'reference_grant_ports' in rules
+        assert 'reference_grant_direction' in rules
+        assert 'reference_grant_source_tenant' in rules
+        assert 'reference_grant_target_sg' in rules
+        assert 'reference_grant_expires' in rules
+
+    def test_valid_reference_grant_schema_passes(self, repo_root):
+        _write_tenant_registry(repo_root, {
+            'payments': {
+                'status': 'active',
+                'allowed_accounts': ['100000000001'],
+            },
+            'data': {
+                'status': 'active',
+                'allowed_accounts': ['100000000001'],
+                'reference_grants': [{
+                    'name': 'allow-https-to-data-api',
+                    'target_sgs': ['data-api'],
+                    'source_tenants': ['payments'],
+                    'protocols': ['tcp'],
+                    'ports': [443],
+                    'directions': ['egress'],
+                    'decision': 'auto_approved',
+                    'expires': None,
+                }],
+            },
+        })
+        account_dir = os.path.join(repo_root, 'accounts', '100000000001')
+        for tenant, sg_name in [('payments', 'payments-web'), ('data', 'data-api')]:
+            tenant_dir = os.path.join(account_dir, tenant)
+            os.makedirs(tenant_dir, exist_ok=True)
+            with open(os.path.join(tenant_dir, 'security-groups.yaml'), 'w') as f:
+                yaml.dump({
+                    'account_id': '100000000001',
+                    'environment': 'prod',
+                    'carid': '600001725',
+                    'security_groups': {
+                        sg_name: {'description': sg_name},
+                    },
+                }, f)
+
+        summary = SecurityGroupValidator(account_dir).validate()
+        assert not [e for e in summary.errors if e.rule.startswith('reference_grant_')]
+
 
 # ============================================================
 # Environment validation tests

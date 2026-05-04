@@ -182,8 +182,9 @@ This document does not implement grant matching yet. It defines the schema/polic
 
 ## Implementation status
 
-Reference grant matching is implemented in validation and Review Gate:
+Reference grant matching and schema validation are implemented in validation and Review Gate:
 
+- validation rejects malformed grant schema
 - validation emits `sg_ref_cross_tenant_granted` info when a cross-tenant SG ref matches a target-owned grant
 - Review Gate skips the extra target-tenant approval for matching grants
 - unmatched cross-tenant refs still require 1 approval from the referenced tenant's `review_authority`
