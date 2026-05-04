@@ -23,6 +23,7 @@ from account_config import load_account_config
 from reference_classifier import classify_sg_reference, load_platform_security_groups, load_tenant_registry
 from network_ownership import classify_cidr_ownership
 from tenant_context import resolve_tenant_context
+from tenant_context import resolve_tenant_context
 
 
 @dataclass
@@ -404,8 +405,13 @@ class SecurityGroupValidator:
             ))
 
     def _validate_tenant_registry(self, data: Dict[str, Any], summary: ValidationSummary):
-        context = self.tenant_context
+        if self.account_config.layout == 'tenant':
+            for source in self.account_config.sources:
+                self._validate_tenant_context(resolve_tenant_context(source.path, self.repo_root), source.data, summary)
+            return
+        self._validate_tenant_context(self.tenant_context, data, summary)
 
+    def _validate_tenant_context(self, context, data: Dict[str, Any], summary: ValidationSummary):
         if context.registry_error:
             summary.add_result(ValidationResult(
                 level='error',
