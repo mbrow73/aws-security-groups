@@ -187,6 +187,7 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         cidr_ref = ownership.to_dict()
         cidr_ref.update({
             "source_sg": source_sg,
+            "source_tenant": sg_tenant_map.get(source_sg),
             "direction": direction,
             "rule_index": index,
             "protocol": rule.get("protocol"),
@@ -195,7 +196,7 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
         })
         cidr_references.append(cidr_ref)
         if ownership.classification == "owned_allowed":
-            if ownership.owner_tenant not in policy_tenants:
+            if ownership.owner_tenant != sg_tenant_map.get(source_sg):
                 add_requirement(requirements, ownership.owner_authority or "platform-sg", 1)
         else:
             add_requirement(requirements, "platform-sg", 1)
@@ -210,7 +211,7 @@ def build_policy_summary(account_dir: Path, repo_root: Path, changed_files: list
     for cidr_ref in cidr_references:
         if cidr_ref.get("classification") != "owned_allowed":
             auto_merge_blockers.append(f"CIDR {cidr_ref.get('cidr')} is {cidr_ref.get('classification')}, not auto-merge eligible")
-        elif cidr_ref.get("owner_tenant") not in policy_tenants:
+        elif cidr_ref.get("owner_tenant") != cidr_ref.get("source_tenant"):
             auto_merge_blockers.append(f"CIDR {cidr_ref.get('cidr')} requires owner tenant {cidr_ref.get('owner_tenant')} approval")
 
     for ref in references:
