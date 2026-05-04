@@ -84,3 +84,16 @@ Platform/security converts approved onboarding requests into registry PRs for:
 ## Registry validation
 
 `registry/review-authorities.yaml` is validated by the SG validator. Authority slugs, required fields, rule authority references, and approval counts must be valid before Review Gate policy should be trusted.
+
+
+## Policy summary artifact
+
+`scripts/policy_summary.py` can generate machine-readable policy decisions for an account:
+
+```bash
+python scripts/policy_summary.py accounts/123456789012
+```
+
+The JSON includes tenant layout, SG-to-tenant ownership, classified SG references, and required review authorities.
+
+Review Gate can later consume this artifact instead of duplicating tenant/reference policy logic in JavaScript.
