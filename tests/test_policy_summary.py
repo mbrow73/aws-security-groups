@@ -108,3 +108,62 @@ def test_policy_summary_only_requires_changed_tenant_authority(repo_root):
     assert classes['vpc-endpoints'] == 'platform_builtin'
     assert classes['data-api'] == 'cross_tenant_granted'
     assert summary['required_review_authorities'] == {'payments-sg': 2}
+
+
+def test_policy_summary_auto_merge_allows_same_tenant_refs(repo_root):
+    _write_yaml(os.path.join(repo_root, 'registry', 'review-authorities.yaml'), {
+        'authorities': {
+            'payments-sg': {'ghe_host': 'github.aexp.com', 'org': 'amex-eng', 'team_slug': 'payments'},
+            'platform-sg': {'ghe_host': 'github.aexp.com', 'org': 'amex-eng', 'team_slug': 'nsae'},
+        },
+    })
+    _write_yaml(os.path.join(repo_root, 'registry', 'platform-security-groups.yaml'), {
+        'platform_security_groups': {
+            'vpc-endpoints': {'owner_authority': 'platform-sg'},
+        },
+    })
+    _write_yaml(os.path.join(repo_root, 'registry', 'tenants.yaml'), {
+        'tenants': {
+            'payments': {'status': 'active', 'review_authority': 'payments-sg', 'allowed_accounts': ['123456789012']},
+        },
+    })
+    account_dir = os.path.join(repo_root, 'accounts', '123456789012')
+    _write_yaml(os.path.join(account_dir, 'payments', 'security-groups.yaml'), {
+        'account_id': '123456789012',
+        'environment': 'nonprod',
+        'carid': '600001725',
+        'security_groups': {
+            'payments-web': {
+                'description': 'web',
+                'egress': [
+                    {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'security_groups': ['payments-api']},
+                    {'protocol': 'tcp', 'from_port': 443, 'to_port': 443, 'security_groups': ['vpc-endpoints']},
+                ],
+            },
+            'payments-api': {'description': 'api'},
+        },
+    })
+
+    summary = build_policy_summary(
+        account_dir,
+        repo_root,
+        changed_files=['accounts/123456789012/payments/security-groups.yaml'],
+    )
+
+    assert summary['auto_merge_eligible'] is True
+    assert 'same-tenant refs' in summary['auto_merge_reason']
+    assert summary['required_review_authorities'] == {}
+
+
+def test_policy_summary_auto_merge_blocks_cross_tenant_refs(repo_root):
+    test_policy_summary_reports_tenants_refs_and_requirements(repo_root)
+    account_dir = os.path.join(repo_root, 'accounts', '123456789012')
+
+    summary = build_policy_summary(
+        account_dir,
+        repo_root,
+        changed_files=['accounts/123456789012/payments/security-groups.yaml'],
+    )
+
+    assert summary['auto_merge_eligible'] is False
+    assert 'cross_tenant_granted' in summary['auto_merge_reason']
