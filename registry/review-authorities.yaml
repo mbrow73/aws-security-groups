@@ -10,6 +10,11 @@ authorities:
     ghe_host: github.aexp.com
     org: amex-eng
     team_slug: payments-owned-e2e
+  data-owned-e2e-sg:
+    description: SG review authority for Data Owned E2E
+    ghe_host: github.aexp.com
+    org: amex-eng
+    team_slug: data-owned-e2e
 rules:
   nonprod_account:
     required_authority_approvals: 1
