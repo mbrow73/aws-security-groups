@@ -1,6 +1,6 @@
-name: Tenant Onboarding
-about: Request a new tenant / ownership domain for future SG framework ownership routing
-title: "Tenant onboarding: <tenant-slug>"
+name: Tenant / Review Authority / Reference Grant Request
+about: Request tenant registry, review authority, allowed account, or reference grant changes
+title: "Tenant registry request: <tenant-slug-or-authority>"
 labels:
   - tenant-onboarding
   - governance
@@ -8,15 +8,36 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this form when your team cannot find an existing tenant in `registry/tenants.yaml`.
+        Use this form for V2 SG framework ownership metadata requests.
 
-        Tenants are platform ownership domains, not one-off app names. Platform/security will review this request and, if approved, create or approve a PR adding the tenant to the registry.
+        This form does **not** automate registry changes. Platform/security will review the issue and convert approved requests into PRs against:
+
+        - `registry/tenants.yaml`
+        - `registry/review-authorities.yaml`
+        - related docs/examples when needed
+
+        Tenants are durable platform ownership domains, not one-off app names.
+
+  - type: dropdown
+    id: request_type
+    attributes:
+      label: Request type
+      description: Pick the closest primary intent.
+      options:
+        - New tenant
+        - Modify existing tenant
+        - Add account to existing tenant
+        - Create review authority
+        - Change review authority
+        - Add or change reference grant
+    validations:
+      required: true
 
   - type: input
     id: tenant_slug
     attributes:
-      label: Requested tenant slug
-      description: Lowercase kebab-case platform ownership domain, e.g. payments-platform.
+      label: Tenant slug
+      description: Lowercase kebab-case platform ownership domain. Use the existing slug for modify/grant/account requests.
       placeholder: payments-platform
     validations:
       required: true
@@ -27,7 +48,7 @@ body:
       label: Display name
       placeholder: Payments Platform
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: ownership_domain
@@ -41,28 +62,10 @@ body:
   - type: input
     id: owner_team
     attributes:
-      label: Owner team slug
+      label: Owner team slug/name
       placeholder: payments-platform
     validations:
       required: true
-
-  - type: input
-    id: review_authority
-    attributes:
-      label: Review authority or GHE team URL
-      description: Existing authority from registry/review-authorities.yaml, or the GitHub Enterprise team URL/slug needed to create one.
-      placeholder: payments-sg or https://github.aexp.com/orgs/amex-eng/teams/payments-platform
-    validations:
-      required: true
-
-  - type: input
-    id: github_reviewers
-    attributes:
-      label: GitHub reviewer team(s) for native UX
-      description: Optional reviewer request targets. Enforcement uses review_authority.
-      placeholder: org/payments-platform-approvers
-    validations:
-      required: false
 
   - type: input
     id: carids
@@ -83,6 +86,33 @@ body:
       required: true
 
   - type: input
+    id: review_authority
+    attributes:
+      label: Existing review authority
+      description: Existing authority from `registry/review-authorities.yaml`, if one should be reused.
+      placeholder: payments-sg
+    validations:
+      required: false
+
+  - type: input
+    id: ghe_team
+    attributes:
+      label: GitHub Enterprise team URL or slug
+      description: Required if a new review authority is needed or the authority should change.
+      placeholder: https://github.aexp.com/orgs/amex-eng/teams/payments-platform
+    validations:
+      required: false
+
+  - type: input
+    id: github_reviewers
+    attributes:
+      label: GitHub reviewer team(s) for native UX
+      description: Optional reviewer request targets. Enforcement uses `review_authority`.
+      placeholder: amex-eng/payments-platform
+    validations:
+      required: false
+
+  - type: input
     id: slack_channel
     attributes:
       label: Slack channel
@@ -92,10 +122,34 @@ body:
       required: false
 
   - type: textarea
+    id: reference_grants
+    attributes:
+      label: Reference grants, optional
+      description: Target-owned pre-approval grants for cross-tenant SG references. Leave blank if not needed.
+      placeholder: |
+        - name: allow-https-to-shared-api
+          description: Shared API accepts HTTPS from internal tenant SGs.
+          target_sgs:
+            - shared-api
+          source_tenants:
+            - "*"
+          protocols:
+            - tcp
+          ports:
+            - 443
+          directions:
+            - egress
+          decision: auto_approved
+          expires: null
+    validations:
+      required: false
+
+  - type: textarea
     id: justification
     attributes:
-      label: Why is this tenant needed?
-      description: Explain why an existing tenant does not cover this ownership domain.
+      label: Justification / change reason
+      description: Explain why this tenant, authority, account scope, or reference grant is needed.
+      placeholder: Existing tenants do not cover this ownership boundary because...
     validations:
       required: true
 
@@ -104,9 +158,11 @@ body:
     attributes:
       label: Checklist
       options:
-        - label: I checked `registry/tenants.yaml` first and did not find a suitable existing tenant.
+        - label: I checked `registry/tenants.yaml` and confirmed whether this should create or modify an existing tenant.
           required: true
         - label: This tenant represents a durable platform ownership domain, not a temporary project name.
           required: true
-        - label: The listed review authority is able to review SG requests for this tenant.
+        - label: The review authority or GHE team listed above can review SG requests for this tenant.
           required: true
+        - label: Any requested reference grant is owned by the target tenant and intentionally allows the listed access pattern.
+          required: false
