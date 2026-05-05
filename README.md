@@ -78,14 +78,6 @@ pytest tests/test_validate.py -v
 
 - [Team Guide](docs/team-guide.md) — How to request security groups
 - [Current Supported Model](docs/current-supported-model.md) — Current single-tenant account contract
-- [Future API / Schema Contract](docs/future-api-schema-contract.md) — Target API/front-door schema contract
-- [Tenant / Owner Registry Design](docs/tenant-owner-registry.md) — Future tenant ownership and onboarding model
-- [Tenant-Split Layout Contract](docs/tenant-split-layout-contract.md) — Dormant V2 tenant layout contract
-- [Review Gate](docs/review-gate.md) — Reviewer authority enforcement
-- [Auto-Merge Eligibility](docs/auto-merge-eligibility.md) — Low-touch auto-merge policy boundaries
-- [GitHub Enterprise Cutover Checklist](docs/ghe-cutover-checklist.md) — Lift-and-shift validation runbook
-- [Platform Security Groups](docs/platform-security-groups.md) — Built-in SG catalog and reference model
-- [Reference Grants](docs/reference-grants.md) — Target-owned cross-tenant reference pre-approval model
 - [Operational Model](docs/operational-model.md) — Two-layer SG model, baselines vs team SGs
 - [Anti-Patterns & Mitigations](docs/anti-patterns-and-mitigations.md) — Risks and layered defenses
 - [Naming Conventions](docs/naming-conventions.md) — Standards and patterns

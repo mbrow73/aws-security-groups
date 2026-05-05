@@ -26,9 +26,6 @@ from pathlib import Path
 
 import yaml
 
-from account_config import load_account_config
-from tenant_context import resolve_tenant_context
-
 
 COMMENT_MARKER = "<!-- sg-change-summary-bot -->"
 
@@ -42,76 +39,9 @@ def load_yaml_file(path: str) -> dict:
         return {}
 
 
-def tenant_context_for_account(account_id: str) -> dict:
-    """Resolve tenant summary context for current account config path."""
-    context = resolve_tenant_context(Path(f"accounts/{account_id}/security-groups.yaml"), Path.cwd())
-    return {
-        "tenant": context.tenant,
-        "tenant_display_name": context.display_name,
-        "tenant_status": context.status,
-        "owner_team": context.owner_team,
-        "github_reviewers": context.github_reviewers,
-        "slack_channel": context.slack_channel,
-        "account_allowed": context.account_allowed,
-        "tenant_layout": context.layout,
-    }
-
-
-def tenant_metadata_for_loaded_account(loaded) -> tuple[dict[str, dict], dict[str, str]]:
-    """Build tenant metadata and SG->tenant mapping from loaded account sources."""
-    tenants = {}
-    sg_tenants = {}
-    for source in loaded.sources:
-        context = resolve_tenant_context(source.path, Path.cwd())
-        tenants[source.tenant] = {
-            "tenant": context.tenant,
-            "tenant_display_name": context.display_name,
-            "tenant_status": context.status,
-            "owner_team": context.owner_team,
-            "account_allowed": context.account_allowed,
-        }
-        for sg_name in (source.data.get("security_groups", {}) or {}):
-            sg_tenants[sg_name] = source.tenant
-    return tenants, sg_tenants
-
-
 def get_base_yaml(account_id: str, base_ref: str) -> tuple[dict, bool]:
     """Get the account YAML from the base branch. Returns (yaml, found)."""
-    account_prefix = f"accounts/{account_id}"
-
-    try:
-        result = subprocess.run(
-            ["git", "ls-tree", "-r", "--name-only", f"origin/{base_ref}", account_prefix],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0:
-            files = [line.strip() for line in result.stdout.splitlines() if line.strip().endswith("security-groups.yaml")]
-            legacy = f"{account_prefix}/security-groups.yaml"
-            if legacy in files:
-                files = [legacy]
-            tenant_files = [f for f in files if f != legacy]
-            if tenant_files:
-                merged = {}
-                merged_sgs = {}
-                for file_path in sorted(tenant_files):
-                    show = subprocess.run(
-                        ["git", "show", f"origin/{base_ref}:{file_path}"],
-                        capture_output=True, text=True, timeout=10
-                    )
-                    if show.returncode != 0:
-                        continue
-                    data = yaml.safe_load(show.stdout) or {}
-                    for key in ("account_id", "environment", "carid", "default_region", "regions", "tags"):
-                        if key in data and key not in merged:
-                            merged[key] = data[key]
-                    merged_sgs.update(data.get("security_groups", {}) or {})
-                if merged_sgs or merged:
-                    merged["security_groups"] = merged_sgs
-                    return merged, True
-    except Exception:
-        pass
-
-    file_path = f"{account_prefix}/security-groups.yaml"
+    file_path = f"accounts/{account_id}/security-groups.yaml"
     try:
         result = subprocess.run(
             ["git", "show", f"origin/{base_ref}:{file_path}"],
@@ -126,7 +56,9 @@ def get_base_yaml(account_id: str, base_ref: str) -> tuple[dict, bool]:
 
 def format_source(rule: dict) -> str:
     """Format the source/destination of a rule with icons."""
-    if rule.get("cidr_blocks"):
+    if rule.get("baseline_ref"):
+        return f"🏗️ `baseline:{rule['baseline_ref']}`"
+    elif rule.get("cidr_blocks"):
         return ", ".join(f"`{c}`" for c in rule["cidr_blocks"])
     elif rule.get("security_groups"):
         return ", ".join(f"🔗 `{sg}`" for sg in rule["security_groups"])
@@ -147,7 +79,7 @@ def format_port(rule: dict) -> str:
 def rules_equal(a: dict, b: dict) -> bool:
     """Check if two rules are functionally identical."""
     keys = ["protocol", "from_port", "to_port", "cidr_blocks",
-            "security_groups", "prefix_list_ids", "description"]
+            "security_groups", "prefix_list_ids", "baseline_ref", "description"]
     for k in keys:
         if a.get(k) != b.get(k):
             return False
@@ -262,25 +194,8 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
         env = account["env"]
         carid = account.get("carid", "—")
         env_emoji = "🔴" if env == "prod" else "🟢"
-        tenant = account.get("tenant", "default")
-        tenant_display = account.get("tenant_display_name", "Default Single-Tenant Account")
-        owner_team = account.get("owner_team", "—")
-        tenant_status = account.get("tenant_status", "unknown")
-        tenants = account.get("tenants", {})
 
         lines.append(f"**Account:** `{account_id}` ({env}) | **CARID:** `{carid}`\n")
-        if account.get("tenant_layout") == "tenant" and tenants:
-            lines.append("**Tenants:**")
-            for tenant_slug, meta in sorted(tenants.items()):
-                lines.append(
-                    f"- `{tenant_slug}` ({meta.get('tenant_display_name', tenant_slug)}) | "
-                    f"Owner: `{meta.get('owner_team', '—')}` | Status: `{meta.get('tenant_status', 'unknown')}`"
-                )
-            lines.append("")
-        else:
-            lines.append(f"**Tenant:** `{tenant}` ({tenant_display}) | **Owner:** `{owner_team}` | **Status:** `{tenant_status}`\n")
-        if not account.get("account_allowed", True):
-            lines.append("⚠️ **Registry warning:** account is not listed under this tenant's `allowed_accounts`.\n")
         lines.append("---\n")
 
         # Group by region
@@ -307,12 +222,10 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
             for sg_name, sg_data in sgs:
                 change_type = sg_data["change_type"]
                 desc = sg_data.get("description", "")
-                sg_tenant = sg_data.get("tenant")
-                tenant_label = f" — tenant `{sg_tenant}`" if sg_tenant and account.get("tenant_layout") == "tenant" else ""
 
                 if change_type == "new":
                     total_added += 1
-                    lines.append(f"#### ➕ NEW: `{sg_name}`{tenant_label}")
+                    lines.append(f"#### ➕ NEW: `{sg_name}`")
                     lines.append(f"> *{desc}*\n")
                     all_new_sgs[sg_name] = sg_data.get("new_config", {})
 
@@ -342,7 +255,7 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
 
                 elif change_type == "modified":
                     total_modified += 1
-                    lines.append(f"#### ✏️ MODIFIED: `{sg_name}`{tenant_label}")
+                    lines.append(f"#### ✏️ MODIFIED: `{sg_name}`")
                     lines.append(f"> *{desc}*\n")
 
                     for direction in ("ingress", "egress"):
@@ -360,7 +273,7 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
 
                 elif change_type == "deleted":
                     total_deleted += 1
-                    lines.append(f"#### 🗑️ DELETED: `{sg_name}`{tenant_label}")
+                    lines.append(f"#### 🗑️ DELETED: `{sg_name}`")
                     lines.append(f"> *{desc}*\n")
                     lines.append("⚠️ **This security group is being removed.** Verify no active ENI attachments before approving.\n")
 
@@ -418,9 +331,7 @@ def build_summary(accounts_data: list, has_warnings: bool) -> str:
 
 def analyze_account(account_id: str, base_ref: str) -> dict:
     """Analyze changes for a single account between base and head."""
-    loaded = load_account_config(Path("accounts") / account_id, Path.cwd())
-    head_data = loaded.config if loaded.ok else load_yaml_file(f"accounts/{account_id}/security-groups.yaml")
-    tenant_metadata, sg_tenants = tenant_metadata_for_loaded_account(loaded) if loaded.ok else ({}, {})
+    head_data = load_yaml_file(f"accounts/{account_id}/security-groups.yaml")
     base_data, base_found = get_base_yaml(account_id, base_ref)
 
     head_sgs = head_data.get("security_groups", {})
@@ -434,12 +345,7 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
         "regions": head_data.get("regions", base_data.get("regions", [])),
         "changes": {},
         "base_found": base_found,
-        "tenants": tenant_metadata,
-        "sg_tenants": sg_tenants,
     }
-    result.update(tenant_context_for_account(account_id))
-    if loaded.ok:
-        result["tenant_layout"] = loaded.layout
 
     all_sg_names = set(list(head_sgs.keys()) + list(base_sgs.keys()))
 
@@ -452,7 +358,6 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
             new_config = head_sgs[sg_name]
             result["changes"][sg_name] = {
                 "change_type": "new",
-                "tenant": sg_tenants.get(sg_name),
                 "description": new_config.get("description", ""),
                 "regions": new_config.get("regions") or ([new_config["region"]] if "region" in new_config else result["regions"] or [result["default_region"]]),
                 "new_config": new_config,
@@ -463,7 +368,6 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
             old_config = base_sgs[sg_name]
             result["changes"][sg_name] = {
                 "change_type": "deleted",
-                "tenant": sg_tenants.get(sg_name),
                 "description": old_config.get("description", ""),
                 "regions": old_config.get("regions") or ([old_config["region"]] if "region" in old_config else result["regions"] or [result["default_region"]]),
                 "old_config": old_config,
@@ -489,7 +393,6 @@ def analyze_account(account_id: str, base_ref: str) -> dict:
             if ingress_added or ingress_removed or egress_added or egress_removed or desc_changed:
                 result["changes"][sg_name] = {
                     "change_type": "modified",
-                    "tenant": sg_tenants.get(sg_name),
                     "description": new_config.get("description", ""),
                     "regions": new_config.get("regions") or ([new_config["region"]] if "region" in new_config else result["regions"] or [result["default_region"]]),
                     "ingress_diff": (ingress_added, ingress_removed, []),

@@ -9,9 +9,8 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
   statuses: write
-  issues: write
 
 jobs:
   review-gate:
@@ -23,22 +22,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Python dependencies
-        run: |
-          python3 -m venv .venv
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install pyyaml
-
       - name: Check review requirements
         uses: actions/github-script@v7
-        env:
-          REVIEW_GATE_PAT: ${{ secrets.SG_FRAMEWORK_PAT }}
         with:
           script: |
-            const fs = require('fs');
-            const https = require('https');
-            const { execFileSync } = require('child_process');
-
             const { owner, repo } = context.repo;
             const pr_number = context.payload.pull_request?.number
               || context.payload.review?.pull_request?.number;
@@ -48,274 +35,113 @@ jobs:
               return;
             }
 
-            const authorityRegistryPath = 'registry/review-authorities.yaml';
-            if (!fs.existsSync(authorityRegistryPath)) {
-              core.setFailed(`${authorityRegistryPath} is required for Review Gate`);
-              return;
-            }
-
-            const pr = await github.rest.pulls.get({ owner, repo, pull_number: pr_number });
+            // Get the PR to find the head SHA
+            const pr = await github.rest.pulls.get({
+              owner, repo, pull_number: pr_number
+            });
             const sha = pr.data.head.sha;
-            const files = await github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: pr_number });
-            const changedFiles = files.map(f => f.filename);
-            fs.writeFileSync('/tmp/sg-changed-files.txt', changedFiles.join('\n') + '\n');
 
-            function accountIdFromPath(filename) {
-              const match = filename.match(/^accounts\/(\d{12})(?:\/[^\/]+)?\/security-groups\.yaml$/);
-              return match ? match[1] : null;
-            }
-
-            const changedAccounts = [...new Set(changedFiles.map(accountIdFromPath).filter(Boolean))];
-            const registryOnly = changedFiles.length > 0 && changedFiles.every(filename => filename.startsWith('registry/'));
-            const frameworkChanged = changedFiles.some(filename =>
-              filename.startsWith('modules/') ||
-              filename.startsWith('scripts/') ||
-              filename.startsWith('.github/') ||
-              filename.startsWith('registry/') ||
-              filename === 'guardrails.yaml' ||
-              filename === 'known-prefix-lists.yaml' ||
-              filename === 'shared-prefix-lists.yaml'
+            // Get changed files in the PR
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              { owner, repo, pull_number: pr_number }
             );
 
-            const requirements = new Map();
-            const requirementReasons = [];
-            const authorities = {};
-            const policies = [];
-            const policyDisplayRows = [];
+            // Check if any changed account YAML has environment: prod
+            const fs = require('fs');
+            let hasProd = false;
+            const prodAccounts = [];
+            const nonprodAccounts = [];
 
-            function grantPrMetadata() {
-              const body = pr.data.body || '';
-              const targetMatch = body.match(/Target tenant:\s*`([^`]+)`/);
-              const authorityMatch = body.match(/Target authority:\s*`([^`]+)`/);
-              const platformMatch = body.match(/Platform review required:\s*([^\n]+)/);
-              const titleMatch = (pr.data.title || '').match(/^Reference grant:\s*([^/]+)\//);
-              const targetTenant = targetMatch ? targetMatch[1] : (titleMatch ? titleMatch[1] : null);
-              const targetAuthority = authorityMatch ? authorityMatch[1] : (targetTenant ? `${targetTenant}-sg` : null);
-              if (!targetTenant || !targetAuthority || !(body.includes('Generated from #') || titleMatch)) return null;
-              return {
-                targetTenant,
-                targetAuthority,
-                platformReasons: platformMatch ? platformMatch[1].trim() : '',
-                platformRequired: Boolean(platformMatch),
-              };
-            }
+            for (const file of files) {
+              const match = file.filename.match(
+                /^accounts\/(\d{12})\/security-groups\.yaml$/
+              );
+              if (!match) continue;
 
-            function mergeAuthorities(policy) {
-              for (const [name, authority] of Object.entries(policy.review_authorities || {})) {
-                authorities[name] = authority;
+              const accountId = match[1];
+
+              try {
+                const content = fs.readFileSync(file.filename, 'utf8');
+                // Match environment value — tolerates quotes, trailing
+                // comments, whitespace, and \r\n line endings.
+                const envMatch = content.match(
+                  /^environment:\s*["']?(\w+)["']?/m
+                );
+                const env = envMatch?.[1]?.toLowerCase() || 'prod';
+                console.log(`  ${file.filename}: environment=${env} (raw match: ${envMatch?.[0]})`);
+
+                if (env === 'prod') {
+                  hasProd = true;
+                  prodAccounts.push(accountId);
+                } else {
+                  nonprodAccounts.push(accountId);
+                }
+              } catch (e) {
+                console.log(
+                  `⚠️ Could not read ${file.filename}, assuming prod`
+                );
+                hasProd = true;
+                prodAccounts.push(accountId);
               }
             }
 
-            function requireAuthority(name, count, reason) {
-              if (!name) name = 'platform-sg';
-              const current = requirements.get(name) || 0;
-              requirements.set(name, Math.max(current, Number(count || 1)));
-              requirementReasons.push(`${name}: ${count} (${reason})`);
+            // Check if framework files changed (modules, scripts, workflows, etc.)
+            const FRAMEWORK_PATHS = ['modules/', 'scripts/', '.github/', 'guardrails.yaml', 'known-prefix-lists.yaml'];
+            const frameworkFiles = files.filter(f =>
+              FRAMEWORK_PATHS.some(p => f.filename.startsWith(p) || f.filename === p)
+            );
+            const frameworkChanged = frameworkFiles.length > 0;
+
+            if (frameworkChanged) {
+              console.log(`🔧 Framework files changed (${frameworkFiles.length}):`);
+              frameworkFiles.forEach(f => console.log(`  ${f.filename}`));
             }
 
-            function loadPolicy(accountId, extraArgs = []) {
-              const policy = JSON.parse(execFileSync(
-                '.venv/bin/python',
-                ['scripts/policy_summary.py', `accounts/${accountId}`, ...extraArgs],
-                { encoding: 'utf8' }
-              ));
-              policies.push(policy);
-              if (!frameworkChanged || accountId !== '100000000001') {
-                policyDisplayRows.push(`- Account \`${policy.account_id}\`: ${policy.auto_merge_eligible ? '✅ eligible' : '❌ not eligible'}${policy.auto_merge_reason ? `, ${policy.auto_merge_reason}` : ''}`);
-              }
-              mergeAuthorities(policy);
-              return policy;
-            }
+            // Approval requirements:
+            //   prod account YAML     → 2 (high-risk change)
+            //   framework/modules     → 2 (affects all accounts)
+            //   nonprod account YAML  → 1
+            const required = (hasProd || frameworkChanged) ? 2 : 1;
+            const envLabel = hasProd ? 'prod' : frameworkChanged ? 'framework' : 'nonprod';
 
-            const grantMeta = registryOnly ? grantPrMetadata() : null;
-            if (grantMeta) {
-              loadPolicy('100000000001', ['--changed-files', '/tmp/sg-changed-files.txt']);
-              policyDisplayRows.push(`- Reference grant for tenant \`${grantMeta.targetTenant}\`: ❌ not auto-merge eligible, target tenant review required${grantMeta.platformRequired ? ', platform review required' : ''}`);
-              requireAuthority(grantMeta.targetAuthority, 1, 'reference grant target tenant approval');
-              if (grantMeta.platformRequired) {
-                requireAuthority('platform-sg', 1, `broad reference grant: ${grantMeta.platformReasons}`);
-              }
-            } else if (frameworkChanged) {
-              const policy = loadPolicy('100000000001', ['--changed-files', '/tmp/sg-changed-files.txt']);
-              policyDisplayRows.push(`- Registry/framework/workflow change: ❌ not eligible, platform review required${policy.auto_merge_reason ? ` (${policy.auto_merge_reason})` : ''}`);
-              requireAuthority('platform-sg', 2, 'framework/registry/workflow change');
-            }
+            // Get current approvals (deduplicated by user)
+            const reviews = await github.rest.pulls.listReviews({
+              owner, repo, pull_number: pr_number
+            });
 
-            for (const accountId of changedAccounts) {
-              const policy = loadPolicy(accountId, ['--changed-files', '/tmp/sg-changed-files.txt']);
-              for (const [authority, count] of Object.entries(policy.required_review_authorities || {})) {
-                requireAuthority(authority, count, `policy summary for account ${accountId}`);
-              }
-              console.log(`Policy summary for ${accountId}: ${JSON.stringify({
-                layout: policy.layout,
-                changed_tenants: policy.changed_tenants,
-                references: policy.references,
-                required_review_authorities: policy.required_review_authorities,
-                auto_merge_eligible: policy.auto_merge_eligible,
-                auto_merge_reason: policy.auto_merge_reason,
-              })}`);
-            }
-
-            const policyEvaluated = Boolean(grantMeta) || frameworkChanged || changedAccounts.length > 0;
-            if (requirements.size === 0 && !policyEvaluated) {
-              loadPolicy('100000000001');
-              requireAuthority('platform-sg', 1, 'default fallback');
-            }
-
-            const reviews = await github.rest.pulls.listReviews({ owner, repo, pull_number: pr_number });
             const latestByUser = new Map();
             for (const review of reviews.data) {
               if (review.state === 'APPROVED' || review.state === 'CHANGES_REQUESTED') {
                 latestByUser.set(review.user.login, review.state);
               }
             }
-            const approvingUsers = [...latestByUser.entries()]
-              .filter(([, state]) => state === 'APPROVED')
-              .map(([login]) => login);
 
-            const teamCache = new Map();
-            async function getTeamMembers(host, org, teamSlug, pat) {
-              if (!pat) {
-                console.log('SG_FRAMEWORK_PAT secret is not configured; treating authority membership as empty and leaving Review Gate pending');
-                return new Set();
-              }
-              const cacheKey = `${host}/${org}/${teamSlug}`;
-              if (teamCache.has(cacheKey)) return teamCache.get(cacheKey);
-              const members = new Set();
-              let page = 1;
-              while (true) {
-                const path = `/api/v3/orgs/${org}/teams/${teamSlug}/members?per_page=100&page=${page}`;
-                const data = await new Promise((resolve, reject) => {
-                  const req = https.request({
-                    hostname: host,
-                    path,
-                    method: 'GET',
-                    headers: {
-                      'Authorization': `Bearer ${pat}`,
-                      'Accept': 'application/vnd.github+json',
-                      'User-Agent': 'aws-security-groups-review-gate'
-                    }
-                  }, res => {
-                    let body = '';
-                    res.on('data', chunk => body += chunk);
-                    res.on('end', () => {
-                      if (res.statusCode < 200 || res.statusCode >= 300) {
-                        reject(new Error(`GHE team lookup failed with HTTP ${res.statusCode}: ${body}`));
-                        return;
-                      }
-                      resolve(JSON.parse(body));
-                    });
-                  });
-                  req.on('error', reject);
-                  req.end();
-                });
-                for (const member of data) if (member.login) members.add(member.login);
-                if (!Array.isArray(data) || data.length < 100) break;
-                page += 1;
-              }
-              teamCache.set(cacheKey, members);
-              return members;
-            }
+            const approvals = [...latestByUser.values()]
+              .filter(state => state === 'APPROVED').length;
 
-            const token = process.env.REVIEW_GATE_PAT;
-            const failures = [];
-            const summaries = [];
-            const approvalSummary = [];
-            for (const [authorityName, required] of requirements.entries()) {
-              const authority = authorities[authorityName];
-              if (!authority) {
-                failures.push(`${authorityName} missing from policy summary authority registry`);
-                summaries.push(`0/${required} ${authorityName}`);
-                approvalSummary.push(`- \`${authorityName}\`: 0/${required} approvals, authority missing from registry`);
-                continue;
-              }
-              const members = await getTeamMembers(authority.ghe_host, authority.org, authority.team_slug, token);
-              const authorityApprovers = approvingUsers.filter(user => members.has(user));
-              const teamRef = `${authority.org}/${authority.team_slug}`;
-              summaries.push(`${authorityApprovers.length}/${required} ${teamRef}`);
-              approvalSummary.push(`- \`${authorityName}\` (${teamRef}): ${authorityApprovers.length}/${required} approvals`);
-              if (authorityApprovers.length < required) {
-                failures.push(`${authorityName} needs ${required}, has ${authorityApprovers.length}`);
-              }
-              console.log(`${authorityName}: ${authorityApprovers.join(', ') || 'none'} (${authorityApprovers.length}/${required})`);
-            }
+            const passed = approvals >= required;
 
-            const passed = failures.length === 0;
+            // Write a single commit status — this is what branch protection checks.
+            // Both pull_request and pull_request_review triggers update the SAME
+            // status on the SAME SHA, so there's only ever one check to evaluate.
             const description = passed
-              ? `✅ Review Gate passed: ${summaries.join('; ')}`
-              : `❌ Review Gate pending: ${summaries.join('; ')}`;
-
-            function refLine(ref) {
-              const base = `- \`${ref.source_sg}\` → \`${ref.target_sg}\`: ${ref.ref_class}`;
-              if (ref.ref_class === 'cross_tenant_granted') {
-                return `${base} by grant \`${ref.grant_name}\``;
-              }
-              if (ref.ref_class === 'cross_tenant') {
-                return `${base}, target tenant \`${ref.target_tenant}\` approval required`;
-              }
-              if (ref.ref_class === 'platform_builtin') {
-                return `${base}, no extra review`;
-              }
-              return base;
-            }
-
-            function cidrLine(ref) {
-              const owner = ref.owner_tenant ? `, owner tenant \`${ref.owner_tenant}\`` : '';
-              const network = ref.network_name ? `/${ref.network_name}` : '';
-              return `- \`${ref.source_sg}\` → \`${ref.cidr}\`: ${ref.classification}${owner}${network} — ${ref.reason}`;
-            }
-
-            const bodyLines = [
-              '<!-- sg-review-policy-bot -->',
-              '## 🛡️ Review Policy Summary',
-              '',
-              `**Status:** ${passed ? '✅ passed' : '⏳ pending'}`,
-              '',
-              '### Auto-merge eligibility',
-              policyDisplayRows.length ? policyDisplayRows.join('\n') : '- Not evaluated',
-              '',
-              '### Required approvals',
-              approvalSummary.length ? approvalSummary.join('\n') : '- None',
-              '',
-              '### Accounts / tenants',
-            ];
-
-            for (const policy of policies) {
-              bodyLines.push(`- Account \`${policy.account_id}\` (${policy.environment}, ${policy.layout})`);
-              bodyLines.push(`  - Changed tenants: ${(policy.changed_tenants || []).map(t => `\`${t}\``).join(', ') || 'none'}`);
-            }
-
-            const refs = policies.flatMap(policy => policy.references || []);
-            const cidrRefs = policies.flatMap(policy => policy.cidr_references || []);
-            bodyLines.push('', '### Security group references');
-            bodyLines.push(refs.length ? refs.map(refLine).join('\n') : '- None');
-            bodyLines.push('', '### CIDR ownership');
-            bodyLines.push(cidrRefs.length ? cidrRefs.map(cidrLine).join('\n') : '- None');
-            bodyLines.push('', '<details><summary>Raw policy JSON</summary>', '', '```json', JSON.stringify(policies, null, 2), '```', '</details>');
-
-            const marker = '<!-- sg-review-policy-bot -->';
-            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr_number });
-            const existing = comments.find(comment => comment.body?.includes(marker));
-            const body = bodyLines.join('\n');
-            try {
-              if (existing) {
-                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-              } else {
-                await github.rest.issues.createComment({ owner, repo, issue_number: pr_number, body });
-              }
-            } catch (error) {
-              console.log(`Review policy comment could not be posted: ${error.message}`);
-            }
+              ? `✅ ${approvals}/${required} approvals (${envLabel})`
+              : `❌ ${approvals}/${required} approvals needed (${envLabel})`;
 
             await github.rest.repos.createCommitStatus({
               owner, repo, sha,
               state: passed ? 'success' : 'pending',
               context: 'Review Gate',
               description: description.substring(0, 140),
-              target_url: `${pr.data.html_url}#pullrequestreview`
+              target_url: `https://github.com/${owner}/${repo}/pull/${pr_number}#pullrequestreview`
             });
 
             console.log(`Review Gate: ${description}`);
-            console.log(`Approving users: ${approvingUsers.join(', ') || 'none'}`);
-            console.log(`Requirement reasons: ${requirementReasons.join('; ')}`);
-            if (failures.length) console.log(`Failures: ${failures.join('; ')}`);
+
+            if (prodAccounts.length > 0) {
+              console.log(`Prod accounts: ${prodAccounts.join(', ')}`);
+            }
+            if (nonprodAccounts.length > 0) {
+              console.log(`Nonprod accounts: ${nonprodAccounts.join(', ')}`);
+            }

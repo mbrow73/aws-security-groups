@@ -17,6 +17,7 @@ variable "security_group_config" {
       ipv6_cidr_blocks = optional(list(string))
       prefix_list_ids  = optional(list(string))
       security_groups  = optional(list(string))
+      baseline_ref     = optional(string)
       self             = optional(bool)
       description      = optional(string, "Managed by sg-platform")
     })), [])
@@ -28,6 +29,7 @@ variable "security_group_config" {
       ipv6_cidr_blocks = optional(list(string))
       prefix_list_ids  = optional(list(string))
       security_groups  = optional(list(string))
+      baseline_ref     = optional(string)
       self             = optional(bool)
       description      = optional(string, "Managed by sg-platform")
     })), [])
@@ -42,6 +44,12 @@ variable "security_group_mappings" {
 
 variable "prefix_list_mappings" {
   description = "Map of prefix list names to IDs for resolving references"
+  type        = map(string)
+  default     = {}
+}
+
+variable "baseline_sg_mappings" {
+  description = "Map of baseline ref names to security group IDs (e.g. vpc-endpoints => sg-xxx)"
   type        = map(string)
   default     = {}
 }

@@ -126,10 +126,23 @@ variable "prefix_list_mappings" {
 }
 
 # ---------------------------------------------------------------------------
-# Prefix List Mappings
+# Baseline Ref Allowlist
+# Only these baseline SG names can be referenced via baseline_ref in YAML.
+# Expanding this list is a deliberate security decision.
 # ---------------------------------------------------------------------------
 
 locals {
+  # Scan all SGs for baseline_ref usage and collect unique refs
+  baseline_refs_used = distinct(flatten([
+    for sg_name, sg in local.security_groups : concat(
+      [for rule in lookup(sg, "ingress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null],
+      [for rule in lookup(sg, "egress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
+    )
+  ]))
+
+  # Allowlist — only these baseline refs are permitted
+  baseline_ref_allowlist = ["vpc-endpoints"]
+
   # AWS-managed prefix list aliases by region.
   # Lets requesters use friendly names like "s3" and "dynamodb"
   # while still resolving to the correct regional managed prefix list ID.
@@ -146,10 +159,7 @@ locals {
 
   # Shared repo-managed prefix lists — created by this repo in each account/region
   shared_prefix_lists_config = fileexists("${path.root}/shared-prefix-lists.yaml") ? yamldecode(file("${path.root}/shared-prefix-lists.yaml")) : { shared_prefix_lists = {} }
-  shared_prefix_lists        = lookup(local.shared_prefix_lists_config, "shared_prefix_lists", {})
-
-  platform_security_groups_config = fileexists("${path.root}/registry/platform-security-groups.yaml") ? yamldecode(file("${path.root}/registry/platform-security-groups.yaml")) : { platform_security_groups = {} }
-  platform_security_groups        = lookup(local.platform_security_groups_config, "platform_security_groups", {})
+  shared_prefix_lists = lookup(local.shared_prefix_lists_config, "shared_prefix_lists", {})
 
   # Expand shared prefix lists into per-region instances while keeping the same reference name.
   # Supports either:
@@ -190,15 +200,15 @@ module "us_east_1" {
     aws = aws.us-east-1
   }
 
-  security_groups = lookup(local.sgs_by_region, "us-east-1", {})
-  account_id      = local.account_id
-  tags            = local.common_tags
+  security_groups        = lookup(local.sgs_by_region, "us-east-1", {})
+  account_id             = local.account_id
+  tags                   = local.common_tags
   prefix_list_mappings = merge(
     can(var.prefix_list_mappings["us-east-1"]) ? var.prefix_list_mappings["us-east-1"] : var.prefix_list_mappings,
     lookup(local.aws_managed_prefix_list_mappings_by_region, "us-east-1", {})
   )
-  shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-east-1", {})
-  platform_security_groups = local.platform_security_groups
+  baseline_ref_allowlist = local.baseline_ref_allowlist
+  shared_prefix_lists    = lookup(local.shared_prefix_lists_by_region, "us-east-1", {})
 }
 
 module "us_west_2" {
@@ -209,15 +219,15 @@ module "us_west_2" {
     aws = aws.us-west-2
   }
 
-  security_groups = lookup(local.sgs_by_region, "us-west-2", {})
-  account_id      = local.account_id
-  tags            = local.common_tags
+  security_groups        = lookup(local.sgs_by_region, "us-west-2", {})
+  account_id             = local.account_id
+  tags                   = local.common_tags
   prefix_list_mappings = merge(
     can(var.prefix_list_mappings["us-west-2"]) ? var.prefix_list_mappings["us-west-2"] : var.prefix_list_mappings,
     lookup(local.aws_managed_prefix_list_mappings_by_region, "us-west-2", {})
   )
-  shared_prefix_lists      = lookup(local.shared_prefix_lists_by_region, "us-west-2", {})
-  platform_security_groups = local.platform_security_groups
+  baseline_ref_allowlist = local.baseline_ref_allowlist
+  shared_prefix_lists    = lookup(local.shared_prefix_lists_by_region, "us-west-2", {})
 }
 
 # ---------------------------------------------------------------------------

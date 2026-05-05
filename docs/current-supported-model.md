@@ -40,7 +40,7 @@ Supported today:
 - account-level `carid`
 - account-level `environment`
 - account-level `regions` with SG-level region overrides
-- security group rules using CIDRs, prefix lists, self references, platform built-in SG references, or same-account SG references
+- security group rules using CIDRs, prefix lists, self references, baseline references, or same-account SG references
 - cross-account connectivity represented with CIDR or prefix-list based rules when needed
 
 ## What Is Not Supported Today
@@ -72,32 +72,6 @@ Today, ownership is implied by the account context, PR author/review path, CARID
 
 Until ownership metadata is added, reviewers should treat account onboarding and large rule changes as the control point for confirming who owns the account and workload.
 
-## Legacy Tenant Compatibility
-
-For future design purposes, the current single-file account layout is considered an implicit `default` tenant.
-
-```text
-accounts/<account-id>/security-groups.yaml
-```
-
-resolves conceptually as:
-
-```yaml
-tenant: "default"
-```
-
-This is a compatibility rule only. Requestors do not need to add `tenant: default` to current YAML files.
-
-The initial `registry/tenants.yaml` file lists current managed accounts under `default.allowed_accounts`. Validation warns, but does not fail, if a current legacy account is not listed there.
-
-Future tenant-split support, when explicitly enabled, can use:
-
-```text
-accounts/<account-id>/<tenant>/security-groups.yaml
-```
-
-At that point, tenant ownership should resolve from a registry rather than from free-text owner fields in every SG definition. The dormant layout contract is tracked in [Tenant-Split Layout Contract](tenant-split-layout-contract.md).
-
 ## Guardrails
 
 Current guardrails:
@@ -119,7 +93,3 @@ Future phases may add:
 - dormant tenant model design
 - tenant split only behind feature flag and only for real multi-tenant accounts
 - thin API/UI front door that creates PRs rather than bypassing Git/Terraform
-
-The target API/schema contract is tracked in [Future API / Schema Contract](future-api-schema-contract.md).
-
-The future tenant ownership registry design is tracked in [Tenant / Owner Registry Design](tenant-owner-registry.md).

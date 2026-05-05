@@ -40,23 +40,29 @@ resource "aws_vpc_security_group_ingress_rule" "this" {
   prefix_list_id = (
     var.security_group_config.ingress[count.index].prefix_list_ids != null
     ? lookup(
-      var.prefix_list_mappings,
-      var.security_group_config.ingress[count.index].prefix_list_ids[0],
-      var.security_group_config.ingress[count.index].prefix_list_ids[0]
-    )
+        var.prefix_list_mappings,
+        var.security_group_config.ingress[count.index].prefix_list_ids[0],
+        var.security_group_config.ingress[count.index].prefix_list_ids[0]
+      )
     : null
   )
 
   referenced_security_group_id = (
-    var.security_group_config.ingress[count.index].security_groups != null
+    var.security_group_config.ingress[count.index].baseline_ref != null
     ? lookup(
-      var.security_group_mappings,
-      var.security_group_config.ingress[count.index].security_groups[0],
-      var.security_group_config.ingress[count.index].security_groups[0]
-    )
-    : var.security_group_config.ingress[count.index].self == true
-    ? var.security_group_id
-    : null
+        var.baseline_sg_mappings,
+        var.security_group_config.ingress[count.index].baseline_ref,
+        null
+      )
+    : var.security_group_config.ingress[count.index].security_groups != null
+      ? lookup(
+          var.security_group_mappings,
+          var.security_group_config.ingress[count.index].security_groups[0],
+          var.security_group_config.ingress[count.index].security_groups[0]
+        )
+      : var.security_group_config.ingress[count.index].self == true
+        ? var.security_group_id
+        : null
   )
 
   tags = var.tags
@@ -88,23 +94,29 @@ resource "aws_vpc_security_group_egress_rule" "this" {
   prefix_list_id = (
     var.security_group_config.egress[count.index].prefix_list_ids != null
     ? lookup(
-      var.prefix_list_mappings,
-      var.security_group_config.egress[count.index].prefix_list_ids[0],
-      var.security_group_config.egress[count.index].prefix_list_ids[0]
-    )
+        var.prefix_list_mappings,
+        var.security_group_config.egress[count.index].prefix_list_ids[0],
+        var.security_group_config.egress[count.index].prefix_list_ids[0]
+      )
     : null
   )
 
   referenced_security_group_id = (
-    var.security_group_config.egress[count.index].security_groups != null
+    var.security_group_config.egress[count.index].baseline_ref != null
     ? lookup(
-      var.security_group_mappings,
-      var.security_group_config.egress[count.index].security_groups[0],
-      var.security_group_config.egress[count.index].security_groups[0]
-    )
-    : var.security_group_config.egress[count.index].self == true
-    ? var.security_group_id
-    : null
+        var.baseline_sg_mappings,
+        var.security_group_config.egress[count.index].baseline_ref,
+        null
+      )
+    : var.security_group_config.egress[count.index].security_groups != null
+      ? lookup(
+          var.security_group_mappings,
+          var.security_group_config.egress[count.index].security_groups[0],
+          var.security_group_config.egress[count.index].security_groups[0]
+        )
+      : var.security_group_config.egress[count.index].self == true
+        ? var.security_group_id
+        : null
   )
 
   tags = var.tags

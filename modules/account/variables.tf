@@ -20,14 +20,14 @@ variable "prefix_list_mappings" {
   default     = {}
 }
 
-variable "shared_prefix_lists" {
-  description = "Map of shared repo-managed prefix lists to create in this account/region"
-  type        = any
-  default     = {}
+variable "baseline_ref_allowlist" {
+  description = "List of allowed baseline_ref names that can be referenced (e.g. vpc-endpoints)"
+  type        = list(string)
+  default     = []
 }
 
-variable "platform_security_groups" {
-  description = "Map of platform built-in security groups to create automatically in this account/region"
+variable "shared_prefix_lists" {
+  description = "Map of shared repo-managed prefix lists to create in this account/region"
   type        = any
   default     = {}
 }
