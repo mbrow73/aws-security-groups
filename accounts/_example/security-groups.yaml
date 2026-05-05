@@ -7,7 +7,7 @@ carid: "600001725"   # Your application's CARID
 default_region: "us-east-1"  # Legacy fallback when account-level regions is not set
 regions: ["us-east-1", "us-west-2"]  # Optional account-wide deployment regions for SGs without explicit region(s)
 
-# Note: Platform built-in SGs, such as vpc-endpoints, are created automatically and can be referenced like normal SGs.
+# Note: Baseline SGs (EKS, VPC endpoints) are managed by AFT — not this repo.
 # Note: Shared/self-service prefix lists are managed in shared-prefix-lists.yaml.
 # Note: Corporate mandatory tags are auto-generated from environment + carid.
 #       You do NOT need to specify them per security group.
@@ -43,7 +43,7 @@ security_groups:
       - protocol: "tcp"
         from_port: 443
         to_port: 443
-        security_groups: ["vpc-endpoints"]
+        baseline_ref: "vpc-endpoints"
         description: "ECR, S3, STS, CloudWatch via VPC endpoints"
       - protocol: "udp"
         from_port: 53

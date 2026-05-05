@@ -1,9 +1,0 @@
-platform_security_groups:
-  vpc-endpoints:
-    description: "Platform-managed security group for interface VPC endpoint access."
-    owner_authority: "platform-sg"
-    provision: "automatic"
-    source: "vpc_cidr"
-    regions: "account_regions"
-    requestor_reference: true
-    review_class: "platform_builtin"

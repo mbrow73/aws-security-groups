@@ -19,12 +19,6 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 
-from account_config import load_account_config
-from reference_classifier import classify_sg_reference, load_platform_security_groups, load_tenant_registry
-from network_ownership import classify_cidr_ownership
-from tenant_context import resolve_tenant_context
-from tenant_context import resolve_tenant_context
-
 
 @dataclass
 class ValidationResult:
@@ -71,6 +65,10 @@ class ValidationSummary:
 
 
 class SecurityGroupValidator:
+    ALLOWED_BASELINE_REFS = {
+        'vpc-endpoints',
+    }
+
     RESERVED_NAME_PREFIXES = [
         'default',
         'baseline',
@@ -87,7 +85,7 @@ class SecurityGroupValidator:
     ALLOWED_RULE_KEYS = {
         'description', 'protocol', 'from_port', 'to_port',
         'cidr_blocks', 'ipv6_cidr_blocks', 'security_groups',
-        'prefix_list_ids', 'self'
+        'prefix_list_ids', 'baseline_ref', 'self'
     }
 
     def __init__(self, account_dir: str):
@@ -96,11 +94,7 @@ class SecurityGroupValidator:
         self.repo_root = self._find_repo_root()
         self.guardrails = self._load_guardrails()
         self.prefix_lists = self._load_prefix_lists()
-        self.account_config = load_account_config(self.account_dir, self.repo_root)
-        self.platform_security_groups = load_platform_security_groups(self.repo_root)
-        self.reference_tenant_registry = load_tenant_registry(self.repo_root)
-        self.tenant_context = resolve_tenant_context(self.config_file, self.repo_root)
-        self.account_id = self.tenant_context.account_id
+        self.account_id = self.account_dir.name if self.account_dir.name.isdigit() else None
 
     def _find_repo_root(self) -> Path:
         current = self.account_dir.resolve()
@@ -155,24 +149,31 @@ class SecurityGroupValidator:
     def validate(self) -> ValidationSummary:
         summary = ValidationSummary()
 
-        for error in self.account_config.errors:
+        if not self.config_file.exists():
             summary.add_result(ValidationResult(
                 level='error',
-                message=error,
-                rule='account_config_loader'
+                message=f"Config file not found: {self.config_file}",
+                rule='file_exists'
             ))
-
-        for warning in self.account_config.warnings:
-            summary.add_result(ValidationResult(
-                level='warning',
-                message=warning,
-                rule='account_config_loader'
-            ))
-
-        if self.account_config.errors:
             return summary
 
-        data = self.account_config.config
+        try:
+            with open(self.config_file, 'r') as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Invalid YAML syntax: {e}",
+                rule='yaml_syntax'
+            ))
+            return summary
+        except Exception as e:
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Failed to read config file: {e}",
+                rule='file_read'
+            ))
+            return summary
 
         if not data:
             summary.add_result(ValidationResult(
@@ -184,8 +185,6 @@ class SecurityGroupValidator:
 
         self._validate_schema(data, summary)
         self._validate_account_id(data, summary)
-        self._validate_registry_schema(summary)
-        self._validate_tenant_registry(data, summary)
         self._validate_regions(data, summary)
         self._validate_security_groups(data, summary)
         self._validate_naming_conventions(data, summary)
@@ -193,126 +192,6 @@ class SecurityGroupValidator:
         self._validate_unicode_characters(data, summary)
 
         return summary
-
-    def validate_registry_only(self) -> ValidationSummary:
-        summary = ValidationSummary()
-        self._validate_registry_schema(summary)
-        self._validate_reference_grants(summary)
-        return summary
-
-    def _validate_registry_schema(self, summary: ValidationSummary):
-        tenants = self.reference_tenant_registry or {}
-        review_authorities = self._load_review_authorities_registry()
-        platform_sgs = self.platform_security_groups or {}
-
-        self._validate_review_authorities_registry(review_authorities, summary)
-        self._validate_tenants_registry_schema(tenants, review_authorities.get('authorities', {}), summary)
-        self._validate_platform_sg_registry(platform_sgs, review_authorities.get('authorities', {}), summary)
-
-    def _load_review_authorities_registry(self) -> Dict[str, Any]:
-        path = self.repo_root / 'registry' / 'review-authorities.yaml'
-        if not path.exists():
-            return {}
-        try:
-            with open(path, 'r') as f:
-                data = yaml.safe_load(f) or {}
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            return {}
-
-    def _validate_review_authorities_registry(self, registry: Dict[str, Any], summary: ValidationSummary):
-        authorities = registry.get('authorities', {}) if isinstance(registry, dict) else {}
-        rules = registry.get('rules', {}) if isinstance(registry, dict) else {}
-        if authorities and not isinstance(authorities, dict):
-            summary.add_result(ValidationResult(level='error', message='review-authorities.yaml authorities must be a mapping/object', rule='registry_review_authorities_invalid'))
-            return
-        for slug, authority in authorities.items():
-            context = f"review_authority.{slug}"
-            if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug):
-                summary.add_result(ValidationResult(level='error', message=f"Review authority slug '{slug}' must be lowercase kebab-case", rule='registry_review_authority_slug', context=context))
-            if not isinstance(authority, dict):
-                summary.add_result(ValidationResult(level='error', message=f"Review authority '{slug}' must be a mapping/object", rule='registry_review_authority_invalid', context=context))
-                continue
-            for field in ['ghe_host', 'org', 'team_slug']:
-                if not isinstance(authority.get(field), str) or not authority.get(field).strip():
-                    summary.add_result(ValidationResult(level='error', message=f"Review authority '{slug}' missing required field '{field}'", rule=f'registry_review_authority_{field}', context=context))
-        if rules and not isinstance(rules, dict):
-            summary.add_result(ValidationResult(level='error', message='review-authorities.yaml rules must be a mapping/object', rule='registry_review_rules_invalid'))
-            return
-        for rule_name, rule in rules.items():
-            context = f"review_rule.{rule_name}"
-            if not isinstance(rule, dict):
-                summary.add_result(ValidationResult(level='error', message=f"Review rule '{rule_name}' must be a mapping/object", rule='registry_review_rule_invalid', context=context))
-                continue
-            authority = rule.get('authority')
-            if authority not in authorities:
-                summary.add_result(ValidationResult(level='error', message=f"Review rule '{rule_name}' references unknown authority '{authority}'", rule='registry_review_rule_authority', context=context))
-            approvals = rule.get('required_authority_approvals')
-            if not isinstance(approvals, int) or approvals < 1:
-                summary.add_result(ValidationResult(level='error', message=f"Review rule '{rule_name}' must require at least one authority approval", rule='registry_review_rule_approvals', context=context))
-
-    def _validate_tenants_registry_schema(self, tenants: Dict[str, Any], authorities: Dict[str, Any], summary: ValidationSummary):
-        allowed_statuses = {'active', 'legacy', 'deprecated', 'disabled'}
-        for slug, tenant in tenants.items():
-            context = f"tenant.{slug}"
-            if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug):
-                summary.add_result(ValidationResult(level='error', message=f"Tenant slug '{slug}' must be lowercase kebab-case", rule='registry_tenant_slug', context=context))
-            if not isinstance(tenant, dict):
-                summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' must be a mapping/object", rule='registry_tenant_invalid', context=context))
-                continue
-            if tenant.get('status') not in allowed_statuses:
-                summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' has invalid status '{tenant.get('status')}'", rule='registry_tenant_status', context=context))
-            authority = tenant.get('review_authority')
-            if authority and authority not in authorities:
-                summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' references unknown review_authority '{authority}'", rule='registry_tenant_review_authority', context=context))
-            for account_id in tenant.get('allowed_accounts', []) or []:
-                if not isinstance(account_id, str) or not re.match(r'^\d{12}$', account_id):
-                    summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' has invalid AWS account ID '{account_id}'", rule='registry_tenant_allowed_account', context=context))
-            for carid in tenant.get('carids', []) or []:
-                if not isinstance(carid, str) or not re.match(r'^\d+$', carid):
-                    summary.add_result(ValidationResult(level='error', message=f"Tenant '{slug}' has invalid CARID '{carid}'", rule='registry_tenant_carid', context=context))
-            self._validate_owned_networks(slug, tenant.get('owned_networks') or {}, summary)
-
-    def _validate_owned_networks(self, tenant_slug: str, owned_networks: Dict[str, Any], summary: ValidationSummary):
-        seen = []
-        if not isinstance(owned_networks, dict):
-            summary.add_result(ValidationResult(level='error', message=f"Tenant '{tenant_slug}' owned_networks must be a mapping/object", rule='registry_tenant_owned_networks', context=f"tenant.{tenant_slug}"))
-            return
-        for name, network in owned_networks.items():
-            context = f"tenant.{tenant_slug}.owned_networks.{name}"
-            if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', str(name)):
-                summary.add_result(ValidationResult(level='error', message=f"Owned network '{name}' must be lowercase kebab-case", rule='registry_owned_network_slug', context=context))
-            if not isinstance(network, dict):
-                summary.add_result(ValidationResult(level='error', message=f"Owned network '{name}' must be a mapping/object", rule='registry_owned_network_invalid', context=context))
-                continue
-            for cidr in network.get('cidrs', []) or []:
-                try:
-                    net = ipaddress.ip_network(str(cidr), strict=False)
-                    if net.prefixlen < 16:
-                        summary.add_result(ValidationResult(level='error', message=f"Owned network CIDR '{cidr}' is too broad", rule='registry_owned_network_broad_cidr', context=context))
-                    for other_name, other in seen:
-                        if net.overlaps(other):
-                            summary.add_result(ValidationResult(level='error', message=f"Owned network CIDR '{cidr}' overlaps {other_name} {other}", rule='registry_owned_network_overlap', context=context))
-                    seen.append((name, net))
-                except ValueError as e:
-                    summary.add_result(ValidationResult(level='error', message=f"Owned network CIDR '{cidr}' is invalid: {e}", rule='registry_owned_network_cidr', context=context))
-
-    def _validate_platform_sg_registry(self, platform_sgs: Dict[str, Any], authorities: Dict[str, Any], summary: ValidationSummary):
-        for slug, sg in platform_sgs.items():
-            context = f"platform_security_group.{slug}"
-            if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', slug):
-                summary.add_result(ValidationResult(level='error', message=f"Platform SG slug '{slug}' must be lowercase kebab-case", rule='registry_platform_sg_slug', context=context))
-            if not isinstance(sg, dict):
-                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' must be a mapping/object", rule='registry_platform_sg_invalid', context=context))
-                continue
-            if sg.get('owner_authority') not in authorities:
-                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' references unknown owner_authority '{sg.get('owner_authority')}'", rule='registry_platform_sg_owner_authority', context=context))
-            if sg.get('provision') not in ['automatic', 'manual']:
-                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' has invalid provision '{sg.get('provision')}'", rule='registry_platform_sg_provision', context=context))
-            if sg.get('source') not in ['vpc_cidr']:
-                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' has invalid source '{sg.get('source')}'", rule='registry_platform_sg_source', context=context))
-            if sg.get('review_class') not in ['platform_builtin']:
-                summary.add_result(ValidationResult(level='error', message=f"Platform SG '{slug}' has invalid review_class '{sg.get('review_class')}'", rule='registry_platform_sg_review_class', context=context))
 
     def _validate_schema(self, data: Dict[str, Any], summary: ValidationSummary):
         if not isinstance(data, dict):
@@ -392,233 +271,6 @@ class SecurityGroupValidator:
                 message=f"account_id in YAML ({account_id}) does not match directory name ({self.account_id})",
                 rule='account_id_consistency'
             ))
-
-    def _validate_tenant_registry(self, data: Dict[str, Any], summary: ValidationSummary):
-        if self.account_config.layout == 'tenant':
-            for source in self.account_config.sources:
-                self._validate_tenant_context(resolve_tenant_context(source.path, self.repo_root), source.data, summary)
-            return
-        self._validate_tenant_context(self.tenant_context, data, summary)
-
-    def _validate_tenant_context(self, context, data: Dict[str, Any], summary: ValidationSummary):
-        if context.registry_error:
-            summary.add_result(ValidationResult(
-                level='error',
-                message=context.registry_error,
-                rule='tenant_registry_invalid'
-            ))
-            return
-
-        if not context.registry_found:
-            return
-
-        self._validate_reference_grants(summary)
-
-        if not context.tenant_found:
-            summary.add_result(ValidationResult(
-                level='warning',
-                message=f"Tenant '{context.tenant}' is not defined in registry/tenants.yaml",
-                rule='tenant_registry_missing_tenant',
-                context=context.tenant
-            ))
-            if context.tenant == 'default':
-                summary.add_result(ValidationResult(
-                    level='warning',
-                    message="Implicit tenant 'default' is not defined in registry/tenants.yaml",
-                    rule='tenant_registry_missing_default',
-                    context=context.tenant
-                ))
-            return
-
-        status = context.status
-        if status in ['deprecated', 'disabled']:
-            summary.add_result(ValidationResult(
-                level='warning',
-                message=f"Tenant '{context.tenant}' has status '{status}' in registry/tenants.yaml",
-                rule='tenant_registry_status',
-                context=context.tenant
-            ))
-
-        if context.allowed_accounts and data.get('account_id') and not context.account_allowed:
-            account_id = str(data['account_id'])
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"Account {account_id} is not listed under tenant '{context.tenant}' allowed_accounts in registry/tenants.yaml",
-                rule='tenant_registry_account_scope',
-                context=account_id
-            ))
-
-    def _validate_reference_grants(self, summary: ValidationSummary):
-        tenants = self.reference_tenant_registry or {}
-        if not tenants:
-            return
-
-        sg_tenant_map = {}
-        tenant_sgs = {}
-        for source in self.account_config.sources:
-            sgs = source.data.get('security_groups', {}) or {}
-            if not isinstance(sgs, dict):
-                continue
-            tenant_sgs.setdefault(source.tenant, set()).update(sgs.keys())
-            for sg_name in sgs:
-                sg_tenant_map[sg_name] = source.tenant
-
-        for tenant_slug, tenant in tenants.items():
-            if not isinstance(tenant, dict):
-                continue
-            grants = tenant.get('reference_grants', []) or []
-            if not isinstance(grants, list):
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"Tenant '{tenant_slug}' reference_grants must be a list",
-                    rule='reference_grant_invalid',
-                    context=tenant_slug
-                ))
-                continue
-
-            seen_names = set()
-            for index, grant in enumerate(grants):
-                context = f"tenant.{tenant_slug}.reference_grants[{index}]"
-                if not isinstance(grant, dict):
-                    summary.add_result(ValidationResult(
-                        level='error',
-                        message=f"Reference grant for tenant '{tenant_slug}' must be a mapping/object",
-                        rule='reference_grant_invalid',
-                        context=context
-                    ))
-                    continue
-
-                name = grant.get('name')
-                if not isinstance(name, str) or not name.strip():
-                    summary.add_result(ValidationResult(
-                        level='error',
-                        message=f"Reference grant for tenant '{tenant_slug}' must include a non-empty name",
-                        rule='reference_grant_name',
-                        context=context
-                    ))
-                elif name in seen_names:
-                    summary.add_result(ValidationResult(
-                        level='error',
-                        message=f"Duplicate reference grant name '{name}' for tenant '{tenant_slug}'",
-                        rule='reference_grant_duplicate_name',
-                        context=context
-                    ))
-                else:
-                    seen_names.add(name)
-
-                target_sgs = grant.get('target_sgs') or []
-                target_networks = grant.get('target_networks') or []
-                if (target_sgs and not isinstance(target_sgs, list)) or (target_networks and not isinstance(target_networks, list)) or (not target_sgs and not target_networks):
-                    summary.add_result(ValidationResult(level='error', message=f"Reference grant '{name or index}' for tenant '{tenant_slug}' must include target_sgs and/or target_networks", rule='reference_grant_targets', context=context))
-                for network_name in target_networks:
-                    if network_name not in (tenant.get('owned_networks') or {}):
-                        summary.add_result(ValidationResult(level='error', message=f"Reference grant '{name or index}' references unknown owned network '{network_name}'", rule='reference_grant_target_network', context=context))
-                self._validate_reference_grant_list_field(grant, 'source_tenants', context, summary)
-                self._validate_reference_grant_list_field(grant, 'protocols', context, summary)
-                if grant.get('ports'):
-                    self._validate_reference_grant_list_field(grant, 'ports', context, summary, item_type=int)
-                self._validate_reference_grant_list_field(grant, 'directions', context, summary)
-
-                if grant.get('decision') != 'auto_approved':
-                    summary.add_result(ValidationResult(
-                        level='error',
-                        message=f"Reference grant '{name or index}' for tenant '{tenant_slug}' must use decision 'auto_approved'",
-                        rule='reference_grant_decision',
-                        context=context
-                    ))
-
-                for protocol in grant.get('protocols', []) or []:
-                    if str(protocol).lower() not in ['tcp', 'udp', 'icmp']:
-                        summary.add_result(ValidationResult(
-                            level='error',
-                            message=f"Reference grant '{name or index}' has unsupported protocol '{protocol}'",
-                            rule='reference_grant_protocol',
-                            context=context
-                        ))
-
-                for direction in grant.get('directions', []) or []:
-                    if str(direction).lower() not in ['ingress', 'egress']:
-                        summary.add_result(ValidationResult(
-                            level='error',
-                            message=f"Reference grant '{name or index}' has invalid direction '{direction}'",
-                            rule='reference_grant_direction',
-                            context=context
-                        ))
-
-                for port in grant.get('ports', []) or []:
-                    if not isinstance(port, int) or port < 0 or port > 65535:
-                        summary.add_result(ValidationResult(
-                            level='error',
-                            message=f"Reference grant '{name or index}' has invalid port '{port}'",
-                            rule='reference_grant_port',
-                            context=context
-                        ))
-
-                for source_tenant in grant.get('source_tenants', []) or []:
-                    if source_tenant != '*' and source_tenant not in tenants:
-                        summary.add_result(ValidationResult(
-                            level='error',
-                            message=f"Reference grant '{name or index}' references unknown source tenant '{source_tenant}'",
-                            rule='reference_grant_source_tenant',
-                            context=context
-                        ))
-
-                if tenant_slug in tenant_sgs:
-                    for target_sg in grant.get('target_sgs', []) or []:
-                        if target_sg not in tenant_sgs.get(tenant_slug, set()):
-                            summary.add_result(ValidationResult(
-                                level='error',
-                                message=f"Reference grant '{name or index}' target SG '{target_sg}' is not owned by tenant '{tenant_slug}' in this account",
-                                rule='reference_grant_target_sg',
-                                context=context
-                            ))
-
-                expires = grant.get('expires')
-                if expires:
-                    try:
-                        from datetime import date
-                        expiry = date.fromisoformat(str(expires))
-                        if expiry < date.today():
-                            summary.add_result(ValidationResult(
-                                level='warning',
-                                message=f"Reference grant '{name or index}' for tenant '{tenant_slug}' is expired ({expires})",
-                                rule='reference_grant_expired',
-                                context=context
-                            ))
-                    except ValueError:
-                        summary.add_result(ValidationResult(
-                            level='error',
-                            message=f"Reference grant '{name or index}' has invalid expires date '{expires}'",
-                            rule='reference_grant_expires',
-                            context=context
-                        ))
-
-    def _validate_reference_grant_list_field(self, grant: Dict[str, Any], field: str, context: str, summary: ValidationSummary, item_type=str):
-        value = grant.get(field)
-        if not isinstance(value, list) or not value:
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"Reference grant field '{field}' must be a non-empty list",
-                rule=f"reference_grant_{field}",
-                context=context
-            ))
-            return
-        for item in value:
-            if item_type is int:
-                if not isinstance(item, int):
-                    summary.add_result(ValidationResult(
-                        level='error',
-                        message=f"Reference grant field '{field}' must contain integers",
-                        rule=f"reference_grant_{field}",
-                        context=context
-                    ))
-            elif not isinstance(item, str) or not item.strip():
-                summary.add_result(ValidationResult(
-                    level='error',
-                    message=f"Reference grant field '{field}' must contain non-empty strings",
-                    rule=f"reference_grant_{field}",
-                    context=context
-                ))
 
     def _validate_regions(self, data: Dict[str, Any], summary: ValidationSummary):
         allowed_regions = self.guardrails.get('validation', {}).get('allowed_regions', ['us-east-1', 'us-west-2'])
@@ -893,6 +545,8 @@ class SecurityGroupValidator:
             else:
                 parts.append(f"ports {from_p}-{to_p}")
         sources = []
+        if rule.get('baseline_ref'):
+            sources.append(f"baseline:{rule['baseline_ref']}")
         cidr_blocks = rule.get('cidr_blocks', [])
         if isinstance(cidr_blocks, list):
             sources.extend(str(c) for c in cidr_blocks)
@@ -1101,7 +755,38 @@ class SecurityGroupValidator:
     def _validate_rule_sources(self, sg_name: str, rule_type: str, rule_index: int, rule: Dict[str, Any], summary: ValidationSummary):
         context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
 
-        selector_fields = ['cidr_blocks', 'ipv6_cidr_blocks', 'security_groups', 'self', 'prefix_list_ids']
+        if 'baseline_ref' in rule:
+            ref = rule['baseline_ref']
+            if not isinstance(ref, str):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"'baseline_ref' in {sg_name} {rule_type}[{rule_index}] must be a string, got {type(ref).__name__}",
+                    rule='rule_baseline_ref_type',
+                    context=context
+                ))
+            elif ref not in self.ALLOWED_BASELINE_REFS:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"'baseline_ref: {ref}' in {sg_name} {rule_type}[{rule_index}] is not allowed. Allowed values: {', '.join(sorted(self.ALLOWED_BASELINE_REFS))}",
+                    rule='rule_baseline_ref_not_allowed',
+                    context=context
+                ))
+            if rule.get('security_groups'):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"'baseline_ref' and 'security_groups' are mutually exclusive in {sg_name} {rule_type}[{rule_index}]",
+                    rule='rule_baseline_ref_conflict',
+                    context=context
+                ))
+            if rule.get('self'):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"'baseline_ref' and 'self' are mutually exclusive in {sg_name} {rule_type}[{rule_index}]",
+                    rule='rule_baseline_ref_conflict',
+                    context=context
+                ))
+
+        selector_fields = ['cidr_blocks', 'ipv6_cidr_blocks', 'security_groups', 'self', 'prefix_list_ids', 'baseline_ref']
         active_selectors = []
         for field in selector_fields:
             value = rule.get(field)
@@ -1114,7 +799,7 @@ class SecurityGroupValidator:
         if not active_selectors:
             summary.add_result(ValidationResult(
                 level='error',
-                message=f"Rule in {sg_name} {rule_type}[{rule_index}] must specify one selector (cidr_blocks, ipv6_cidr_blocks, security_groups, prefix_list_ids, or self)",
+                message=f"Rule in {sg_name} {rule_type}[{rule_index}] must specify one selector (cidr_blocks, ipv6_cidr_blocks, security_groups, prefix_list_ids, baseline_ref, or self)",
                 rule='rule_selector_missing',
                 context=context
             ))
@@ -1200,7 +885,7 @@ class SecurityGroupValidator:
                             context=context
                         ))
                     seen_refs.add(sg_ref)
-                    self._validate_security_group_reference(sg_name, rule_type, rule_index, rule, sg_ref, summary)
+                    self._validate_security_group_reference(sg_name, rule_type, rule_index, sg_ref, summary)
 
         if 'prefix_list_ids' in rule:
             if not isinstance(rule['prefix_list_ids'], list):
@@ -1260,19 +945,6 @@ class SecurityGroupValidator:
                 context=context
             ))
 
-        if not is_ipv6:
-            ownership = classify_cidr_ownership(
-                self.reference_tenant_registry,
-                cidr,
-                protocol=rule.get('protocol') if rule else None,
-                from_port=rule.get('from_port') if rule else None,
-                to_port=rule.get('to_port') if rule else None,
-            )
-            if ownership.classification == 'owned':
-                summary.add_result(ValidationResult(level='info', message=f"CIDR {cidr} is owned by tenant '{ownership.owner_tenant}' network '{ownership.network_name}'", rule='cidr_owned_network', context=context))
-            elif ownership.classification in ['unknown', 'overlap']:
-                summary.add_result(ValidationResult(level='warning', message=f"CIDR {cidr}: {ownership.reason}", rule=f"cidr_{ownership.classification}", context=context))
-
         if (not is_ipv6 and cidr == '0.0.0.0/0') or (is_ipv6 and cidr == '::/0'):
             if rule_type == 'ingress':
                 summary.add_result(ValidationResult(
@@ -1294,7 +966,7 @@ class SecurityGroupValidator:
                     context=context
                 ))
 
-    def _validate_security_group_reference(self, sg_name: str, rule_type: str, rule_index: int, rule: Dict[str, Any], sg_ref: str, summary: ValidationSummary):
+    def _validate_security_group_reference(self, sg_name: str, rule_type: str, rule_index: int, sg_ref: str, summary: ValidationSummary):
         context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
         if sg_ref.startswith('sg-'):
             if not re.match(r'^sg-[0-9a-fA-F]{8,}$', sg_ref):
@@ -1310,53 +982,6 @@ class SecurityGroupValidator:
                 level='warning',
                 message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] may be invalid",
                 rule='rule_sg_reference_format',
-                context=context
-            ))
-
-        classification = classify_sg_reference(
-            self.account_config,
-            self.platform_security_groups,
-            sg_name,
-            sg_ref,
-            tenant_registry=self.reference_tenant_registry,
-            direction=rule_type,
-            protocol=rule.get('protocol'),
-            from_port=rule.get('from_port'),
-            to_port=rule.get('to_port'),
-        )
-        if classification.ref_class == 'platform_builtin':
-            summary.add_result(ValidationResult(
-                level='info',
-                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] targets platform built-in SG owned by {classification.owner_authority or 'platform'}",
-                rule='sg_ref_platform_builtin',
-                context=context
-            ))
-        elif classification.ref_class == 'same_tenant':
-            summary.add_result(ValidationResult(
-                level='info',
-                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] stays within tenant '{classification.source_tenant}'",
-                rule='sg_ref_same_tenant',
-                context=context
-            ))
-        elif classification.ref_class == 'cross_tenant':
-            summary.add_result(ValidationResult(
-                level='warning',
-                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] crosses tenant boundary: {classification.source_tenant or 'unknown'} -> {classification.target_tenant}",
-                rule='sg_ref_cross_tenant',
-                context=context
-            ))
-        elif classification.ref_class == 'cross_tenant_granted':
-            summary.add_result(ValidationResult(
-                level='info',
-                message=f"Security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}] crosses tenant boundary but matches target-owned reference grant '{classification.grant_name}'",
-                rule='sg_ref_cross_tenant_granted',
-                context=context
-            ))
-        elif classification.ref_class == 'unknown':
-            summary.add_result(ValidationResult(
-                level='error',
-                message=f"Unknown security group reference '{sg_ref}' in {sg_name} {rule_type}[{rule_index}]. Define it in this account or add it as a platform built-in SG.",
-                rule='sg_ref_unknown',
                 context=context
             ))
 
@@ -1571,8 +1196,7 @@ Examples:
   python validate.py accounts/production
         """
     )
-    parser.add_argument('account_dir', nargs='?', help='Path to the account directory containing security-groups.yaml')
-    parser.add_argument('--registry-only', action='store_true', help='Validate registry files without validating an account config')
+    parser.add_argument('account_dir', help='Path to the account directory containing security-groups.yaml')
     parser.add_argument('--format', choices=['text', 'json', 'markdown'], default='text', help='Output format (default: text)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Include info-level messages in output')
     parser.add_argument('--warnings-as-errors', action='store_true', help='Treat warnings as errors')
@@ -1580,15 +1204,8 @@ Examples:
     args = parser.parse_args()
 
     try:
-        if args.registry_only:
-            account_dir = args.account_dir or 'accounts/_example'
-            validator = SecurityGroupValidator(account_dir)
-            summary = validator.validate_registry_only()
-        else:
-            if not args.account_dir:
-                parser.error('account_dir is required unless --registry-only is set')
-            validator = SecurityGroupValidator(args.account_dir)
-            summary = validator.validate()
+        validator = SecurityGroupValidator(args.account_dir)
+        summary = validator.validate()
 
         if args.no_warnings:
             summary.warnings = []
@@ -1601,7 +1218,6 @@ Examples:
         elif args.format == 'json':
             output = {
                 'account_dir': args.account_dir,
-                'registry_only': args.registry_only,
                 'account_id': validator.account_id,
                 'validation_results': {
                     'errors': [asdict(r) for r in summary.errors],
@@ -1617,11 +1233,8 @@ Examples:
             }
             print(json.dumps(output, indent=2))
         else:
-            if args.registry_only:
-                print("🔍 Validating SG framework registries")
-            else:
-                print(f"🔍 Validating AWS Security Groups for account: {validator.account_id}")
-                print(f"📁 Directory: {args.account_dir}")
+            print(f"🔍 Validating AWS Security Groups for account: {validator.account_id}")
+            print(f"📁 Directory: {args.account_dir}")
             print()
             if summary.errors:
                 print("❌ Errors:")

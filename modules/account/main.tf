@@ -33,49 +33,6 @@ data "aws_vpc" "discovered" {
 # Step 1: Create SG shells and shared prefix lists for this region
 # ---------------------------------------------------------------------------
 
-locals {
-  automatic_platform_security_groups = {
-    for name, sg in var.platform_security_groups :
-    name => sg
-    if lookup(sg, "provision", "manual") == "automatic"
-  }
-}
-
-resource "aws_security_group" "platform_builtin" {
-  for_each = local.automatic_platform_security_groups
-
-  name_prefix = "${each.key}-"
-  description = each.value.description
-  vpc_id      = data.aws_vpc.discovered.id
-
-  tags = merge(var.tags, {
-    Name        = each.key
-    Type        = "platform-builtin"
-    ManagedBy   = "sg-platform"
-    ReviewClass = lookup(each.value, "review_class", "platform_builtin")
-  })
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_security_group_rule" "platform_builtin_vpc_cidr_ingress" {
-  for_each = {
-    for name, sg in local.automatic_platform_security_groups :
-    name => sg
-    if lookup(sg, "source", null) == "vpc_cidr"
-  }
-
-  type              = "ingress"
-  security_group_id = aws_security_group.platform_builtin[each.key].id
-  protocol          = "-1"
-  from_port         = 0
-  to_port           = 0
-  cidr_blocks       = [data.aws_vpc.discovered.cidr_block]
-  description       = "Platform-managed ingress from discovered VPC CIDR"
-}
-
 resource "aws_security_group" "this" {
   for_each = var.security_groups
 
@@ -136,10 +93,6 @@ resource "aws_ec2_managed_prefix_list_entry" "shared" {
 locals {
   security_group_mappings = merge(
     {
-      for name, sg in aws_security_group.platform_builtin :
-      name => sg.id
-    },
-    {
       for name, sg in aws_security_group.this :
       name => sg.id
     },
@@ -149,17 +102,59 @@ locals {
     }
   )
 
+  # Baseline refs actually used by this region's SG rules.
+  baseline_refs_used = distinct(flatten([
+    for sg_name, sg in var.security_groups : concat(
+      [for rule in lookup(sg, "ingress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null],
+      [for rule in lookup(sg, "egress", []) : lookup(rule, "baseline_ref", null) if lookup(rule, "baseline_ref", null) != null]
+    )
+  ]))
+
+  # Only look up baseline refs that are both allowed and actually referenced.
+  baseline_refs_to_lookup = toset([
+    for ref in local.baseline_refs_used : ref
+    if contains(var.baseline_ref_allowlist, ref)
+  ])
+
+  baseline_sg_mappings = {
+    for name, sg in data.aws_security_group.baseline :
+    name => sg.id
+  }
+
   shared_prefix_list_mappings = {
     for name, pl in aws_ec2_managed_prefix_list.shared :
     name => pl.id
   }
 
   # Decoupled model: shared/self-service prefix lists are owned by this repo.
-  # Optional static mappings still work.
+  # Optional static mappings still work, but baseline/known prefix list lookup is no longer part of the main path.
   all_prefix_list_mappings = merge(
     var.prefix_list_mappings,
     local.shared_prefix_list_mappings,
   )
+}
+
+# ---------------------------------------------------------------------------
+# External lookups — only for baseline SG refs
+# ---------------------------------------------------------------------------
+
+data "aws_security_group" "baseline" {
+  for_each = local.baseline_refs_to_lookup
+
+  filter {
+    name   = "tag:Name"
+    values = ["baseline-${each.value}"]
+  }
+
+  filter {
+    name   = "tag:Type"
+    values = ["baseline"]
+  }
+
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.discovered.id]
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -174,5 +169,6 @@ module "security_group_rules" {
   security_group_config   = merge(each.value, { name = lookup(each.value, "_logical_name", each.key) })
   security_group_mappings = local.security_group_mappings
   prefix_list_mappings    = local.all_prefix_list_mappings
+  baseline_sg_mappings    = local.baseline_sg_mappings
   tags                    = var.tags
 }

@@ -9,7 +9,6 @@ import json
 import os
 import sys
 import base64
-import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 from dataclasses import asdict
@@ -23,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from tfe_workspace import (
     WorkspaceRequest, WorkspaceProvisioner, CloudIaCClient, TFEClient,
     PlanAction, WORKSPACE_SUFFIX_PREFIX, format_plan_text, format_plan_markdown,
-    create_normalized_config_tarball,
 )
 
 
@@ -110,21 +108,6 @@ class TestAccountDiscovery:
         p = WorkspaceProvisioner(repo_root=str(tmp_path))
         assert p.discover_accounts() == []
 
-    def test_discovers_tenant_layout_accounts(self, tmp_path):
-        (tmp_path / "guardrails.yaml").write_text("validation: {}\n")
-        registry = tmp_path / "registry"
-        registry.mkdir()
-        (registry / "tenants.yaml").write_text(
-            'tenants:\n  payments:\n    status: active\n    allowed_accounts:\n      - "123456789012"\n'
-        )
-        tenant_dir = tmp_path / "accounts" / "123456789012" / "payments"
-        tenant_dir.mkdir(parents=True)
-        (tenant_dir / "security-groups.yaml").write_text(
-            'account_id: "123456789012"\nenvironment: "prod"\ncarid: "600001725"\nsecurity_groups: {}\n'
-        )
-        p = WorkspaceProvisioner(repo_root=str(tmp_path))
-        assert p.discover_accounts() == ["123456789012"]
-
 
 # ---------------------------------------------------------------------------
 # Workspace Request Generation
@@ -182,47 +165,6 @@ class TestWorkspaceRequest:
         p = WorkspaceProvisioner(repo_root=str(tmp_path), car_id="x", project_id="y", repository="z")
         req = p.build_workspace_request("111111111111")
         assert req.env == "dev"
-
-    def test_env_from_tenant_layout(self, tmp_path):
-        (tmp_path / "guardrails.yaml").write_text("validation: {}\n")
-        registry = tmp_path / "registry"
-        registry.mkdir()
-        (registry / "tenants.yaml").write_text(
-            'tenants:\n  payments:\n    status: active\n    allowed_accounts:\n      - "123456789012"\n'
-        )
-        tenant_dir = tmp_path / "accounts" / "123456789012" / "payments"
-        tenant_dir.mkdir(parents=True)
-        (tenant_dir / "security-groups.yaml").write_text(
-            'account_id: "123456789012"\nenvironment: "prod"\ncarid: "600001725"\nsecurity_groups: {}\n'
-        )
-        p = WorkspaceProvisioner(repo_root=str(tmp_path), car_id="x", project_id="y", repository="z")
-        req = p.build_workspace_request("123456789012")
-        assert req.env == "prod"
-
-    def test_normalized_tarball_writes_legacy_account_yaml_for_tenant_layout(self, tmp_path):
-        (tmp_path / "guardrails.yaml").write_text("validation: {}\n")
-        registry = tmp_path / "registry"
-        registry.mkdir()
-        (registry / "tenants.yaml").write_text(
-            'tenants:\n  payments:\n    status: active\n    allowed_accounts:\n      - "123456789012"\n  data:\n    status: active\n    allowed_accounts:\n      - "123456789012"\n'
-        )
-        payments = tmp_path / "accounts" / "123456789012" / "payments"
-        data = tmp_path / "accounts" / "123456789012" / "data"
-        payments.mkdir(parents=True)
-        data.mkdir(parents=True)
-        payments.joinpath("security-groups.yaml").write_text(
-            'account_id: "123456789012"\nenvironment: "prod"\ncarid: "600001725"\nsecurity_groups:\n  payments-web:\n    description: "payments"\n'
-        )
-        data.joinpath("security-groups.yaml").write_text(
-            'account_id: "123456789012"\nenvironment: "prod"\ncarid: "600001725"\nsecurity_groups:\n  data-api:\n    description: "data"\n'
-        )
-
-        tarball = create_normalized_config_tarball(str(tmp_path), ["123456789012"])
-        with tarfile.open(tarball, "r:gz") as tar:
-            member = tar.extractfile("./accounts/123456789012/security-groups.yaml")
-            content = member.read().decode()
-        assert "payments-web" in content
-        assert "data-api" in content
 
 
 # ---------------------------------------------------------------------------
