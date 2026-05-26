@@ -109,6 +109,10 @@ Current guardrails:
 - keep baseline SGs separate from team SGs
 - keep Git/PR/Terraform as the execution backbone
 
+## Architecture Decision
+
+The presentation-ready ADR for this model is tracked in [ADR-001: AWS Security Group Self-Service Framework](adr/001-security-group-self-service-framework.md).
+
 ## Future Direction
 
 Future phases may add:
