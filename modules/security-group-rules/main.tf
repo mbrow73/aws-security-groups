@@ -20,11 +20,11 @@ locals {
       lower(rule.protocol),
       tostring(rule.from_port),
       tostring(rule.to_port),
-      try(rule.cidr_blocks[0], ""),
-      try(rule.ipv6_cidr_blocks[0], ""),
-      try(rule.prefix_list_ids[0], ""),
-      try(rule.security_groups[0], ""),
-      tostring(try(rule.self, false)),
+      coalesce(try(rule.cidr_blocks[0], null), ""),
+      coalesce(try(rule.ipv6_cidr_blocks[0], null), ""),
+      coalesce(try(rule.prefix_list_ids[0], null), ""),
+      coalesce(try(rule.security_groups[0], null), ""),
+      tostring(coalesce(try(rule.self, null), false)),
     ]) => rule
   }
 
@@ -33,11 +33,11 @@ locals {
       lower(rule.protocol),
       tostring(rule.from_port),
       tostring(rule.to_port),
-      try(rule.cidr_blocks[0], ""),
-      try(rule.ipv6_cidr_blocks[0], ""),
-      try(rule.prefix_list_ids[0], ""),
-      try(rule.security_groups[0], ""),
-      tostring(try(rule.self, false)),
+      coalesce(try(rule.cidr_blocks[0], null), ""),
+      coalesce(try(rule.ipv6_cidr_blocks[0], null), ""),
+      coalesce(try(rule.prefix_list_ids[0], null), ""),
+      coalesce(try(rule.security_groups[0], null), ""),
+      tostring(coalesce(try(rule.self, null), false)),
     ]) => rule
   }
 }
