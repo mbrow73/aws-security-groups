@@ -18,11 +18,11 @@ import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
+from datetime import date, datetime
 
 from account_config import load_account_config
 from reference_classifier import classify_sg_reference, load_platform_security_groups, load_tenant_registry
 from network_ownership import classify_cidr_ownership
-from tenant_context import resolve_tenant_context
 from tenant_context import resolve_tenant_context
 
 
@@ -82,12 +82,12 @@ class SecurityGroupValidator:
         'account_id', 'environment', 'carid', 'default_region', 'regions', 'tags', 'security_groups'
     }
     ALLOWED_SG_KEYS = {
-        'description', 'region', 'regions', 'vpc_id', 'tags', 'ingress', 'egress'
+        'description', 'region', 'regions', 'vpc_id', 'tags', 'owner', 'ticket', 'attach_to', 'ingress', 'egress'
     }
     ALLOWED_RULE_KEYS = {
         'description', 'protocol', 'from_port', 'to_port',
         'cidr_blocks', 'ipv6_cidr_blocks', 'security_groups',
-        'prefix_list_ids', 'self'
+        'prefix_list_ids', 'self', 'ticket', 'expires_at', 'group'
     }
 
     def __init__(self, account_dir: str):
@@ -731,6 +731,8 @@ class SecurityGroupValidator:
                     context=context
                 ))
 
+            self._validate_sg_metadata(sg_name, sg, summary)
+
             ingress = sg.get('ingress', [])
             egress = sg.get('egress', [])
 
@@ -980,7 +982,106 @@ class SecurityGroupValidator:
         if protocol in ['tcp', 'udp']:
             self._validate_port_range(sg_name, rule_type, rule_index, rule, summary)
 
+        self._validate_rule_metadata(sg_name, rule_type, rule_index, rule, summary)
         self._validate_rule_sources(sg_name, rule_type, rule_index, rule, summary)
+
+    def _validate_sg_metadata(self, sg_name: str, sg: Dict[str, Any], summary: ValidationSummary):
+        context = f"security_group.{sg_name}"
+        for field in ['owner', 'ticket']:
+            if field in sg and (not isinstance(sg[field], str) or not sg[field].strip()):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Security group '{sg_name}' {field} must be a non-empty string",
+                    rule=f'sg_{field}_format',
+                    context=context
+                ))
+
+        if 'ticket' in sg:
+            self._validate_ticket_value(sg['ticket'], 'security group', context, summary)
+
+        if 'attach_to' in sg:
+            attach_to = sg['attach_to']
+            if not isinstance(attach_to, list) or not attach_to:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Security group '{sg_name}' attach_to must be a non-empty list when provided",
+                    rule='sg_attach_to_format',
+                    context=context
+                ))
+            else:
+                for target in attach_to:
+                    if not isinstance(target, str) or not re.match(r'^(eni|asg|eks-nodegroup|lambda|rds|alb|nlb):[A-Za-z0-9_.:/-]+$', target):
+                        summary.add_result(ValidationResult(
+                            level='warning',
+                            message=f"Attachment target '{target}' should look like '<type>:<identifier>' such as 'eks-nodegroup:payments-prod'",
+                            rule='sg_attach_to_format',
+                            context=context
+                        ))
+
+    def _validate_rule_metadata(self, sg_name: str, rule_type: str, rule_index: int, rule: Dict[str, Any], summary: ValidationSummary):
+        context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
+        if 'ticket' in rule:
+            if not isinstance(rule['ticket'], str) or not rule['ticket'].strip():
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"Rule in {sg_name} {rule_type}[{rule_index}] ticket must be a non-empty string",
+                    rule='rule_ticket_format',
+                    context=context
+                ))
+            else:
+                self._validate_ticket_value(rule['ticket'], 'rule', context, summary)
+
+        if 'group' in rule and (not isinstance(rule['group'], str) or not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$', rule['group'])):
+            summary.add_result(ValidationResult(
+                level='error',
+                message=f"Rule group '{rule.get('group')}' must be lowercase kebab-case",
+                rule='rule_group_format',
+                context=context
+            ))
+
+        if 'expires_at' in rule:
+            expires_at = rule['expires_at']
+            if expires_at is None:
+                return
+            if not isinstance(expires_at, str):
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"expires_at in {sg_name} {rule_type}[{rule_index}] must be YYYY-MM-DD",
+                    rule='rule_expires_at_format',
+                    context=context
+                ))
+                return
+            try:
+                expiry = datetime.strptime(expires_at, '%Y-%m-%d').date()
+            except ValueError:
+                summary.add_result(ValidationResult(
+                    level='error',
+                    message=f"expires_at '{expires_at}' in {sg_name} {rule_type}[{rule_index}] must be YYYY-MM-DD",
+                    rule='rule_expires_at_format',
+                    context=context
+                ))
+                return
+            if expiry < date.today():
+                summary.add_result(ValidationResult(
+                    level='warning',
+                    message=f"Rule in {sg_name} {rule_type}[{rule_index}] expired on {expires_at}; remove it or refresh the approval",
+                    rule='rule_expired',
+                    context=context
+                ))
+
+    def _validate_ticket_value(self, ticket: str, owner: str, context: str, summary: ValidationSummary):
+        if re.match(r'^[A-Z][A-Z0-9]+-\d+$', ticket):
+            return
+        if re.match(r'^https://[^\s]+$', ticket):
+            return
+        if re.match(r'^(CHG|INC|RITM)\d{6,}$', ticket, re.IGNORECASE):
+            return
+        summary.add_result(ValidationResult(
+            level='warning',
+            message=f"{owner.capitalize()} ticket '{ticket}' should be a JIRA key, ServiceNow-style ID, or HTTPS URL",
+            rule='ticket_format',
+            context=context
+        ))
 
     def _validate_port_range(self, sg_name: str, rule_type: str, rule_index: int, rule: Dict[str, Any], summary: ValidationSummary):
         context = f"security_group.{sg_name}.{rule_type}[{rule_index}]"
