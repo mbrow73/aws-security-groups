@@ -64,6 +64,7 @@ PR validation catches:
 - Guardrail violations (blocked ports, overly permissive CIDRs)
 - Naming convention enforcement
 - Duplicate rule detection
+- Optional hardening metadata shape (`ticket`, `expires_at`, `group`, `attach_to`)
 - Tag compliance
 
 ```bash
@@ -90,3 +91,4 @@ pytest tests/test_validate.py -v
 - [Anti-Patterns & Mitigations](docs/anti-patterns-and-mitigations.md) — Risks and layered defenses
 - [Naming Conventions](docs/naming-conventions.md) — Standards and patterns
 - [TFE Setup](docs/tfe-setup.md) — Terraform Enterprise workspace configuration
+- [Proposed Hardening Placeholder](docs/proposed-hardening-placeholder.md) — Optional metadata scaffold for ticketing, expiry, attachment intent, and rule grouping

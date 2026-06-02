@@ -1227,3 +1227,61 @@ class TestAutoTagsNoPerSgValidation:
         summary = _validate(repo_root, '100000000001', data)
         tag_errors = [e for e in summary.errors if 'tag' in (e.rule or '')]
         assert len(tag_errors) == 0
+
+
+class TestProposedHardeningMetadata:
+    def test_optional_ticket_expiry_group_and_attachment_metadata(self, repo_root):
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {
+                'app-backend': {
+                    'description': 'Backend API service',
+                    'owner': 'payments-platform',
+                    'ticket': 'NETSEC-1234',
+                    'attach_to': ['eks-nodegroup:payments-prod-workers'],
+                    'ingress': [{
+                        'group': 'app-ingress',
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.42.0.0/24'],
+                        'description': 'Temporary partner HTTPS test',
+                        'ticket': 'APP-4567',
+                        'expires_at': '2099-12-31',
+                    }],
+                    'egress': [],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        assert not summary.has_errors
+        warning_rules = [w.rule for w in summary.warnings]
+        assert 'ticket_format' not in warning_rules
+        assert 'sg_attach_to_format' not in warning_rules
+
+    def test_invalid_expiry_and_group_metadata_errors(self, repo_root):
+        data = {
+            'account_id': '100000000001',
+            'environment': 'prod',
+            'carid': '600001725',
+            'security_groups': {
+                'app-backend': {
+                    'description': 'Backend API service',
+                    'ingress': [{
+                        'group': 'Bad Group',
+                        'protocol': 'tcp',
+                        'from_port': 443,
+                        'to_port': 443,
+                        'cidr_blocks': ['10.42.0.0/24'],
+                        'description': 'Bad metadata shape',
+                        'expires_at': '12/31/2099',
+                    }],
+                },
+            },
+        }
+        summary = _validate(repo_root, '100000000001', data)
+        rules = [e.rule for e in summary.errors]
+        assert 'rule_group_format' in rules
+        assert 'rule_expires_at_format' in rules
