@@ -1,0 +1,22 @@
+account_id: "555555555557"
+environment: "dev"
+carid: "600001725"
+security_groups:
+  api-demo:
+    description: "Duplicate and shadow demo"
+    ingress:
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.0.0/16"]
+        description: "Broader rule"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.1.0/24"]
+        description: "Shadowed narrower rule"
+      - protocol: "tcp"
+        from_port: 443
+        to_port: 443
+        cidr_blocks: ["10.0.1.0/24"]
+        description: "Duplicate of shadowed rule"
