@@ -83,3 +83,20 @@ tenants:
         cidrs:
         - 10.47.16.0/24
         description: TEST ONLY workflow regression network.
+  workflow-regression-e2e-three:
+    display_name: Workflow Regression E2E Three
+    description: TEST ONLY tenant onboarding workflow regression third pass.
+    status: active
+    owner_team: workflow-regression-e2e-three
+    review_authority: workflow-regression-e2e-three-sg
+    github_reviewers: []
+    slack_channel: null
+    carids:
+    - '600001725'
+    allowed_accounts:
+    - '555666777891'
+    owned_networks:
+      workflow-api-three:
+        cidrs:
+        - 10.48.16.0/24
+        description: TEST ONLY workflow regression network.
